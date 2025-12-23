@@ -21,10 +21,20 @@ import { OrgsModule } from './orgs/orgs.module';
 import { LocationsModule } from './locations/locations.module';
 import { UsersModule } from './users/users.module';
 import { PoliciesModule } from './policies/policies.module';
+import { BibsModule } from './bibs/bibs.module';
+import { ItemsModule } from './items/items.module';
 
 @Module({
   // imports：把子模組「掛進」AppModule，讓 NestJS 掃描它們的 controller/provider。
-  imports: [DbModule, OrgsModule, LocationsModule, UsersModule, PoliciesModule],
+  imports: [
+    DbModule,
+    OrgsModule,
+    LocationsModule,
+    UsersModule,
+    PoliciesModule,
+    BibsModule,
+    ItemsModule,
+  ],
   controllers: [HealthController],
 })
 export class AppModule {}

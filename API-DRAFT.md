@@ -35,13 +35,13 @@
   - 回傳：匯入預覽/錯誤清單（可先同步回傳；後續可改背景任務）
 
 ## 4) Bibliographic Records（書目）
-- `GET /orgs/{orgId}/bibs?query=...&isbn=...&classification=...`：查詢書目（Guest/Student/Teacher/Librarian）
+- `GET /orgs/{orgId}/bibs?query=...&isbn=...&classification=...`：查詢書目（含可借/總冊數；query 會比對 title/creators/subjects 等）
 - `POST /orgs/{orgId}/bibs`：新增書目（Librarian）
 - `GET /orgs/{orgId}/bibs/{bibId}`：取得書目（含可借冊數）
 - `PATCH /orgs/{orgId}/bibs/{bibId}`：更新書目（Librarian）
 
 ## 5) Item Copies（冊）
-- `GET /orgs/{orgId}/items?barcode=...&status=...&location_id=...`：查詢冊（Librarian）
+- `GET /orgs/{orgId}/items?barcode=...&status=...&location_id=...&bibliographic_id=...`：查詢冊（Librarian）
 - `POST /orgs/{orgId}/bibs/{bibId}/items`：在書目下新增冊（Librarian）
 - `GET /orgs/{orgId}/items/{itemId}`：取得冊（含當前借閱/預約狀態）
 - `PATCH /orgs/{orgId}/items/{itemId}`：更新冊（位置/索書號/狀態/備註）（Librarian）
@@ -89,4 +89,3 @@
 
 ## 10) Audit Events
 - `GET /orgs/{orgId}/audit-events?from=...&to=...&actor_user_id=...&action=...`：查詢稽核事件（Admin）
-
