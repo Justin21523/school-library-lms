@@ -38,6 +38,7 @@ Code scaffold (requires Node.js + Docker):
 
 ## Agent-Specific Instructions
 - Communicate in Traditional Chinese and explain design/implementation decisions; when changing architecture/API/data model, update the relevant docs under `docs/`.
+- Write high-density code comments for learning; see `docs/commenting-guidelines.md`.
 
 ## Testing Guidelines (Docs Review)
 - Preview Markdown rendering (tables, lists, headings) before submitting.

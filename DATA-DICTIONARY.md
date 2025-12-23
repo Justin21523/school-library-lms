@@ -33,7 +33,7 @@
 | --- | --- | --- | --- | --- |
 | id | string | Y | 書目 ID（UUID） | `b_8aa...` |
 | organization_id | string | Y | 所屬 organization | `org_1a2...` |
-| title | string | Y | 書名 | `哈利波特：神秘的魔法石` |
+| title | string | Y | 題名 | `哈利波特：神秘的魔法石` |
 | creators | string[] | N | 作者/主要責任者 | `["J. K. Rowling"]` |
 | contributors | string[] | N | 譯者/繪者等 | `["彭倩文"]` |
 | publisher | string | N | 出版者 | `皇冠` |

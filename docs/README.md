@@ -7,11 +7,18 @@
 2. 系統怎麼跑起來（含目錄與流程）：`docs/how-it-works.md`
 3. TypeScript / Next.js / NestJS 入門：`docs/typescript-nextjs-nestjs-primer.md`
 4. 為什麼這樣設計（取捨與未來擴充）：`docs/design-rationale.md`
+4.5. 先看資料模型全貌（ERD）：`docs/er-diagram.md`
 5. 需求與落地：`MVP-SPEC.md`、`USER-STORIES.md`、`API-DRAFT.md`、`DATA-DICTIONARY.md`、`db/schema.sql`
 
 ## README（中英切換）
 - 主要入口（繁體中文）：`README.md`
 - English version：`README.en.md`
+
+## 實作說明（Implementation Notes）
+- `docs/implementation/0001-api-foundation-and-core-master-data.md`
+
+## 註解規範
+- `docs/commenting-guidelines.md`
 
 ## 文件維護規則（很重要）
 - 每次調整「需求/資料欄位/API/架構」其中之一，請同步更新對應文件，避免文件與實作脫節。

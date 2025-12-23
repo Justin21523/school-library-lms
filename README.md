@@ -55,7 +55,10 @@ MVP 預設政策已定案（可調）：請見 `MVP-SPEC.md`。
 - 系統怎麼跑起來：`docs/how-it-works.md`
 - TS/Next/Nest 入門：`docs/typescript-nextjs-nestjs-primer.md`
 - 設計取捨與擴充：`docs/design-rationale.md`
+- ER Diagram（資料模型全貌）：`docs/er-diagram.md`
 - 開發用「真相來源」：`MVP-SPEC.md`、`USER-STORIES.md`、`API-DRAFT.md`、`DATA-DICTIONARY.md`、`db/schema.sql`
+- 實作說明（每次實作都會補）：`docs/implementation/0001-api-foundation-and-core-master-data.md`
+- 註解與教學文件規範：`docs/commenting-guidelines.md`
 
 ## 本機開發（從 0 到跑起來）
 前置需求：

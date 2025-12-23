@@ -8,12 +8,15 @@
   "engines": {
     "node": ">=20"
   },
+  "devDependencies": {
+    "concurrently": "^9.2.0"
+  },
   "scripts": {
-    "dev": "npm run dev -ws --if-present --parallel",
+    "dev": "concurrently -n web,api \"npm run dev:web\" \"npm run dev:api\"",
     "dev:web": "npm run dev -w @library-system/web",
     "dev:api": "npm run dev -w @library-system/api",
-    "build": "npm run build -ws --if-present --parallel",
-    "test": "npm run test -ws --if-present --parallel",
-    "lint": "npm run lint -ws --if-present --parallel"
+    "build": "npm run build --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "lint": "npm run lint --workspaces --if-present"
   }
 }
