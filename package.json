@@ -1,0 +1,19 @@
+{
+  "name": "library-system",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "npm run dev -ws --if-present --parallel",
+    "dev:web": "npm run dev -w @library-system/web",
+    "dev:api": "npm run dev -w @library-system/api",
+    "build": "npm run build -ws --if-present --parallel",
+    "test": "npm run test -ws --if-present --parallel",
+    "lint": "npm run lint -ws --if-present --parallel"
+  }
+}
