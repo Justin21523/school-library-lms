@@ -160,6 +160,57 @@ CREATE INDEX IF NOT EXISTS items_org_status
 CREATE INDEX IF NOT EXISTS items_org_location
   ON item_copies (organization_id, location_id);
 
+-- inventory_sessions：盤點作業（一次在某個 location 的盤點）
+--
+-- 盤點的 MVP 目標（對齊 MVP-SPEC.md）：
+-- - 「掃描盤點」：館員在書架前掃冊條碼，系統記錄「這本書在這個時間被掃到」
+-- - 「差異清單」：
+--   1) 在架但未掃（missing）：系統顯示在該 location 的 available 冊，但本次盤點沒掃到
+--   2) 掃到但系統顯示非在架（unexpected）：本次掃到的冊，卻不是 available（例如 checked_out/on_hold/lost）
+--      或其系統 location 與盤點 location 不一致（代表資料/上架可能有問題）
+--
+-- 設計取捨：
+-- - 我們另外建立 inventory_sessions / inventory_scans 兩張表，原因是：
+--   1) 能明確界定「某次盤點」的範圍（session_id）
+--   2) 差異清單與 CSV 匯出只要給 session_id 就可重現（不必猜測時間區間）
+-- - 同時仍會更新 item_copies.last_inventory_at，讓「單冊最後盤點時間」可直接顯示/搜尋
+CREATE TABLE IF NOT EXISTS inventory_sessions (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  organization_id uuid NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  location_id uuid NOT NULL REFERENCES locations(id) ON DELETE RESTRICT,
+  actor_user_id uuid NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+  note text NULL,
+  started_at timestamptz NOT NULL DEFAULT now(),
+  closed_at timestamptz NULL
+);
+
+-- 常用索引：盤點通常以「最近的 session」為主
+CREATE INDEX IF NOT EXISTS inventory_sessions_org_started_at
+  ON inventory_sessions (organization_id, started_at DESC);
+CREATE INDEX IF NOT EXISTS inventory_sessions_org_location_started_at
+  ON inventory_sessions (organization_id, location_id, started_at DESC);
+
+-- inventory_scans：盤點掃描紀錄（session × item）
+--
+-- 重要：一個 session 可能會重複掃到同一冊（例如重掃確認）
+-- - MVP 先用 UNIQUE(session_id, item_id) 讓「同冊同 session」只保留一筆（最新 scanned_at）
+-- - 若未來要分析「重複掃描次數」，可再加 scan_count 或獨立紀錄表
+CREATE TABLE IF NOT EXISTS inventory_scans (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  organization_id uuid NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  session_id uuid NOT NULL REFERENCES inventory_sessions(id) ON DELETE CASCADE,
+  location_id uuid NOT NULL REFERENCES locations(id) ON DELETE RESTRICT,
+  item_id uuid NOT NULL REFERENCES item_copies(id) ON DELETE RESTRICT,
+  actor_user_id uuid NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+  scanned_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (session_id, item_id)
+);
+
+CREATE INDEX IF NOT EXISTS inventory_scans_session_scanned_at
+  ON inventory_scans (session_id, scanned_at DESC);
+CREATE INDEX IF NOT EXISTS inventory_scans_org_item
+  ON inventory_scans (organization_id, item_id);
+
 -- circulation_policies：借閱政策（把規則存資料，不寫死在程式）
 CREATE TABLE IF NOT EXISTS circulation_policies (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -173,6 +224,10 @@ CREATE TABLE IF NOT EXISTS circulation_policies (
   max_renewals int NOT NULL,
   max_holds int NOT NULL,
   hold_pickup_days int NOT NULL,
+  -- overdue_block_days：逾期達 X 天後，禁止新增借閱（checkout/renew/hold/fulfill）
+  -- - 對齊 MVP-SPEC.md：學生 7 天、教師 14 天（可依校內政策調整）
+  -- - 0 代表不啟用此規則（MVP 允許）
+  overdue_block_days int NOT NULL DEFAULT 0,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now(),
   UNIQUE (organization_id, code)
