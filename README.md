@@ -11,7 +11,7 @@
 
 ## 專案現況（目前做到了哪裡）
 - 文件已整理成「可開發」：`MVP-SPEC.md`、`USER-STORIES.md`、`API-DRAFT.md`、`DATA-DICTIONARY.md`、`db/schema.sql`
-- 程式已能端到端操作（MVP 版本）：`apps/api` 已落地主檔/使用者名冊匯入（CSV）/書目/冊/借還/續借/借閱查詢/預約（holds）/預約到期處理（holds expire-ready maintenance）/逾期報表（overdue report）/熱門書與借閱量報表（US-050）/稽核查詢（audit events）/冊異常狀態（lost/repair/withdrawn）API（另有 `/health`），`apps/web` 已提供 Web Console（`/orgs`）並逐步補齊 OPAC
+- 程式已能端到端操作（MVP 版本）：`apps/api` 已落地主檔/使用者名冊匯入（CSV）/書目/冊/借還/續借/借閱查詢/預約（holds）/預約到期處理（holds expire-ready maintenance）/取書架清單（ready holds report + CSV/列印）/逾期報表（overdue report）/熱門書與借閱量報表（US-050）/稽核查詢（audit events）/冊異常狀態（lost/repair/withdrawn）API（另有 `/health`），`apps/web` 已提供 Web Console（`/orgs`）並逐步補齊 OPAC
 - 架構決策已記錄（含擴充路線）：`ARCHITECTURE.md`、`docs/design-rationale.md`
 
 ## MVP 功能範圍（你可以期待什麼）
@@ -68,6 +68,7 @@ MVP 預設政策已定案（可調）：請見 `MVP-SPEC.md`。
 - Users 查詢/停用（US-011）實作說明：`docs/implementation/0011-users-query-filter-and-update.md`
 - Reports（US-050 熱門書/借閱量）實作說明：`docs/implementation/0012-us-050-reports-top-circulation-and-summary.md`
 - Holds 到期處理（ready_until → expired）實作說明：`docs/implementation/0013-holds-expiry-and-maintenance.md`
+- 取書架清單（Ready Holds）實作說明：`docs/implementation/0014-ready-holds-report-and-print-slips.md`
 - 註解與教學文件規範：`docs/commenting-guidelines.md`
 
 ## 本機開發（從 0 到跑起來）

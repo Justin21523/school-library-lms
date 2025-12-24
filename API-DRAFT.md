@@ -331,6 +331,38 @@
     ]
     ```
 
+### 9.3 Ready Holds（取書架清單 / 可取書清單）
+> 這份清單用於「櫃台每日取書架作業」：列出 `status=ready` 的 holds，並可依取書地點（pickup_location）分開匯出/列印。
+
+- `GET /orgs/{orgId}/reports/ready-holds?actor_user_id=...&as_of=...&pickup_location_id=...&limit=...&format=json|csv`
+- 權限（MVP 最小控管）：
+  - `actor_user_id` 必填，且必須是 `admin/librarian`（active）
+- Query params：
+  - `as_of`：可選（timestamptz；未提供時以「現在」為基準）
+  - `pickup_location_id`：可選（UUID；未提供代表不過濾）
+  - `limit`：可選（1..5000），預設 200
+  - `format`：可選 `json|csv`，預設 `json`
+- JSON Response（摘要）：
+  ```json
+  [
+    {
+      "hold_id": "h_...",
+      "ready_until": "2025-12-26T23:59:59Z",
+      "is_expired": false,
+      "days_until_expire": 2,
+      "user_external_id": "S1130123",
+      "user_name": "王小明",
+      "user_org_unit": "601",
+      "bibliographic_title": "哈利波特：神秘的魔法石",
+      "assigned_item_barcode": "LIB-00001234",
+      "pickup_location_code": "MAIN",
+      "pickup_location_name": "圖書館"
+    }
+  ]
+  ```
+- CSV Response：
+  - `format=csv` 時回傳 `text/csv`（含 UTF-8 BOM），並以 `Content-Disposition: attachment` 觸發下載
+
 ## 10) Audit Events
 > audit_events 用於「追溯誰在什麼時間做了什麼」，通常包含敏感資訊，因此建議權限保守。
 
