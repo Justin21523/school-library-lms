@@ -44,7 +44,16 @@
 - `GET /orgs/{orgId}/items?barcode=...&status=...&location_id=...&bibliographic_id=...`：查詢冊（Librarian）
 - `POST /orgs/{orgId}/bibs/{bibId}/items`：在書目下新增冊（Librarian）
 - `GET /orgs/{orgId}/items/{itemId}`：取得冊（含當前借閱/預約狀態）
-- `PATCH /orgs/{orgId}/items/{itemId}`：更新冊（位置/索書號/狀態/備註）（Librarian）
+- `PATCH /orgs/{orgId}/items/{itemId}`：更新冊（位置/索書號/備註等）（Librarian）
+  - 說明：冊的 `status` 屬於重要業務狀態，MVP 建議改走「動作端點」並寫入 `audit_events`，避免無追溯的狀態異動
+- 冊異常狀態（US-045，寫入 audit）：
+  - `POST /orgs/{orgId}/items/{itemId}/mark-lost`
+  - `POST /orgs/{orgId}/items/{itemId}/mark-repair`
+  - `POST /orgs/{orgId}/items/{itemId}/mark-withdrawn`
+  - Request（共通）：
+    ```json
+    { "actor_user_id": "u_admin_or_librarian", "note": "optional" }
+    ```
 
 ## 6) Circulation（借還/續借）
 > 借還建議用「動作端點」，避免前端直接改資料狀態造成不一致。

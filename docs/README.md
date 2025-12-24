@@ -23,6 +23,7 @@
 - `docs/implementation/0006-holds-and-opac.md`
 - `docs/implementation/0007-overdue-report-and-csv.md`
 - `docs/implementation/0008-audit-events-query.md`
+- `docs/implementation/0009-item-exceptions-and-audit.md`
 
 ## 註解規範
 - `docs/commenting-guidelines.md`
