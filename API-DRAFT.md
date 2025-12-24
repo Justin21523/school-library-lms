@@ -28,9 +28,23 @@
 - `PATCH /orgs/{orgId}/locations/{locationId}`：更新/停用位置（Librarian）
 
 ## 3) Users（Patrons/Staff）
-- `GET /orgs/{orgId}/users?query=...&role=...&status=...`：搜尋使用者（Librarian）
+- `GET /orgs/{orgId}/users?query=...&role=...&status=...&limit=...`：搜尋使用者（Librarian）
+  - `query`：模糊搜尋（external_id/name/org_unit）
+  - `role/status`：精準篩選
 - `POST /orgs/{orgId}/users`：新增使用者（Librarian）
-- `PATCH /orgs/{orgId}/users/{userId}`：更新/停用（Librarian）
+- `PATCH /orgs/{orgId}/users/{userId}`：更新/停用（US-011；Librarian）
+  - MVP 權限：需帶 `actor_user_id`（admin/librarian），後端驗證 role/status，並寫入 `audit_events`（action=`user.update`）
+  - Request（JSON；至少帶一個要更新的欄位）：
+    ```json
+    {
+      "actor_user_id": "u_admin_or_librarian",
+      "name": "王小明",
+      "org_unit": "501",
+      "role": "student",
+      "status": "active",
+      "note": "optional"
+    }
+    ```
 - `POST /orgs/{orgId}/users/import`：CSV 匯入（US-010；Librarian）
   - 目的：批次新增/更新名冊（以 `external_id` 為唯一鍵），並可批次停用畢業/離校使用者
   - MVP 權限：需帶 `actor_user_id`（admin/librarian），後端驗證 role/status（避免名冊裸奔）

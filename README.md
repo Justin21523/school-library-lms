@@ -65,6 +65,7 @@ MVP 預設政策已定案（可調）：請見 `MVP-SPEC.md`。
 - Audit Events 實作說明：`docs/implementation/0008-audit-events-query.md`
 - Item Exceptions（lost/repair/withdrawn）實作說明：`docs/implementation/0009-item-exceptions-and-audit.md`
 - Users CSV Import（名冊匯入）實作說明：`docs/implementation/0010-users-csv-import.md`
+- Users 查詢/停用（US-011）實作說明：`docs/implementation/0011-users-query-filter-and-update.md`
 - 註解與教學文件規範：`docs/commenting-guidelines.md`
 
 ## 本機開發（從 0 到跑起來）
