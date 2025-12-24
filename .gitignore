@@ -24,4 +24,7 @@ Thumbs.db
 .vscode/
 .idea/
 
+# Windows "Mark of the Web" artifacts (may appear as separate files on non-Windows filesystems)
+*:Zone.Identifier
+
 .AGENTS.md
