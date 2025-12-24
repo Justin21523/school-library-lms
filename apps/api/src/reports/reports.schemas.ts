@@ -102,3 +102,35 @@ export const circulationSummaryReportQuerySchema = z.object({
 });
 
 export type CirculationSummaryReportQuery = z.infer<typeof circulationSummaryReportQuerySchema>;
+
+/**
+ * Ready Holds（取書架清單 / 可取書清單）
+ *
+ * 情境：
+ * - holds.status=ready 代表「該冊已被保留在取書架上」，等待读者到館取書
+ * - 館員每天需要一份清單，才能：
+ *   - 快速對照：取書架上有哪些書、要給誰
+ *   - 找出已過期但仍卡在 ready 的 hold（提醒跑 maintenance）
+ *   - 匯出 CSV / 列印小條（紙本工作流仍很常見）
+ *
+ * 對應 API：
+ * - GET /api/v1/orgs/:orgId/reports/ready-holds?actor_user_id=...&pickup_location_id=...&as_of=...&limit=...&format=json|csv
+ */
+export const readyHoldsReportQuerySchema = z.object({
+  actor_user_id: uuidSchema,
+
+  // as_of：用哪個時間點判定「是否已過期」（ready_until < as_of）
+  // - 未提供時，後端用「現在」作為基準
+  as_of: z.string().trim().min(1).max(64).optional(),
+
+  // pickup_location_id：取書地點（館別/分區）過濾；未提供代表不過濾
+  pickup_location_id: uuidSchema.optional(),
+
+  // limit：避免一次撈爆（上限 5000）
+  limit: intFromStringSchema.optional(),
+
+  // format：json/csv（同一端點支援匯出）
+  format: reportFormatSchema.optional(),
+});
+
+export type ReadyHoldsReportQuery = z.infer<typeof readyHoldsReportQuerySchema>;

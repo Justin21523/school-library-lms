@@ -5,6 +5,9 @@
  *
  * 目前提供：
  * - GET /reports/overdue：逾期清單（JSON/CSV）
+ * - GET /reports/ready-holds：取書架清單（JSON/CSV）
+ * - GET /reports/top-circulation：熱門書（JSON/CSV）
+ * - GET /reports/circulation-summary：借閱量彙總（JSON/CSV）
  *
  * CSV 輸出策略：
  * - 同一個 endpoint 透過 `?format=csv` 切換回傳格式
@@ -21,6 +24,7 @@ import { ReportsService } from './reports.service';
 import {
   circulationSummaryReportQuerySchema,
   overdueReportQuerySchema,
+  readyHoldsReportQuerySchema,
   topCirculationReportQuerySchema,
 } from './reports.schemas';
 
@@ -51,6 +55,51 @@ export class ReportsController {
       res.setHeader('content-disposition', `attachment; filename="overdue-${safeDate}.csv"`);
       res.setHeader('cache-control', 'no-store');
 
+      return csv;
+    }
+
+    return rows;
+  }
+
+  /**
+   * Ready Holds（取書架清單 / 可取書清單）
+   *
+   * GET /api/v1/orgs/:orgId/reports/ready-holds
+   *
+   * 目的：
+   * - 讓館員每天能拉出「目前在取書架等待取書」的清單（holds.status=ready）
+   * - 並提供 CSV 匯出（Excel/紙本工作流常見）
+   *
+   * 設計：
+   * - as_of：用來計算是否已過期（ready_until < as_of）
+   * - pickup_location_id：可選；多館別時可分開拉清單
+   * - format=csv：同一端點輸出 CSV（含 BOM）
+   */
+  @Get('ready-holds')
+  async readyHolds(
+    @Param('orgId', new ParseUUIDPipe()) orgId: string,
+    @Query(new ZodValidationPipe(readyHoldsReportQuerySchema)) query: any,
+    @Res({ passthrough: true }) res: any,
+  ) {
+    const rows = await this.reports.listReadyHolds(orgId, query);
+
+    const format = (query.format ?? 'json') as 'json' | 'csv';
+    if (format === 'csv') {
+      const csv = this.reports.buildReadyHoldsCsv(rows);
+
+      // 檔名：用 as_of 的日期當作「當天清單」，若有取書地點過濾則加上短碼避免覆蓋
+      const safeAsOf = safeIsoDateForFilename(query.as_of);
+      const pickupSuffix =
+        typeof query.pickup_location_id === 'string' && query.pickup_location_id.trim()
+          ? `-${query.pickup_location_id.slice(0, 8)}`
+          : '';
+
+      res.setHeader('content-type', 'text/csv; charset=utf-8');
+      res.setHeader(
+        'content-disposition',
+        `attachment; filename="ready-holds-${safeAsOf}${pickupSuffix}.csv"`,
+      );
+      res.setHeader('cache-control', 'no-store');
       return csv;
     }
 

@@ -5,7 +5,11 @@
  * - 把「館員每天會做的查詢」做成可重複、可匯出的結果（JSON + CSV）
  * - 盡量在 DB 用「推導」而不是寫死狀態（例如逾期用 due_at < as_of 推導）
  *
- * 本檔案先落地 MVP 第一個報表：逾期清單（Overdue List）。
+ * 目前已落地的報表：
+ * - 逾期清單（Overdue List）：/reports/overdue
+ * - 取書架清單（Ready Holds）：/reports/ready-holds
+ * - 熱門書（Top Circulation）：/reports/top-circulation
+ * - 借閱量彙總（Circulation Summary）：/reports/circulation-summary
  *
  * Overdue List 的定義（MVP）：
  * - loans.returned_at IS NULL（仍未歸還）
@@ -28,6 +32,7 @@ import { DbService } from '../db/db.service';
 import type {
   CirculationSummaryReportQuery,
   OverdueReportQuery,
+  ReadyHoldsReportQuery,
   TopCirculationReportQuery,
 } from './reports.schemas';
 
@@ -98,6 +103,52 @@ export type TopCirculationRow = {
 export type CirculationSummaryRow = {
   bucket_start: string;
   loan_count: number;
+};
+
+/**
+ * ReadyHoldsReportRow（取書架清單）
+ *
+ * 這份清單的核心是「holds.status=ready」：
+ * - 每筆代表「某一本書（某一冊）目前正在取書架等人取」
+ * - 需要包含：讀者、書名、冊條碼、取書期限（ready_until）
+ *
+ * 注意：
+ * - 我們不另外存「是否過期」狀態，而是用 ready_until < as_of 推導（與 overdue 報表一致）
+ * - 若資料不一致（例如 ready hold 沒 assigned item），我們仍會回傳，但 item 欄位會是 null
+ */
+export type ReadyHoldsReportRow = {
+  // hold
+  hold_id: string;
+  ready_at: string | null;
+  ready_until: string | null;
+
+  // derived（用 as_of 推導）
+  is_expired: boolean;
+  days_until_expire: number | null;
+
+  // borrower
+  user_id: string;
+  user_external_id: string;
+  user_name: string;
+  user_role: UserRole;
+  user_org_unit: string | null;
+
+  // bib
+  bibliographic_id: string;
+  bibliographic_title: string;
+
+  // pickup location（取書地點：hold.pickup_location_id）
+  pickup_location_id: string;
+  pickup_location_code: string;
+  pickup_location_name: string;
+
+  // assigned item（可能為 NULL；例如資料不一致或歷史資料）
+  assigned_item_id: string | null;
+  assigned_item_barcode: string | null;
+  assigned_item_call_number: string | null;
+  assigned_item_status: ItemStatus | null;
+  assigned_item_location_code: string | null;
+  assigned_item_location_name: string | null;
 };
 
 @Injectable()
@@ -197,6 +248,138 @@ export class ReportsService {
     } catch (error: any) {
       // 22P02 = invalid_text_representation：timestamptz/uuid 轉型失敗（例如 as_of 格式錯）
       if (error?.code === '22P02') {
+        throw new BadRequestException({
+          error: { code: 'VALIDATION_ERROR', message: 'Invalid query format' },
+        });
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * listReadyHolds：取書架清單（JSON 用）
+   *
+   * 定義（MVP）：
+   * - holds.status = 'ready'
+   *
+   * 為什麼用報表而不是直接用 /holds?status=ready？
+   * - /holds 是「工作台」：偏向「操作」（cancel/fulfill），會混入其他狀態/欄位
+   * - ready-holds report 是「現場每日清單」：偏向「呈現/匯出/列印」
+   * - 報表可以在 SQL 端做更適合輸出的欄位（例如 is_expired、days_until_expire）
+   */
+  async listReadyHolds(orgId: string, query: ReadyHoldsReportQuery): Promise<ReadyHoldsReportRow[]> {
+    // 1) 驗證 actor（館員/管理者）
+    await this.db.transaction(async (client) => {
+      await this.requireStaffActor(client, orgId, query.actor_user_id);
+    });
+
+    // 2) as_of：未提供就用「現在」
+    // - 這裡用 API server 的時間作為基準（對齊 overdue 報表的做法）
+    // - 若未來要更嚴謹，可改成「先 SELECT now()」取得 DB 時間
+    const asOf = query.as_of?.trim() ? query.as_of.trim() : new Date().toISOString();
+
+    // 3) limit：預設 200（取書架清單通常不需要一次撈到 5000，但仍允許調整）
+    const limit = query.limit ?? 200;
+
+    const whereClauses: string[] = ['h.organization_id = $1', `h.status = 'ready'`];
+    const params: unknown[] = [orgId];
+
+    // 我們把 as_of 固定放在 $2，讓後續 SQL 中的推導欄位（is_expired/days_until_expire）可直接使用
+    params.push(asOf);
+    const asOfParam = `$${params.length}`;
+
+    if (query.pickup_location_id) {
+      params.push(query.pickup_location_id);
+      whereClauses.push(`h.pickup_location_id = $${params.length}::uuid`);
+    }
+
+    params.push(limit);
+    const limitParam = `$${params.length}`;
+
+    try {
+      const result = await this.db.query<ReadyHoldsReportRow>(
+        `
+        SELECT
+          -- hold
+          h.id AS hold_id,
+          h.ready_at,
+          h.ready_until,
+
+          -- derived：是否已過期（ready_until < as_of）
+          CASE
+            WHEN h.ready_until IS NULL THEN false
+            ELSE (h.ready_until < ${asOfParam}::timestamptz)
+          END AS is_expired,
+
+          -- derived：距離過期還有幾天（可能為負數）
+          -- - 若 ready_until 為 NULL（資料不一致），回傳 NULL
+          CASE
+            WHEN h.ready_until IS NULL THEN NULL
+            ELSE FLOOR(EXTRACT(EPOCH FROM (h.ready_until - ${asOfParam}::timestamptz)) / 86400)::int
+          END AS days_until_expire,
+
+          -- borrower
+          u.id AS user_id,
+          u.external_id AS user_external_id,
+          u.name AS user_name,
+          u.role AS user_role,
+          u.org_unit AS user_org_unit,
+
+          -- bib
+          b.id AS bibliographic_id,
+          b.title AS bibliographic_title,
+
+          -- pickup location
+          pl.id AS pickup_location_id,
+          pl.code AS pickup_location_code,
+          pl.name AS pickup_location_name,
+
+          -- assigned item（ready 理論上一定有；但我們用 LEFT JOIN 容忍資料不一致）
+          i.id AS assigned_item_id,
+          i.barcode AS assigned_item_barcode,
+          i.call_number AS assigned_item_call_number,
+          i.status AS assigned_item_status,
+          il.code AS assigned_item_location_code,
+          il.name AS assigned_item_location_name
+        FROM holds h
+        JOIN users u
+          ON u.id = h.user_id
+         AND u.organization_id = h.organization_id
+        JOIN bibliographic_records b
+          ON b.id = h.bibliographic_id
+         AND b.organization_id = h.organization_id
+        JOIN locations pl
+          ON pl.id = h.pickup_location_id
+         AND pl.organization_id = h.organization_id
+        LEFT JOIN item_copies i
+          ON i.id = h.assigned_item_id
+         AND i.organization_id = h.organization_id
+        LEFT JOIN locations il
+          ON il.id = i.location_id
+         AND il.organization_id = i.organization_id
+        WHERE ${whereClauses.join(' AND ')}
+        ORDER BY
+          -- 先把「已過期但仍在 ready」的列出來（提醒館員跑 maintenance）
+          CASE
+            WHEN h.ready_until IS NOT NULL AND h.ready_until < ${asOfParam}::timestamptz THEN 0
+            ELSE 1
+          END ASC,
+          -- 再依取書期限排序（越接近期限越前面）
+          h.ready_until ASC NULLS LAST,
+          -- 取書地點（未過濾時可分區）
+          pl.code ASC,
+          -- 班級/學號：方便在現場快速找人
+          u.org_unit ASC NULLS LAST,
+          u.external_id ASC
+        LIMIT ${limitParam}
+        `,
+        params,
+      );
+
+      return result.rows;
+    } catch (error: any) {
+      // 22P02/22007：timestamptz/uuid 解析失敗（as_of 或 pickup_location_id 格式錯）
+      if (error?.code === '22P02' || error?.code === '22007') {
         throw new BadRequestException({
           error: { code: 'VALIDATION_ERROR', message: 'Invalid query format' },
         });
@@ -385,6 +568,59 @@ export class ReportsService {
     // 4) 組合 CSV（加 BOM 讓 Excel 更容易正確顯示 UTF-8）
     // - \ufeff 是 UTF-8 BOM
     // - 使用 \r\n 以提高 Excel/Windows 相容性
+    return `\ufeff${[headerLine, ...dataLines].join('\r\n')}\r\n`;
+  }
+
+  /**
+   * buildReadyHoldsCsv：把取書架清單 rows 轉成 CSV 字串（給 controller 回傳）
+   *
+   * 欄位順序（建議）：
+   * - 先放現場最常用的：取書地點、冊條碼、書名、讀者、班級、到期日
+   * - 再放推導欄位（is_expired / days_until_expire）
+   * - 最後放 ID（方便對帳）
+   */
+  buildReadyHoldsCsv(rows: ReadyHoldsReportRow[]) {
+    const headers: Array<{ key: keyof ReadyHoldsReportRow; label: string }> = [
+      // 現場欄位（先放）
+      { key: 'pickup_location_code', label: 'pickup_location_code' },
+      { key: 'pickup_location_name', label: 'pickup_location_name' },
+      { key: 'assigned_item_barcode', label: 'item_barcode' },
+      { key: 'assigned_item_call_number', label: 'call_number' },
+      { key: 'bibliographic_title', label: 'title' },
+      { key: 'user_external_id', label: 'user_external_id' },
+      { key: 'user_name', label: 'user_name' },
+      { key: 'user_org_unit', label: 'org_unit' },
+      { key: 'ready_until', label: 'ready_until' },
+      { key: 'ready_at', label: 'ready_at' },
+
+      // 推導欄位（可用於排序/提醒）
+      { key: 'is_expired', label: 'is_expired' },
+      { key: 'days_until_expire', label: 'days_until_expire' },
+
+      // 其他參考資訊
+      { key: 'assigned_item_status', label: 'item_status' },
+      { key: 'assigned_item_location_code', label: 'item_location_code' },
+      { key: 'assigned_item_location_name', label: 'item_location_name' },
+      { key: 'user_role', label: 'user_role' },
+
+      // IDs（放最後）
+      { key: 'hold_id', label: 'hold_id' },
+      { key: 'user_id', label: 'user_id' },
+      { key: 'bibliographic_id', label: 'bibliographic_id' },
+      { key: 'pickup_location_id', label: 'pickup_location_id' },
+      { key: 'assigned_item_id', label: 'item_id' },
+    ];
+
+    const headerLine = headers.map((h) => escapeCsvCell(h.label)).join(',');
+    const dataLines = rows.map((row) =>
+      headers
+        .map((h) => {
+          const value = row[h.key];
+          return escapeCsvCell(value);
+        })
+        .join(','),
+    );
+
     return `\ufeff${[headerLine, ...dataLines].join('\r\n')}\r\n`;
   }
 
