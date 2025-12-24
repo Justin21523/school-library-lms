@@ -19,6 +19,7 @@
 - `docs/implementation/0002-bibliographic-and-item-copies.md`
 - `docs/implementation/0003-circulation-checkout-checkin.md`
 - `docs/implementation/0004-web-console-and-api-integration.md`
+- `docs/implementation/0005-loans-and-renew.md`
 
 ## 註解規範
 - `docs/commenting-guidelines.md`

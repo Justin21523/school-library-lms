@@ -49,6 +49,26 @@
 ## 6) Circulation（借還/續借）
 > 借還建議用「動作端點」，避免前端直接改資料狀態造成不一致。
 
+### Loans（借閱查詢）
+- `GET /orgs/{orgId}/loans?status=open|closed|all&user_external_id=...&item_barcode=...&limit=...`
+  - 說明：
+    - `status` 未提供時預設 `open`（未歸還）
+    - `is_overdue` 由 `returned_at IS NULL AND due_at < now()` 推導（不存狀態）
+  - Response（摘要）：回傳 loan + borrower + item + bib title（便於 UI 顯示）
+    ```json
+    [
+      {
+        "id": "l_...",
+        "item_barcode": "LIB-00001234",
+        "bibliographic_title": "哈利波特：神秘的魔法石",
+        "user_external_id": "S1130123",
+        "due_at": "2025-12-15T23:59:59Z",
+        "renewed_count": 0,
+        "is_overdue": false
+      }
+    ]
+    ```
+
 - `POST /orgs/{orgId}/circulation/checkout`：借出（Librarian）
   - Request：
     ```json
@@ -80,8 +100,15 @@
     ```
 
 - `POST /orgs/{orgId}/circulation/renew`：續借（Librarian/Teacher/Student）
-  - Request：`{ "loan_id": "l_..." }`
-  - 驗證：續借次數、是否有人預約
+  - Request：
+    ```json
+    { "loan_id": "l_...", "actor_user_id": "u_admin..." }
+    ```
+  - Response（摘要）：
+    ```json
+    { "loan_id": "l_...", "due_at": "2026-01-15T23:59:59Z", "renewed_count": 1 }
+    ```
+  - 驗證：續借次數（max_renewals）、是否有人排隊（queued holds）
 
 ## 7) Holds（預約/保留）
 - `POST /orgs/{orgId}/holds`：建立預約（Teacher/Student）
