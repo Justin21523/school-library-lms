@@ -12,6 +12,10 @@ import { z } from 'zod';
 
 // z.enum：限定 role 必須是其中之一（避免資料庫 enum error 或拼字錯誤）。
 const roleSchema = z.enum(['admin', 'librarian', 'teacher', 'student', 'guest']);
+const statusSchema = z.enum(['active', 'inactive']);
+
+// UUID：多個端點都會用到（actor_user_id / userId / orgId ...）
+const uuidSchema = z.string().uuid();
 
 export const createUserSchema = z.object({
   // external_id：學號/教職員編號（來源系統的唯一鍵），比姓名可靠。
@@ -28,3 +32,58 @@ export const createUserSchema = z.object({
 });
 
 export type CreateUserInput = z.infer<typeof createUserSchema>;
+
+/**
+ * US-010：使用者 CSV 匯入
+ *
+ * 端點：POST /api/v1/orgs/:orgId/users/import
+ *
+ * 設計重點（MVP）：
+ * - 沒有 auth，因此匯入必須帶 actor_user_id，後端驗證 admin/librarian（避免名冊資料裸奔）
+ * - 匯入提供兩個 mode：
+ *   - preview：回傳「新增/更新/不變/將停用」的預估與錯誤列出（不寫 DB）
+ *   - apply：實際寫入 DB，並寫入 audit_events（可追溯）
+ *
+ * CSV 內容規範（在 docs 會更完整說明）：
+ * - header 必須包含 external_id 與 name
+ * - role 可以在 CSV 提供，或由 default_role 補上（常見：整份檔都是學生）
+ * - deactivate_missing 可選：把「未出現在 CSV 的學生/教師」批次停用（每學期最常用）
+ */
+
+// 匯入只涵蓋「名冊」角色：student/teacher
+// - staff（admin/librarian）通常由館員手動建立，避免名冊匯入誤設權限
+const importRosterRoleSchema = z.enum(['student', 'teacher']);
+
+export const importUsersCsvSchema = z.object({
+  // actor_user_id：執行匯入的館員/管理者（寫 audit_events 的 actor）
+  actor_user_id: uuidSchema,
+
+  // mode：preview / apply
+  mode: z.enum(['preview', 'apply']),
+
+  // csv_text：CSV 文字內容（由前端讀檔後送出）
+  // - 這裡做一個上限避免誤傳極大檔案（MVP：5MB）
+  csv_text: z.string().min(1).max(5_000_000),
+
+  // default_role：當 CSV 沒有 role 欄位，或某列 role 為空時使用（常見：整份檔都是學生）
+  default_role: importRosterRoleSchema.optional(),
+
+  // deactivate_missing：是否要停用「未出現在 CSV」的使用者（通常是畢業/轉出）
+  // - 這是 roster sync 的常見需求；若開啟，後端會把 CSV 視為「來源清單」
+  deactivate_missing: z.boolean().optional(),
+
+  // deactivate_missing_roles：要套用停用的角色範圍（預設只處理 student，較安全）
+  deactivate_missing_roles: z.array(importRosterRoleSchema).min(1).max(2).optional(),
+
+  // source_filename：前端可帶入檔名，方便 audit event 追溯（不必填）
+  source_filename: z.string().trim().min(1).max(200).optional(),
+
+  // source_note：操作備註（例如「113-1 學期名冊」）（不必填）
+  source_note: z.string().trim().min(1).max(200).optional(),
+});
+
+export type ImportUsersCsvInput = z.infer<typeof importUsersCsvSchema>;
+
+// 讓 service 型別可以重用（不需要每個檔案都重新宣告 union）
+export type UserRole = z.infer<typeof roleSchema>;
+export type UserStatus = z.infer<typeof statusSchema>;

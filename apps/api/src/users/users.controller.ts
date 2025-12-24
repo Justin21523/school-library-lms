@@ -19,7 +19,7 @@ import {
   Query,
 } from '@nestjs/common';
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
-import { createUserSchema } from './users.schemas';
+import { createUserSchema, importUsersCsvSchema } from './users.schemas';
 import { UsersService } from './users.service';
 
 @Controller('api/v1/orgs/:orgId/users')
@@ -41,5 +41,21 @@ export class UsersController {
     @Body(new ZodValidationPipe(createUserSchema)) body: any,
   ) {
     return await this.users.create(orgId, body);
+  }
+
+  /**
+   * US-010：使用者名冊 CSV 匯入（preview/apply）
+   *
+   * - preview：不寫 DB，只回傳「將新增/更新/停用」的預估與錯誤
+   * - apply：寫 DB + 寫 audit_events
+   *
+   * 注意：MVP 無登入，因此必須由前端傳 actor_user_id，後端會驗證 admin/librarian。
+   */
+  @Post('import')
+  async importCsv(
+    @Param('orgId', new ParseUUIDPipe()) orgId: string,
+    @Body(new ZodValidationPipe(importUsersCsvSchema)) body: any,
+  ) {
+    return await this.users.importCsv(orgId, body);
   }
 }
