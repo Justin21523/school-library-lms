@@ -30,6 +30,7 @@
 - `docs/implementation/0013-holds-expiry-and-maintenance.md`
 - `docs/implementation/0014-ready-holds-report-and-print-slips.md`
 - `docs/implementation/0015-circulation-fulfill-scan-workstation.md`
+- `docs/implementation/0016-us-051-zero-circulation-report.md`
 
 ## 註解規範
 - `docs/commenting-guidelines.md`

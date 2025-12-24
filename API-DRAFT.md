@@ -363,6 +363,34 @@
 - CSV Response：
   - `format=csv` 時回傳 `text/csv`（含 UTF-8 BOM），並以 `Content-Disposition: attachment` 觸發下載
 
+### 9.4 Zero Circulation（US-051 零借閱清單 / 汰舊參考）
+> 這份清單用於館藏調整：找出「在指定期間內沒有任何借出」的書目，作為汰舊/補書決策的參考。
+
+- `GET /orgs/{orgId}/reports/zero-circulation?actor_user_id=...&from=...&to=...&limit=...&format=json|csv`
+- 權限（MVP 最小控管）：
+  - `actor_user_id` 必填，且必須是 `admin/librarian`（active）
+- Query params：
+  - `from/to`：必填（timestamptz）
+  - `limit`：可選（1..5000），預設 200
+  - `format`：可選 `json|csv`，預設 `json`
+- JSON Response（摘要）：
+  ```json
+  [
+    {
+      "bibliographic_id": "b_...",
+      "bibliographic_title": "哈利波特：神秘的魔法石",
+      "classification": "823.914",
+      "isbn": "9789573317248",
+      "total_items": 3,
+      "available_items": 3,
+      "last_checked_out_at": "2023-05-10T08:00:00Z",
+      "loan_count_in_range": 0
+    }
+  ]
+  ```
+- CSV Response：
+  - `format=csv` 時回傳 `text/csv`（含 UTF-8 BOM），並以 `Content-Disposition: attachment` 觸發下載
+
 ## 10) Audit Events
 > audit_events 用於「追溯誰在什麼時間做了什麼」，通常包含敏感資訊，因此建議權限保守。
 
