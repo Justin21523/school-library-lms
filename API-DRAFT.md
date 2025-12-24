@@ -111,11 +111,67 @@
   - 驗證：續借次數（max_renewals）、是否有人排隊（queued holds）
 
 ## 7) Holds（預約/保留）
-- `POST /orgs/{orgId}/holds`：建立預約（Teacher/Student）
-  - Request：`{ "bibliographic_id": "b_...", "user_id": "u_...", "pickup_location_id": "loc_main" }`
-- `GET /orgs/{orgId}/holds?user_id=...&status=...`：查詢預約（Librarian / 自己的預約）
-- `POST /orgs/{orgId}/holds/{holdId}/cancel`：取消預約（本人或 Librarian）
-- `POST /orgs/{orgId}/holds/{holdId}/fulfill`：完成取書/借出（Librarian）
+> Holds 的核心概念是「以書目（bibliographic_id）排隊」，並在某一冊可供取書時，指派該冊並進入 ready。
+
+目前 MVP 尚未做登入（auth），因此本專案採用「actor_user_id（可選）」的方式做最小稽核：
+- **Web Console（館員）**：會傳 `actor_user_id`（admin/librarian）
+- **OPAC 自助**：不傳 `actor_user_id`（後端視為 borrower 本人操作）
+
+### 7.1 建立預約（Place hold）
+- `POST /orgs/{orgId}/holds`
+- Request：
+  ```json
+  {
+    "bibliographic_id": "b_...",
+    "user_external_id": "S1130123",
+    "pickup_location_id": "loc_...",
+    "actor_user_id": "u_admin_or_librarian_optional"
+  }
+  ```
+- 行為（摘要）：
+  - 建立 hold（預設 `status=queued`）
+  - 若同書目存在可借冊（`item_copies.status=available`），系統會把該冊指派給「隊首 queued hold」並轉成 `ready`
+  - 被指派的冊會變成 `on_hold`（避免被一般 checkout 借走）
+- Response：回傳「hold + borrower + bib title + pickup location + assigned item」的組合資料（snake_case）
+
+### 7.2 查詢預約（List holds）
+- `GET /orgs/{orgId}/holds?status=...&user_external_id=...&item_barcode=...&bibliographic_id=...&pickup_location_id=...&limit=...`
+- 說明：
+  - `status` 可為 `queued|ready|cancelled|fulfilled|expired|all`；未提供時等同 `all`
+  - `user_external_id`/`item_barcode`/`bibliographic_id`/`pickup_location_id` 為精確過濾
+- Response：`HoldWithDetails[]`
+
+### 7.3 取消預約（Cancel）
+- `POST /orgs/{orgId}/holds/{holdId}/cancel`
+- Request：
+  ```json
+  { "actor_user_id": "u_admin_or_librarian_optional" }
+  ```
+- 行為（摘要）：
+  - 只允許取消 `queued/ready`
+  - 若取消的是 `ready` 且已指派冊，會把冊「轉給下一位 queued」或「釋放回 available」
+- Response：回傳更新後的 `HoldWithDetails`
+
+### 7.4 完成取書借出（Fulfill）
+- `POST /orgs/{orgId}/holds/{holdId}/fulfill`
+- Request：
+  ```json
+  { "actor_user_id": "u_admin_or_librarian" }
+  ```
+- 行為（摘要）：
+  - 只允許 `ready` 的 hold
+  - 會建立 loan、把 item 從 `on_hold → checked_out`、把 hold 從 `ready → fulfilled`，並寫入 `audit_events`
+- Response（摘要）：
+  ```json
+  {
+    "hold_id": "h_...",
+    "loan_id": "l_...",
+    "item_id": "i_...",
+    "item_barcode": "LIB-00001234",
+    "user_id": "u_...",
+    "due_at": "2025-12-15T23:59:59Z"
+  }
+  ```
 
 ## 8) Policies
 - `GET /orgs/{orgId}/circulation-policies`：列出政策

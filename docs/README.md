@@ -20,6 +20,7 @@
 - `docs/implementation/0003-circulation-checkout-checkin.md`
 - `docs/implementation/0004-web-console-and-api-integration.md`
 - `docs/implementation/0005-loans-and-renew.md`
+- `docs/implementation/0006-holds-and-opac.md`
 
 ## 註解規範
 - `docs/commenting-guidelines.md`

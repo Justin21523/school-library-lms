@@ -11,7 +11,7 @@
 
 ## 專案現況（目前做到了哪裡）
 - 文件已整理成「可開發」：`MVP-SPEC.md`、`USER-STORIES.md`、`API-DRAFT.md`、`DATA-DICTIONARY.md`、`db/schema.sql`
-- 程式已能端到端操作（MVP 版本）：`apps/api` 已落地主檔/書目/冊/借還/續借/借閱查詢 API（另有 `/health`），`apps/web` 已提供 Web Console（`/orgs`）呼叫既有 API
+- 程式已能端到端操作（MVP 版本）：`apps/api` 已落地主檔/書目/冊/借還/續借/借閱查詢/預約（holds）API（另有 `/health`），`apps/web` 已提供 Web Console（`/orgs`）並逐步補齊 OPAC
 - 架構決策已記錄（含擴充路線）：`ARCHITECTURE.md`、`docs/design-rationale.md`
 
 ## MVP 功能範圍（你可以期待什麼）
@@ -60,6 +60,7 @@ MVP 預設政策已定案（可調）：請見 `MVP-SPEC.md`。
 - 實作說明（每次實作都會補）：`docs/implementation/0001-api-foundation-and-core-master-data.md`
 - Web Console 實作說明：`docs/implementation/0004-web-console-and-api-integration.md`
 - Loans/Renew 實作說明：`docs/implementation/0005-loans-and-renew.md`
+- Holds/OPAC 實作說明：`docs/implementation/0006-holds-and-opac.md`
 - 註解與教學文件規範：`docs/commenting-guidelines.md`
 
 ## 本機開發（從 0 到跑起來）
