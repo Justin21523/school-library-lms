@@ -88,6 +88,41 @@ export const fulfillHoldSchema = z.object({
 export type FulfillHoldInput = z.infer<typeof fulfillHoldSchema>;
 
 /**
+ * US-0xx：Holds 到期處理（ready_until → expired）
+ *
+ * 這是一個「館員每日例行作業」型的端點：
+ * - 目的：把超過取書期限（ready_until）的 hold 標記為 expired，並釋放/轉派冊
+ * - 風險：會批次更新資料，因此必須要求 actor_user_id（admin/librarian）
+ *
+ * 設計：
+ * - mode=preview：只列出「會被處理的 holds」與摘要（不寫入 DB）
+ * - mode=apply：實際更新（寫 DB + 寫 audit_events）
+ *
+ * 為什麼要有 preview？
+ * - 學校現場常見「某天停課/校內活動」導致取書延後；館員可能想先確認清單再處理
+ * - preview 能降低誤操作成本（尤其是第一次導入）
+ */
+export const holdMaintenanceModeSchema = z.enum(['preview', 'apply']);
+
+export const expireReadyHoldsSchema = z.object({
+  actor_user_id: uuidSchema,
+  mode: holdMaintenanceModeSchema,
+
+  // as_of：用哪個時間點判定過期（未提供時由後端用 DB now() 取得）
+  // - 用字串是為了允許 ISO 8601（或 Postgres 能 parse 的 timestamptz 格式）
+  as_of: z.string().trim().min(1).max(64).optional(),
+
+  // limit：一次處理/預覽最多幾筆（避免長時間鎖）
+  // - 我們沿用 query 版的 int preprocess，讓前端送 string/number 都可
+  limit: intFromStringSchema.optional(),
+
+  // note：操作備註（寫入 audit metadata；選填）
+  note: z.string().trim().min(1).max(200).optional(),
+});
+
+export type ExpireReadyHoldsInput = z.infer<typeof expireReadyHoldsSchema>;
+
+/**
  * list holds query
  */
 export const listHoldsQuerySchema = z.object({
@@ -100,4 +135,3 @@ export const listHoldsQuerySchema = z.object({
 });
 
 export type ListHoldsQuery = z.infer<typeof listHoldsQuerySchema>;
-

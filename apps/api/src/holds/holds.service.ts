@@ -27,7 +27,13 @@ import {
 } from '@nestjs/common';
 import type { PoolClient } from 'pg';
 import { DbService } from '../db/db.service';
-import type { CancelHoldInput, CreateHoldInput, FulfillHoldInput, ListHoldsQuery } from './holds.schemas';
+import type {
+  CancelHoldInput,
+  CreateHoldInput,
+  ExpireReadyHoldsInput,
+  FulfillHoldInput,
+  ListHoldsQuery,
+} from './holds.schemas';
 
 // 與 db/schema.sql enum 對齊（用 string union 表示即可）。
 type UserRole = 'admin' | 'librarian' | 'teacher' | 'student' | 'guest';
@@ -92,6 +98,49 @@ export type HoldWithDetailsRow = HoldRow & {
   assigned_item_status: ItemStatus | null;
 };
 
+/**
+ * Holds 到期處理（ready_until → expired）
+ *
+ * Preview 與 Apply 的回傳 shape：
+ * - preview：回傳「會被處理的清單」與摘要
+ * - apply：回傳「實際處理結果」與摘要
+ *
+ * 注意：回傳的資料量可能很大，因此兩者都會受 limit 控制（預設 200）
+ */
+export type ExpireReadyHoldsPreviewResult = {
+  mode: 'preview';
+  as_of: string;
+  limit: number;
+  candidates_total: number;
+  holds: HoldWithDetailsRow[];
+};
+
+export type ExpireReadyHoldsApplyRow = {
+  hold_id: string;
+  assigned_item_id: string | null;
+  assigned_item_barcode: string | null;
+  item_status_before: ItemStatus | null;
+  item_status_after: ItemStatus | null;
+  transferred_to_hold_id: string | null;
+  audit_event_id: string;
+};
+
+export type ExpireReadyHoldsApplyResult = {
+  mode: 'apply';
+  as_of: string;
+  limit: number;
+  summary: {
+    candidates_total: number;
+    processed: number;
+    transferred: number;
+    released: number;
+    skipped_item_action: number;
+  };
+  results: ExpireReadyHoldsApplyRow[];
+};
+
+export type ExpireReadyHoldsResult = ExpireReadyHoldsPreviewResult | ExpireReadyHoldsApplyResult;
+
 type HoldForUpdateRow = {
   id: string;
   user_id: string;
@@ -115,6 +164,14 @@ type LoanRow = {
   item_id: string;
   due_at: string;
   status: LoanStatus;
+};
+
+type ExpiredReadyHoldCandidateRow = {
+  id: string;
+  user_id: string;
+  bibliographic_id: string;
+  assigned_item_id: string | null;
+  ready_until: string;
 };
 
 @Injectable()
@@ -686,6 +743,258 @@ export class HoldsService {
     }
   }
 
+  /**
+   * expireReady（Holds 到期處理）
+   *
+   * - 把 status=ready 且 ready_until < as_of 的 hold 標記為 expired
+   * - 若該 hold 有指派冊：
+   *   - 若有下一位 queued：把同冊轉派給隊首（queued → ready）
+   *   - 若沒有 queued：把冊釋放回 available
+   *
+   * 為什麼要做成「館員動作端點」？
+   * - ready_until 過期是「需要每日處理」的現場工作（到書未取）
+   * - 沒有這步，冊會長期卡在 on_hold，降低可借率
+   * - MVP 沒有排程器/背景工作者，因此先做成可手動觸發的端點（後續可接 cron）
+   */
+  async expireReady(orgId: string, input: ExpireReadyHoldsInput): Promise<ExpireReadyHoldsResult> {
+    try {
+      return await this.db.transaction(async (client) => {
+        // 1) actor 必須是 staff（館員/管理者）
+        const actor = await this.requireUserById(client, orgId, input.actor_user_id);
+
+        if (actor.status !== 'active') {
+          throw new ConflictException({
+            error: { code: 'USER_INACTIVE', message: 'Actor user is inactive' },
+          });
+        }
+
+        if (!STAFF_ROLES.includes(actor.role)) {
+          throw new ForbiddenException({
+            error: { code: 'FORBIDDEN', message: 'Actor is not allowed to expire holds' },
+          });
+        }
+
+        // 2) as_of：若未提供，使用 DB now()（避免 API server 與 DB 時鐘差異）
+        const asOf = await this.resolveAsOf(client, input.as_of);
+
+        // 3) limit：一次最多處理/預覽多少筆（避免鎖太久）
+        const limit = input.limit ?? 200;
+
+        // 4) candidates_total：先算「總共有多少筆 ready hold 已過期」
+        // - 這能讓 UI 顯示「你是否需要調大 limit 或分批處理」
+        const countResult = await client.query<{ count: string }>(
+          `
+          SELECT COUNT(*)::text AS count
+          FROM holds
+          WHERE organization_id = $1
+            AND status = 'ready'
+            AND ready_until IS NOT NULL
+            AND ready_until < $2::timestamptz
+          `,
+          [orgId, asOf],
+        );
+        const candidatesTotal = Number.parseInt(countResult.rows[0]?.count ?? '0', 10);
+
+        // 5) preview：只列出「會被處理」的清單（不寫 DB）
+        if (input.mode === 'preview') {
+          const holds = await this.listExpiredReadyHoldsWithDetails(client, orgId, asOf, limit);
+
+          return {
+            mode: 'preview',
+            as_of: asOf,
+            limit,
+            candidates_total: candidatesTotal,
+            holds,
+          };
+        }
+
+        // 6) apply：鎖住要處理的 holds（SKIP LOCKED 避免卡住 fulfill/取消）
+        const candidates = await client.query<ExpiredReadyHoldCandidateRow>(
+          `
+          SELECT id, user_id, bibliographic_id, assigned_item_id, ready_until
+          FROM holds
+          WHERE organization_id = $1
+            AND status = 'ready'
+            AND ready_until IS NOT NULL
+            AND ready_until < $2::timestamptz
+          ORDER BY ready_until ASC
+          LIMIT $3
+          FOR UPDATE SKIP LOCKED
+          `,
+          [orgId, asOf, limit],
+        );
+
+        const results: ExpireReadyHoldsApplyRow[] = [];
+        let transferred = 0;
+        let released = 0;
+        let skippedItemAction = 0;
+
+        // 7) 逐筆處理（同一個 transaction 內）
+        for (const hold of candidates.rows) {
+          // 7.1 先把 hold 標記 expired（此時仍保留 assigned_item_id，作為歷史資訊）
+          await client.query(
+            `
+            UPDATE holds
+            SET status = 'expired'
+            WHERE organization_id = $1
+              AND id = $2
+            `,
+            [orgId, hold.id],
+          );
+
+          let assignedItemBarcode: string | null = null;
+          let itemStatusBefore: ItemStatus | null = null;
+          let itemStatusAfter: ItemStatus | null = null;
+          let transferredToHoldId: string | null = null;
+
+          // 7.2 若有指派冊：決定要「轉派」還是「釋放」
+          // - 沒有指派冊：代表資料不一致（理論上 ready 一定有 assigned item）
+          //   但我們仍可把它標記 expired，避免 UI 卡著一筆無法 fulfill 的 ready hold
+          if (!hold.assigned_item_id) {
+            skippedItemAction += 1;
+          } else {
+            // 鎖住 item（與 cancel/fulfill 同樣：hold → item 的鎖順序）
+            const item = await this.requireItemByIdForUpdate(client, orgId, hold.assigned_item_id);
+
+            assignedItemBarcode = item.barcode;
+            itemStatusBefore = item.status;
+            itemStatusAfter = item.status;
+
+            // 保險：如果 item 其實不是同一本書目的冊，代表資料有問題；不要擅自改 item
+            if (item.bibliographic_id !== hold.bibliographic_id) {
+              skippedItemAction += 1;
+            } else if (item.status === 'on_hold' || item.status === 'available') {
+              // 正常情境：ready hold 的 item 應該是 on_hold
+              // - 但若曾被手動釋放成 available，我們仍可以把它轉派給下一位 queued hold
+
+              const next = await this.findNextQueuedHold(client, orgId, hold.bibliographic_id);
+
+              if (next) {
+                // 轉派：把 item 指派給下一位 queued hold
+                const pickupDays = next.hold_pickup_days ?? DEFAULT_HOLD_PICKUP_DAYS;
+
+                // 若 item 目前是 available，需要先轉回 on_hold（避免被 checkout）
+                if (item.status !== 'on_hold') {
+                  await client.query(
+                    `
+                    UPDATE item_copies
+                    SET status = 'on_hold', updated_at = now()
+                    WHERE organization_id = $1
+                      AND id = $2
+                    `,
+                    [orgId, item.id],
+                  );
+                }
+
+                await client.query(
+                  `
+                  UPDATE holds
+                  SET status = 'ready',
+                      assigned_item_id = $1,
+                      ready_at = now(),
+                      ready_until = now() + ($2::int * interval '1 day')
+                  WHERE organization_id = $3
+                    AND id = $4
+                  `,
+                  [item.id, pickupDays, orgId, next.id],
+                );
+
+                transferredToHoldId = next.id;
+                transferred += 1;
+                itemStatusAfter = 'on_hold';
+              } else {
+                // 釋放：沒有 queued holds，就把冊釋放回 available
+                await client.query(
+                  `
+                  UPDATE item_copies
+                  SET status = 'available', updated_at = now()
+                  WHERE organization_id = $1
+                    AND id = $2
+                  `,
+                  [orgId, item.id],
+                );
+
+                released += 1;
+                itemStatusAfter = 'available';
+              }
+            } else {
+              // item 狀態不在 on_hold/available：
+              // - 例如 checked_out（代表已被借走）、lost/withdrawn/repair
+              // - 這些都不應該在這個 job 裡擅自改動，因此只標記 hold expired，item 不動
+              skippedItemAction += 1;
+            }
+          }
+
+          // 7.3 寫 audit（每筆 hold 一個事件，方便用 entity_id=holdId 追溯）
+          const auditInsert = await client.query<{ id: string }>(
+            `
+            INSERT INTO audit_events (
+              organization_id,
+              actor_user_id,
+              action,
+              entity_type,
+              entity_id,
+              metadata
+            )
+            VALUES ($1, $2, $3, $4, $5, $6::jsonb)
+            RETURNING id
+            `,
+            [
+              orgId,
+              actor.id,
+              'hold.expire',
+              'hold',
+              hold.id,
+              JSON.stringify({
+                as_of: asOf,
+                note: input.note ?? null,
+                previous_status: 'ready',
+                ready_until: hold.ready_until,
+                assigned_item_id: hold.assigned_item_id,
+                assigned_item_barcode: assignedItemBarcode,
+                item_status_before: itemStatusBefore,
+                item_status_after: itemStatusAfter,
+                transferred_to_hold_id: transferredToHoldId,
+              }),
+            ],
+          );
+
+          results.push({
+            hold_id: hold.id,
+            assigned_item_id: hold.assigned_item_id,
+            assigned_item_barcode: assignedItemBarcode,
+            item_status_before: itemStatusBefore,
+            item_status_after: itemStatusAfter,
+            transferred_to_hold_id: transferredToHoldId,
+            audit_event_id: auditInsert.rows[0]!.id,
+          });
+        }
+
+        return {
+          mode: 'apply',
+          as_of: asOf,
+          limit,
+          summary: {
+            candidates_total: candidatesTotal,
+            processed: results.length,
+            transferred,
+            released,
+            skipped_item_action: skippedItemAction,
+          },
+          results,
+        };
+      });
+    } catch (error: any) {
+      // 22P02/22007：timestamptz 解析失敗（as_of 格式錯）
+      if (error?.code === '22P02' || error?.code === '22007') {
+        throw new BadRequestException({
+          error: { code: 'VALIDATION_ERROR', message: 'Invalid query format' },
+        });
+      }
+      throw error;
+    }
+  }
+
   // ----------------------------
   // helper functions（DB 查詢與業務規則）
   // ----------------------------
@@ -1093,5 +1402,86 @@ export class HoldsService {
       [readyUntil],
     );
     return result.rows[0]?.expired ?? false;
+  }
+
+  private async resolveAsOf(client: PoolClient, asOfRaw: string | undefined) {
+    const trimmed = asOfRaw?.trim() ? asOfRaw.trim() : null;
+
+    if (trimmed) return trimmed;
+
+    // 由 DB 取得 now()：
+    // - 這樣「比較 ready_until 是否過期」與「本次操作的 as_of」使用同一個時間來源
+    const result = await client.query<{ now: string }>(`SELECT now()::timestamptz::text AS now`);
+    return result.rows[0]?.now ?? new Date().toISOString();
+  }
+
+  /**
+   * 查詢「已過期的 ready holds」（含顯示欄位）
+   *
+   * - 這個查詢是給 preview 用：不鎖資料
+   * - apply 則會用另一個 FOR UPDATE SKIP LOCKED 查詢（避免卡住）
+   */
+  private async listExpiredReadyHoldsWithDetails(
+    client: PoolClient,
+    orgId: string,
+    asOf: string,
+    limit: number,
+  ): Promise<HoldWithDetailsRow[]> {
+    const result = await client.query<HoldWithDetailsRow>(
+      `
+      SELECT
+        -- hold
+        h.id,
+        h.organization_id,
+        h.bibliographic_id,
+        h.user_id,
+        h.pickup_location_id,
+        h.placed_at,
+        h.status,
+        h.assigned_item_id,
+        h.ready_at,
+        h.ready_until,
+        h.cancelled_at,
+        h.fulfilled_at,
+
+        -- borrower
+        u.external_id AS user_external_id,
+        u.name AS user_name,
+        u.role AS user_role,
+
+        -- bib
+        b.title AS bibliographic_title,
+
+        -- pickup location
+        pl.code AS pickup_location_code,
+        pl.name AS pickup_location_name,
+
+        -- assigned item（可能為 NULL）
+        ai.barcode AS assigned_item_barcode,
+        ai.status AS assigned_item_status
+      FROM holds h
+      JOIN users u
+        ON u.id = h.user_id
+       AND u.organization_id = h.organization_id
+      JOIN bibliographic_records b
+        ON b.id = h.bibliographic_id
+       AND b.organization_id = h.organization_id
+      JOIN locations pl
+        ON pl.id = h.pickup_location_id
+       AND pl.organization_id = h.organization_id
+      LEFT JOIN item_copies ai
+        ON ai.id = h.assigned_item_id
+       AND ai.organization_id = h.organization_id
+      WHERE h.organization_id = $1
+        AND h.status = 'ready'
+        AND h.ready_until IS NOT NULL
+        AND h.ready_until < $2::timestamptz
+      ORDER BY h.ready_until ASC
+      LIMIT $3
+      `,
+      [orgId, asOf, limit],
+    );
+
+    return result.rows;
   }
 }

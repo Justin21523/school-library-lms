@@ -20,6 +20,7 @@ import { HoldsService } from './holds.service';
 import {
   cancelHoldSchema,
   createHoldSchema,
+  expireReadyHoldsSchema,
   fulfillHoldSchema,
   listHoldsQuerySchema,
 } from './holds.schemas';
@@ -61,5 +62,20 @@ export class HoldsController {
   ) {
     return await this.holds.fulfill(orgId, holdId, body);
   }
-}
 
+  /**
+   * Holds 到期處理（ready_until → expired）
+   *
+   * POST /api/v1/orgs/:orgId/holds/expire-ready
+   *
+   * - mode=preview：回傳「將被處理的 holds」清單（不寫 DB）
+   * - mode=apply：實際更新 holds + 釋放/轉派 item（寫 DB + 寫 audit）
+   */
+  @Post('expire-ready')
+  async expireReady(
+    @Param('orgId', new ParseUUIDPipe()) orgId: string,
+    @Body(new ZodValidationPipe(expireReadyHoldsSchema)) body: any,
+  ) {
+    return await this.holds.expireReady(orgId, body);
+  }
+}
