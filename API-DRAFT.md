@@ -248,8 +248,37 @@
   - `format=csv` 時回傳 `text/csv`，並以 `Content-Disposition: attachment` 觸發下載
 
 ### 9.2（預留）Top Circulation / Summary
-- `GET /orgs/{orgId}/reports/top-circulation?from=...&to=...&limit=...`：熱門書（Librarian）
-- `GET /orgs/{orgId}/reports/circulation-summary?from=...&to=...&group_by=day|week|month`：借閱量彙總（Librarian）
+- `GET /orgs/{orgId}/reports/top-circulation?actor_user_id=...&from=...&to=...&limit=...&format=json|csv`：熱門書（US-050；Librarian）
+  - 目的：以期間內 `loans`（借出交易）統計「借出次數最高的書」（書目層級）
+  - Query params：
+    - `from/to`：必填，ISO 8601（timestamptz）
+    - `limit`：選填，預設 50
+    - `format`：選填 `json|csv`，預設 `json`
+  - JSON Response（摘要）：
+    ```json
+    [
+      {
+        "bibliographic_id": "b_...",
+        "bibliographic_title": "哈利波特：神秘的魔法石",
+        "loan_count": 42,
+        "unique_borrowers": 31
+      }
+    ]
+    ```
+
+- `GET /orgs/{orgId}/reports/circulation-summary?actor_user_id=...&from=...&to=...&group_by=day|week|month&format=json|csv`：借閱量彙總（US-050；Librarian）
+  - 目的：以期間內 `loans.checked_out_at` 彙總借閱量（借出筆數）
+  - Query params：
+    - `from/to`：必填
+    - `group_by`：必填 `day|week|month`
+    - `format`：選填 `json|csv`，預設 `json`
+  - JSON Response（摘要）：
+    ```json
+    [
+      { "bucket_start": "2025-12-01T00:00:00.000Z", "loan_count": 5 },
+      { "bucket_start": "2025-12-02T00:00:00.000Z", "loan_count": 0 }
+    ]
+    ```
 
 ## 10) Audit Events
 > audit_events 用於「追溯誰在什麼時間做了什麼」，通常包含敏感資訊，因此建議權限保守。

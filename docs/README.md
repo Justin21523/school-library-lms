@@ -26,6 +26,7 @@
 - `docs/implementation/0009-item-exceptions-and-audit.md`
 - `docs/implementation/0010-users-csv-import.md`
 - `docs/implementation/0011-users-query-filter-and-update.md`
+- `docs/implementation/0012-us-050-reports-top-circulation-and-summary.md`
 
 ## 註解規範
 - `docs/commenting-guidelines.md`
