@@ -160,6 +160,15 @@ if (token) headers['authorization'] = `Bearer ${token}`;
    - `AUTH_TOKEN_SECRET`：任意長字串（production 請用強 secret）
    - `AUTH_BOOTSTRAP_SECRET`：任意長字串（只在初始化時使用）
 
+2) 若你還沒有任何 staff 使用者（admin/librarian）
+   - 由於 `/users` 現在是 staff-only 端點（受 guard 保護），第一次導入時建議直接在 DB 建一個 admin
+   - 例（PostgreSQL）：
+     ```sql
+     INSERT INTO users (organization_id, external_id, name, role, org_unit, status)
+     VALUES ('<orgId>', 'A0001', 'Admin', 'admin', NULL, 'active')
+     RETURNING id;
+     ```
+
 2) 用 bootstrap 設定第一個 admin 密碼（HTTP）
    - `POST /api/v1/orgs/:orgId/auth/bootstrap-set-password`
    - body：`bootstrap_secret + target_external_id + new_password`
