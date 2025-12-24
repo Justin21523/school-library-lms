@@ -311,6 +311,42 @@ export type FulfillHoldResult = {
   due_at: string;
 };
 
+// reports：取書架清單（Ready Holds / Pickup Shelf List）
+export type ReadyHoldsReportRow = {
+  // hold
+  hold_id: string;
+  ready_at: string | null;
+  ready_until: string | null;
+
+  // derived（用 as_of 推導）
+  is_expired: boolean;
+  days_until_expire: number | null;
+
+  // borrower
+  user_id: string;
+  user_external_id: string;
+  user_name: string;
+  user_role: User['role'];
+  user_org_unit: string | null;
+
+  // bib
+  bibliographic_id: string;
+  bibliographic_title: string;
+
+  // pickup location
+  pickup_location_id: string;
+  pickup_location_code: string;
+  pickup_location_name: string;
+
+  // assigned item（可能為 NULL）
+  assigned_item_id: string | null;
+  assigned_item_barcode: string | null;
+  assigned_item_call_number: string | null;
+  assigned_item_status: ItemStatus | null;
+  assigned_item_location_code: string | null;
+  assigned_item_location_name: string | null;
+};
+
 // reports：逾期清單（Overdue List）
 export type OverdueReportRow = {
   // loan
@@ -1011,12 +1047,48 @@ export async function applyExpireReadyHolds(
 /**
  * Reports（報表）
  *
- * MVP 先提供第一個現場常用報表：逾期清單（Overdue List）
+ * MVP 先把「學校每天會用」的查詢做成可匯出（JSON/CSV）的報表：
+ * - ready-holds：取書架清單（可取書）
+ * - overdue：逾期清單
+ * - US-050：熱門書、借閱量彙總
  *
  * 設計：
  * - 報表通常包含敏感資料，因此要求 `actor_user_id`（admin/librarian）
  * - 同一個 endpoint 可用 `format=csv` 下載 CSV
  */
+
+export async function listReadyHoldsReport(
+  orgId: string,
+  filters: {
+    actor_user_id: string;
+    as_of?: string;
+    pickup_location_id?: string;
+    limit?: number;
+  },
+) {
+  return await requestJson<ReadyHoldsReportRow[]>(`/api/v1/orgs/${orgId}/reports/ready-holds`, {
+    method: 'GET',
+    query: { ...filters, format: 'json' },
+  });
+}
+
+export async function downloadReadyHoldsReportCsv(
+  orgId: string,
+  filters: {
+    actor_user_id: string;
+    as_of?: string;
+    pickup_location_id?: string;
+    limit?: number;
+  },
+) {
+  const result = await requestText(`/api/v1/orgs/${orgId}/reports/ready-holds`, {
+    method: 'GET',
+    query: { ...filters, format: 'csv' },
+    accept: 'text/csv',
+  });
+
+  return result.text;
+}
 
 export async function listOverdueReport(
   orgId: string,
