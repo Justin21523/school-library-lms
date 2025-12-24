@@ -26,6 +26,7 @@ import {
   overdueReportQuerySchema,
   readyHoldsReportQuerySchema,
   topCirculationReportQuerySchema,
+  zeroCirculationReportQuerySchema,
 } from './reports.schemas';
 
 @Controller('api/v1/orgs/:orgId/reports')
@@ -98,6 +99,39 @@ export class ReportsController {
       res.setHeader(
         'content-disposition',
         `attachment; filename="ready-holds-${safeAsOf}${pickupSuffix}.csv"`,
+      );
+      res.setHeader('cache-control', 'no-store');
+      return csv;
+    }
+
+    return rows;
+  }
+
+  /**
+   * US-051：零借閱清單（Zero Circulation）
+   *
+   * - 以「書目（bibliographic_records）」為層級統計：只要該書目底下的所有冊在期間內都沒有借出，就列入清單
+   * - 同一端點支援 JSON + CSV（?format=csv）
+   */
+  @Get('zero-circulation')
+  async zeroCirculation(
+    @Param('orgId', new ParseUUIDPipe()) orgId: string,
+    @Query(new ZodValidationPipe(zeroCirculationReportQuerySchema)) query: any,
+    @Res({ passthrough: true }) res: any,
+  ) {
+    const rows = await this.reports.listZeroCirculation(orgId, query);
+
+    const format = (query.format ?? 'json') as 'json' | 'csv';
+    if (format === 'csv') {
+      const csv = this.reports.buildZeroCirculationCsv(rows);
+
+      const safeFrom = safeIsoDateForFilename(query.from);
+      const safeTo = safeIsoDateForFilename(query.to);
+
+      res.setHeader('content-type', 'text/csv; charset=utf-8');
+      res.setHeader(
+        'content-disposition',
+        `attachment; filename="zero-circulation-${safeFrom}-${safeTo}.csv"`,
       );
       res.setHeader('cache-control', 'no-store');
       return csv;

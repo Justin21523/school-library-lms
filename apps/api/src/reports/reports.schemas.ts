@@ -134,3 +134,26 @@ export const readyHoldsReportQuerySchema = z.object({
 });
 
 export type ReadyHoldsReportQuery = z.infer<typeof readyHoldsReportQuerySchema>;
+
+/**
+ * US-051：Zero Circulation（零借閱清單 / 零借閱報表）
+ *
+ * 需求：
+ * - 館員能選一段期間（from/to），找出「在此期間內沒有任何借出（loans）」的書目
+ * - 典型用途：汰舊（weeding）、館藏調整、補書決策
+ *
+ * MVP 限制：
+ * - USER-STORIES.md 提到「排除類型（參考書/典藏）」；但目前資料模型尚未有 material_type/collection_type 欄位
+ * - 因此本輪先提供「期間內零借閱」的核心功能；排除類型可在未來擴充（例如在 bib/item 增加欄位或 tag）
+ */
+export const zeroCirculationReportQuerySchema = z.object({
+  actor_user_id: uuidSchema,
+
+  from: z.string().trim().min(1).max(64),
+  to: z.string().trim().min(1).max(64),
+
+  limit: intFromStringSchema.optional(),
+  format: reportFormatSchema.optional(),
+});
+
+export type ZeroCirculationReportQuery = z.infer<typeof zeroCirculationReportQuerySchema>;

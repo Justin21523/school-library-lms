@@ -34,6 +34,7 @@ import type {
   OverdueReportQuery,
   ReadyHoldsReportQuery,
   TopCirculationReportQuery,
+  ZeroCirculationReportQuery,
 } from './reports.schemas';
 
 type UserRole = 'admin' | 'librarian' | 'teacher' | 'student' | 'guest';
@@ -149,6 +150,34 @@ export type ReadyHoldsReportRow = {
   assigned_item_status: ItemStatus | null;
   assigned_item_location_code: string | null;
   assigned_item_location_name: string | null;
+};
+
+/**
+ * US-051：ZeroCirculationReportRow（零借閱清單）
+ *
+ * 定義（本輪 MVP 實作）：
+ * - 以「書目（bibliographic_records）」為統計層級
+ * - 在 from..to 期間內，該書目底下的所有冊都沒有任何借出（loans）→ 列入清單
+ *
+ * 為什麼用書目層級？
+ * - 汰舊/館藏調整通常以「這本書」為單位決策（不會只看某一冊）
+ * - 若同書目有多冊，只要其中一冊有借出，就代表「這本書有人借」，不算零借閱
+ */
+export type ZeroCirculationReportRow = {
+  bibliographic_id: string;
+  bibliographic_title: string;
+  isbn: string | null;
+  classification: string | null;
+  published_year: number | null;
+
+  total_items: number;
+  available_items: number;
+
+  // 期間內借出次數（對本報表而言理論上應為 0；保留欄位方便理解/驗證）
+  loan_count_in_range: number;
+
+  // 最後一次借出時間（全期間；NULL 代表從未被借過）
+  last_checked_out_at: string | null;
 };
 
 @Injectable()
@@ -389,6 +418,111 @@ export class ReportsService {
   }
 
   /**
+   * US-051：listZeroCirculation（零借閱清單）
+   *
+   * 輸入：
+   * - from/to：期間（必填）
+   *
+   * 輸出（書目層級）：
+   * - total_items / available_items：讓館員知道「這本書有幾本、目前幾本可借」
+   * - last_checked_out_at：方便判斷「是不是很久以前借過，但最近完全沒借」
+   *
+   * MVP 限制：
+   * - USER-STORIES.md 提到「排除類型（參考書/典藏）」；但目前 schema 尚未有對應欄位
+   * - 目前先提供最小可用：期間內零借閱
+   */
+  async listZeroCirculation(
+    orgId: string,
+    query: ZeroCirculationReportQuery,
+  ): Promise<ZeroCirculationReportRow[]> {
+    // 1) 驗證 actor（館員/管理者）
+    await this.db.transaction(async (client) => {
+      await this.requireStaffActor(client, orgId, query.actor_user_id);
+    });
+
+    const from = query.from.trim();
+    const to = query.to.trim();
+    this.assertRangeOrder(from, to);
+
+    // 2) limit：預設 200（零借閱清單可能很長，建議分批匯出）
+    const limit = query.limit ?? 200;
+
+    try {
+      const result = await this.db.query<ZeroCirculationReportRow>(
+        `
+        WITH item_counts AS (
+          SELECT
+            bibliographic_id,
+            COUNT(*)::int AS total_items,
+            COUNT(*) FILTER (WHERE status = 'available')::int AS available_items
+          FROM item_copies
+          WHERE organization_id = $1
+          GROUP BY 1
+        ),
+        range_loans AS (
+          SELECT
+            i.bibliographic_id,
+            COUNT(l.id)::int AS loan_count_in_range
+          FROM loans l
+          JOIN item_copies i
+            ON i.id = l.item_id
+           AND i.organization_id = l.organization_id
+          WHERE l.organization_id = $1
+            AND l.checked_out_at >= $2::timestamptz
+            AND l.checked_out_at <= $3::timestamptz
+          GROUP BY 1
+        ),
+        last_loans AS (
+          SELECT
+            i.bibliographic_id,
+            MAX(l.checked_out_at)::timestamptz AS last_checked_out_at
+          FROM loans l
+          JOIN item_copies i
+            ON i.id = l.item_id
+           AND i.organization_id = l.organization_id
+          WHERE l.organization_id = $1
+          GROUP BY 1
+        )
+        SELECT
+          b.id AS bibliographic_id,
+          b.title AS bibliographic_title,
+          b.isbn,
+          b.classification,
+          b.published_year,
+          ic.total_items,
+          ic.available_items,
+          COALESCE(rl.loan_count_in_range, 0)::int AS loan_count_in_range,
+          ll.last_checked_out_at::text AS last_checked_out_at
+        FROM bibliographic_records b
+        JOIN item_counts ic
+          ON ic.bibliographic_id = b.id
+        LEFT JOIN range_loans rl
+          ON rl.bibliographic_id = b.id
+        LEFT JOIN last_loans ll
+          ON ll.bibliographic_id = b.id
+        WHERE b.organization_id = $1
+          AND COALESCE(rl.loan_count_in_range, 0) = 0
+        ORDER BY
+          -- NULL（從未借過）排最前面，方便先看到「完全沒被借過的書」
+          ll.last_checked_out_at ASC NULLS FIRST,
+          b.title ASC
+        LIMIT $4
+        `,
+        [orgId, from, to, limit],
+      );
+
+      return result.rows;
+    } catch (error: any) {
+      if (error?.code === '22P02' || error?.code === '22007') {
+        throw new BadRequestException({
+          error: { code: 'VALIDATION_ERROR', message: 'Invalid query format' },
+        });
+      }
+      throw error;
+    }
+  }
+
+  /**
    * US-050：listTopCirculation（熱門書）
    *
    * - 以 loans.checked_out_at 落在 from..to 的借出交易為統計母體
@@ -609,6 +743,40 @@ export class ReportsService {
       { key: 'bibliographic_id', label: 'bibliographic_id' },
       { key: 'pickup_location_id', label: 'pickup_location_id' },
       { key: 'assigned_item_id', label: 'item_id' },
+    ];
+
+    const headerLine = headers.map((h) => escapeCsvCell(h.label)).join(',');
+    const dataLines = rows.map((row) =>
+      headers
+        .map((h) => {
+          const value = row[h.key];
+          return escapeCsvCell(value);
+        })
+        .join(','),
+    );
+
+    return `\ufeff${[headerLine, ...dataLines].join('\r\n')}\r\n`;
+  }
+
+  /**
+   * US-051：buildZeroCirculationCsv
+   *
+   * 欄位順序（建議）：
+   * - 先放館員最常用的：title、classification、isbn、total_items、last_checked_out_at
+   * - 再放期間資訊：loan_count_in_range（理論上應為 0）
+   * - 最後放 bibliographic_id（方便對帳/跳轉）
+   */
+  buildZeroCirculationCsv(rows: ZeroCirculationReportRow[]) {
+    const headers: Array<{ key: keyof ZeroCirculationReportRow; label: string }> = [
+      { key: 'bibliographic_title', label: 'title' },
+      { key: 'classification', label: 'classification' },
+      { key: 'isbn', label: 'isbn' },
+      { key: 'published_year', label: 'published_year' },
+      { key: 'total_items', label: 'total_items' },
+      { key: 'available_items', label: 'available_items' },
+      { key: 'last_checked_out_at', label: 'last_checked_out_at' },
+      { key: 'loan_count_in_range', label: 'loan_count_in_range' },
+      { key: 'bibliographic_id', label: 'bibliographic_id' },
     ];
 
     const headerLine = headers.map((h) => escapeCsvCell(h.label)).join(',');
