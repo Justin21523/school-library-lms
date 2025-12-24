@@ -11,7 +11,7 @@
 
 ## 專案現況（目前做到了哪裡）
 - 文件已整理成「可開發」：`MVP-SPEC.md`、`USER-STORIES.md`、`API-DRAFT.md`、`DATA-DICTIONARY.md`、`db/schema.sql`
-- 程式已能端到端操作（MVP 版本）：`apps/api` 已落地主檔/使用者名冊匯入（CSV）/書目/冊/借還/續借/借閱查詢/預約（holds）/預約到期處理（holds expire-ready maintenance）/取書架清單（ready holds report + CSV/列印）/逾期報表（overdue report）/熱門書與借閱量報表（US-050）/稽核查詢（audit events）/冊異常狀態（lost/repair/withdrawn）API（另有 `/health`），`apps/web` 已提供 Web Console（`/orgs`）並逐步補齊 OPAC
+- 程式已能端到端操作（MVP 版本）：`apps/api` 已落地主檔/使用者名冊匯入（CSV）/書目/冊/借還/續借/借閱查詢/預約（holds）/預約到期處理（holds expire-ready maintenance）/取書架清單（ready holds report + CSV/列印）/逾期報表（overdue report）/熱門書與借閱量報表（US-050）/稽核查詢（audit events）/冊異常狀態（lost/repair/withdrawn）/Staff Auth（館員登入）API（另有 `/health`），`apps/web` 已提供 Web Console（`/orgs`）並逐步補齊 OPAC
 - 架構決策已記錄（含擴充路線）：`ARCHITECTURE.md`、`docs/design-rationale.md`
 
 ## MVP 功能範圍（你可以期待什麼）
@@ -72,6 +72,7 @@ MVP 預設政策已定案（可調）：請見 `MVP-SPEC.md`。
 - 櫃台取書借出掃碼（Circulation fulfill）實作說明：`docs/implementation/0015-circulation-fulfill-scan-workstation.md`
 - US-051 零借閱清單（Zero Circulation）實作說明：`docs/implementation/0016-us-051-zero-circulation-report.md`
 - US-061 借閱歷史保存期限（Retention）實作說明：`docs/implementation/0017-us-061-loan-history-retention.md`
+- Staff Auth / 權限收斂（Bearer token + actor_user_id 對齊）實作說明：`docs/implementation/0018-staff-auth-and-rbac.md`
 - 註解與教學文件規範：`docs/commenting-guidelines.md`
 
 ## 本機開發（從 0 到跑起來）

@@ -32,6 +32,7 @@
 - `docs/implementation/0015-circulation-fulfill-scan-workstation.md`
 - `docs/implementation/0016-us-051-zero-circulation-report.md`
 - `docs/implementation/0017-us-061-loan-history-retention.md`
+- `docs/implementation/0018-staff-auth-and-rbac.md`
 
 ## 註解規範
 - `docs/commenting-guidelines.md`

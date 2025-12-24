@@ -14,9 +14,16 @@
 { "error": { "code": "VALIDATION_ERROR", "message": "title is required", "details": { "field": "title" } } }
 ```
 
-### 驗證/授權（MVP 建議）
-- 公開（Guest）：OPAC 查詢（可選）
-- 需登入：館員/管理者操作（匯入、借還、改狀態、匯出、稽核）
+### 驗證/授權（MVP 目前實作）
+- Staff（館員後台 / Web Console）：
+  - 以 `Authorization: Bearer <access_token>` 驗證（token 由 `POST /orgs/{orgId}/auth/login` 取得）
+  - token 是 org scoped：token 內的 `org` 必須等於路徑 `orgId`（多租戶隔離）
+  - 仍保留 `actor_user_id`（寫 audit/一致性），但後端會要求它必須等於登入者（避免冒用）
+- Patron（OPAC）：
+  - MVP 仍保留部分「不需登入」的端點（例如書目/館別查詢、部分 holds 操作）
+  - 注意：這是 MVP 的最小可用假設；正式上線建議導入讀者身分驗證或另設 OPAC 權杖
+
+> 環境變數：`AUTH_TOKEN_SECRET`（token 簽章 secret）、`AUTH_BOOTSTRAP_SECRET`（第一次設定密碼用；未設定即禁用）
 
 ## 1) Organizations
 - `POST /orgs`：建立 organization（Admin）
@@ -172,9 +179,13 @@
 ## 7) Holds（預約/保留）
 > Holds 的核心概念是「以書目（bibliographic_id）排隊」，並在某一冊可供取書時，指派該冊並進入 ready。
 
-目前 MVP 尚未做登入（auth），因此本專案採用「actor_user_id（可選）」的方式做最小稽核：
-- **Web Console（館員）**：會傳 `actor_user_id`（admin/librarian）
-- **OPAC 自助**：不傳 `actor_user_id`（後端視為 borrower 本人操作）
+Holds 同時服務兩條流程：
+- **Web Console（館員）**：
+  - 重要 staff 動作端點（例如 fulfill、expire-ready maintenance）需要 Bearer token（StaffAuthGuard）
+  - 仍會帶 `actor_user_id`（寫 audit/一致性），且後端會要求它必須等於登入者
+- **OPAC 自助（讀者）**：
+  - MVP 仍允許部分操作不需登入（例如 place/cancel），`actor_user_id` 可不帶（後端視為 borrower 本人操作）
+  - 注意：正式上線建議導入讀者登入或 OPAC 專用權杖，避免「本人」假設被濫用
 
 ### 7.1 建立預約（Place hold）
 - `POST /orgs/{orgId}/holds`
@@ -289,7 +300,9 @@
 - `PATCH /orgs/{orgId}/circulation-policies/{policyId}`：更新政策（Librarian）
 
 ## 9) Reports（CSV/JSON）
-> 報表通常包含較敏感資訊（例如逾期名單），因此即使 MVP 尚未做登入，也建議在報表端點要求 `actor_user_id`。
+> 報表通常包含較敏感資訊（例如逾期名單），因此本專案把 reports 視為 staff-only：
+> - 需要 `Authorization: Bearer <token>`（StaffAuthGuard）
+> - 仍要求 `actor_user_id`（查詢者；admin/librarian），且必須等於登入者（避免冒用）
 
 ### 9.1 Overdue List（逾期清單）
 - `GET /orgs/{orgId}/reports/overdue?actor_user_id=...&as_of=...&org_unit=...&limit=...&format=json|csv`
@@ -412,11 +425,14 @@
   - `format=csv` 時回傳 `text/csv`（含 UTF-8 BOM），並以 `Content-Disposition: attachment` 觸發下載
 
 ## 10) Audit Events
-> audit_events 用於「追溯誰在什麼時間做了什麼」，通常包含敏感資訊，因此建議權限保守。
+> audit_events 用於「追溯誰在什麼時間做了什麼」，通常包含敏感資訊，因此本專案把它視為 staff-only：
+> - 需要 `Authorization: Bearer <token>`（StaffAuthGuard）
+> - 仍要求 `actor_user_id`（查詢者；admin/librarian），且必須等於登入者（避免冒用）
 
 ### 10.1 查詢稽核事件（List audit events）
 - `GET /orgs/{orgId}/audit-events?actor_user_id=...&from=...&to=...&actor_query=...&action=...&entity_type=...&entity_id=...&limit=...`
 - 權限（MVP 最小控管）：
+  - 需 Bearer token（StaffAuthGuard）
   - `actor_user_id` 必填，且必須是 `admin/librarian`（active）
 - Query params：
   - `from/to`：可選，ISO 8601（timestamptz），用於篩選 `audit_events.created_at`
@@ -425,3 +441,58 @@
   - `entity_type/entity_id`：可選，影響資料類型與 ID
   - `limit`：可選（1..5000），預設 200
 - Response：回傳 audit_event + actor 可顯示欄位（snake_case）
+
+## 11) Auth（Staff）
+> 提供 Web Console（館員後台）的最小可用登入機制（MVP 版本）。
+
+### 11.1 Staff Login
+- `POST /orgs/{orgId}/auth/login`
+- Request：
+  ```json
+  { "external_id": "A0001", "password": "your-password" }
+  ```
+- Response（摘要）：
+  ```json
+  {
+    "access_token": "base64url(payload).base64url(signature)",
+    "expires_at": "2025-12-25T12:00:00Z",
+    "user": { "id": "u_...", "external_id": "A0001", "name": "Admin", "role": "admin", "status": "active" }
+  }
+  ```
+- 說明：
+  - 目前只允許 staff role（`admin/librarian`）登入
+  - 若密碼尚未設定，會回 409（`PASSWORD_NOT_SET`）
+
+### 11.2 Set Staff Password（需要登入）
+- `POST /orgs/{orgId}/auth/set-password`
+- Header：
+  - `Authorization: Bearer <access_token>`
+- Request：
+  ```json
+  {
+    "actor_user_id": "u_admin_or_librarian",
+    "target_user_id": "u_target_staff",
+    "new_password": "new-password",
+    "note": "optional"
+  }
+  ```
+- 說明：
+  - 後端會寫入 `audit_events`（action=`auth.set_password`）
+  - StaffAuthGuard 會要求 `actor_user_id` 必須等於登入者（避免冒用）
+
+### 11.3 Bootstrap Set Password（第一次設定密碼）
+> 用於第一次導入：當 `user_credentials` 全空時，還沒有人能登入。
+
+- `POST /orgs/{orgId}/auth/bootstrap-set-password`
+- Request：
+  ```json
+  {
+    "bootstrap_secret": "AUTH_BOOTSTRAP_SECRET",
+    "target_external_id": "A0001",
+    "new_password": "new-password",
+    "note": "optional"
+  }
+  ```
+- 說明：
+  - 需要設定環境變數 `AUTH_BOOTSTRAP_SECRET`；未設定時此端點會被禁用
+  - 後端會寫入 `audit_events`（action=`auth.bootstrap_set_password`）
