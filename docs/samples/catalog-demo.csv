@@ -1,0 +1,4 @@
+冊條碼,索書號,館別,題名,作者,出版者,出版年,語言,主題詞,ISBN,分類號,冊狀態,入館日期,備註
+DEMO-NEW-0001,410 N11,MAIN,新進圖書（匯入示範）,Demo Author,Demo Publisher,2024,zh,測試;匯入,,410,在架,2025-01-01,Demo：透過 Catalog CSV Import 匯入
+DEMO-NEW-0002,523.1 N12,BRANCH,需要修復的書（匯入示範）,Demo Author 2,Demo Publisher,2022,zh,修復;測試,,523.1,修復中,2025-01-02,Demo：匯入即設為 repair
+DEMO-NEW-0003,000.000 N13,MAIN,報廢的書（匯入示範）,Demo Author 3,Demo Publisher,2010,zh,報廢;測試,,000.000,報廢,2025-01-03,Demo：匯入即設為 withdrawn

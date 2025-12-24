@@ -46,8 +46,9 @@ MVP 預設政策已定案（可調）：請見 `MVP-SPEC.md`。
 ├─ packages/
 │  └─ shared/       # 共用型別/工具（預留）
 ├─ db/
-│  ├─ schema.sql    # PostgreSQL schema 草案
-│  └─ README.md     # DB 說明
+│  ├─ schema.sql       # PostgreSQL schema 草案
+│  ├─ seed-demo.sql    # 本機 demo 假資料（可重複執行）
+│  └─ README.md        # DB 說明
 └─ docs/            # 新手友善：運作方式、入門、設計取捨
    └─ reference-docs/  # A–J 文獻與草案（含匯出完整版/摘要版）
 ```
@@ -79,6 +80,7 @@ MVP 預設政策已定案（可調）：請見 `MVP-SPEC.md`。
 - 逾期停權（Policy enforcement）實作說明：`docs/implementation/0020-policy-overdue-block.md`
 - US-022 書目/冊 CSV 匯入實作說明：`docs/implementation/0021-us-022-catalog-csv-import.md`
 - OPAC Account（讀者登入 + 我的借閱/我的預約）實作說明：`docs/implementation/0022-opac-account.md`
+- Demo organization + 假資料（seed）+ 導覽入口：`docs/implementation/0023-demo-seed-and-navigation.md`
 - 註解與教學文件規範：`docs/commenting-guidelines.md`
 
 ## 本機開發（從 0 到跑起來）
@@ -100,6 +102,11 @@ npm install
 PowerShell（Windows）範例：
 ```powershell
 Get-Content db\\schema.sql | docker compose exec -T postgres psql -U library -d library_system
+```
+
+### 3.5) （可選）匯入 demo 假資料（讓你立刻測所有面板）
+```bash
+docker compose exec -T postgres psql -U library -d library_system -f db/seed-demo.sql
 ```
 
 ### 4) 啟動開發伺服器（同時跑 web + api）
