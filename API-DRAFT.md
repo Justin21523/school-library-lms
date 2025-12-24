@@ -108,6 +108,26 @@
     ]
     ```
 
+- `POST /orgs/{orgId}/loans/purge-history`：借閱歷史保存期限清理（US-061；Admin）
+  - 目的：依保存天數（retention_days）刪除「已歸還且過久」的借閱紀錄（降低個資長期保存風險與 DB 量）
+  - 權限（MVP 最小控管）：
+    - `actor_user_id` 必填，且必須是 `admin`（active）
+  - 設計：`mode=preview|apply`（先預覽再套用，降低誤刪風險）
+  - Request（JSON）：
+    ```json
+    {
+      "actor_user_id": "u_admin",
+      "mode": "preview|apply",
+      "retention_days": 365,
+      "as_of": "2025-12-24T00:00:00Z",
+      "limit": 500,
+      "include_audit_events": false,
+      "note": "optional"
+    }
+    ```
+  - Response（preview）：回傳候選 loans 清單（含 borrower/item/title）與 `candidates_total/cutoff`
+  - Response（apply）：回傳刪除摘要（deleted_loans/deleted_audit_events）與 `audit_event_id`（action=`loan.purge_history`）
+
 - `POST /orgs/{orgId}/circulation/checkout`：借出（Librarian）
   - Request：
     ```json
