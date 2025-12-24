@@ -237,6 +237,25 @@ export type OverdueReportRow = {
   bibliographic_title: string;
 };
 
+// audit：稽核事件查詢
+export type AuditEventRow = {
+  // audit_event
+  id: string;
+  organization_id: string;
+  actor_user_id: string;
+  action: string;
+  entity_type: string;
+  entity_id: string;
+  metadata: unknown | null;
+  created_at: string;
+
+  // actor（事件操作者）的可顯示資訊
+  actor_external_id: string;
+  actor_name: string;
+  actor_role: User['role'];
+  actor_status: User['status'];
+};
+
 // API 錯誤格式（MVP 版本：以 error 物件包起來）
 export type ApiErrorBody = {
   error: {
@@ -783,4 +802,30 @@ export async function downloadOverdueReportCsv(
   });
 
   return result.text;
+}
+
+/**
+ * Audit Events（稽核事件）
+ *
+ * - 查詢端點：`GET /api/v1/orgs/:orgId/audit-events`
+ * - MVP 權限：要求 `actor_user_id`（查詢者）為 admin/librarian
+ */
+
+export async function listAuditEvents(
+  orgId: string,
+  filters: {
+    actor_user_id: string;
+    from?: string;
+    to?: string;
+    action?: string;
+    entity_type?: string;
+    entity_id?: string;
+    actor_query?: string;
+    limit?: number;
+  },
+) {
+  return await requestJson<AuditEventRow[]>(`/api/v1/orgs/${orgId}/audit-events`, {
+    method: 'GET',
+    query: filters,
+  });
 }
