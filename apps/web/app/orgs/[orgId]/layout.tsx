@@ -39,6 +39,12 @@ export default function OrgLayout({
           <div style={{ display: 'flex', gap: 12 }}>
             <Link href="/orgs">回到 org 列表</Link>
           </div>
+
+          {/* OPAC 快捷入口：同一個 org 的讀者端（方便測試 OPAC Account / holds）。 */}
+          <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+            <Link href={`/opac/orgs/${orgId}`}>前往 OPAC（此 org）</Link>
+            <Link href={`/opac/orgs/${orgId}/login`}>OPAC Login</Link>
+          </div>
         </div>
 
         <hr style={{ border: 0, borderTop: '1px solid var(--border)', margin: '16px 0' }} />
@@ -60,10 +66,16 @@ export default function OrgLayout({
               <Link href={`/orgs/${orgId}/users`}>Users</Link>
             </li>
             <li>
+              <Link href={`/orgs/${orgId}/users/import`}>Users CSV Import</Link>
+            </li>
+            <li>
               <Link href={`/orgs/${orgId}/circulation-policies`}>Circulation Policies</Link>
             </li>
             <li>
               <Link href={`/orgs/${orgId}/bibs`}>Bibs</Link>
+            </li>
+            <li>
+              <Link href={`/orgs/${orgId}/bibs/import`}>Catalog CSV Import</Link>
             </li>
             <li>
               <Link href={`/orgs/${orgId}/items`}>Items</Link>

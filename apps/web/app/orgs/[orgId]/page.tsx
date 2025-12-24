@@ -15,6 +15,8 @@
 
 import { useEffect, useState } from 'react';
 
+import Link from 'next/link';
+
 import type { Organization } from '../../lib/api';
 import { getOrganization } from '../../lib/api';
 import { formatErrorMessage } from '../../lib/error';
@@ -73,6 +75,50 @@ export default function OrgDashboardPage({ params }: { params: { orgId: string }
             <div className="muted">orgId</div>
             <div style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>
               {org.id}
+            </div>
+          </div>
+
+          <hr style={{ border: 0, borderTop: '1px solid var(--border)', margin: '16px 0' }} />
+
+          {/* 快捷入口：把「最常需要點的面板」集中在 Dashboard，避免只靠側邊欄（也方便 demo 測試）。 */}
+          <div>
+            <div className="muted">快速入口（Web Console）</div>
+            <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 8 }}>
+              <Link href={`/orgs/${org.id}/login`}>Staff Login</Link>
+              <Link href={`/orgs/${org.id}/users`}>Users</Link>
+              <Link href={`/orgs/${org.id}/users/import`}>Users CSV Import</Link>
+              <Link href={`/orgs/${org.id}/circulation-policies`}>Policies</Link>
+              <Link href={`/orgs/${org.id}/bibs`}>Bibs</Link>
+              <Link href={`/orgs/${org.id}/bibs/import`}>Catalog CSV Import</Link>
+              <Link href={`/orgs/${org.id}/items`}>Items</Link>
+              <Link href={`/orgs/${org.id}/inventory`}>Inventory</Link>
+              <Link href={`/orgs/${org.id}/circulation`}>Circulation</Link>
+              <Link href={`/orgs/${org.id}/holds`}>Holds</Link>
+              <Link href={`/orgs/${org.id}/loans`}>Loans</Link>
+            </div>
+          </div>
+
+          <div>
+            <div className="muted">快速入口（Reports / Maintenance / Audit）</div>
+            <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 8 }}>
+              <Link href={`/orgs/${org.id}/reports/overdue`}>Overdue</Link>
+              <Link href={`/orgs/${org.id}/reports/ready-holds`}>Ready Holds</Link>
+              <Link href={`/orgs/${org.id}/reports/top-circulation`}>Top Circulation</Link>
+              <Link href={`/orgs/${org.id}/reports/circulation-summary`}>Circulation Summary</Link>
+              <Link href={`/orgs/${org.id}/reports/zero-circulation`}>Zero Circulation</Link>
+              <Link href={`/orgs/${org.id}/holds/maintenance`}>Holds Maintenance</Link>
+              <Link href={`/orgs/${org.id}/loans/maintenance`}>Loans Maintenance</Link>
+              <Link href={`/orgs/${org.id}/audit-events`}>Audit Events</Link>
+            </div>
+          </div>
+
+          <div>
+            <div className="muted">快速入口（OPAC / 讀者端）</div>
+            <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 8 }}>
+              <Link href={`/opac/orgs/${org.id}`}>OPAC：搜尋與預約</Link>
+              <Link href={`/opac/orgs/${org.id}/login`}>OPAC Login</Link>
+              <Link href={`/opac/orgs/${org.id}/loans`}>OPAC：我的借閱</Link>
+              <Link href={`/opac/orgs/${org.id}/holds`}>OPAC：我的預約</Link>
             </div>
           </div>
         </div>
