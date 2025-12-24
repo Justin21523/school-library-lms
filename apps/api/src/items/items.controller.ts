@@ -22,7 +22,13 @@ import {
 } from '@nestjs/common';
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
 import { ItemsService } from './items.service';
-import { createItemSchema, updateItemSchema } from './items.schemas';
+import {
+  createItemSchema,
+  markItemLostSchema,
+  markItemRepairSchema,
+  markItemWithdrawnSchema,
+  updateItemSchema,
+} from './items.schemas';
 
 @Controller('api/v1/orgs/:orgId')
 export class ItemsController {
@@ -68,5 +74,41 @@ export class ItemsController {
     @Body(new ZodValidationPipe(updateItemSchema)) body: any,
   ) {
     return await this.items.update(orgId, itemId, body);
+  }
+
+  /**
+   * 冊異常狀態：mark-lost / mark-repair / mark-withdrawn
+   *
+   * 為什麼用動作端點（POST）而不是 PATCH status？
+   * - status 影響流通（checkout/renew/holds）與報表（overdue），屬於重要業務狀態
+   * - 需要 actor_user_id（館員/管理者）才能寫入 audit_events，保持可追溯
+   * - 需要在後端集中做「不合理狀態轉換」的防呆
+   */
+
+  @Post('items/:itemId/mark-lost')
+  async markLost(
+    @Param('orgId', new ParseUUIDPipe()) orgId: string,
+    @Param('itemId', new ParseUUIDPipe()) itemId: string,
+    @Body(new ZodValidationPipe(markItemLostSchema)) body: any,
+  ) {
+    return await this.items.markLost(orgId, itemId, body);
+  }
+
+  @Post('items/:itemId/mark-repair')
+  async markRepair(
+    @Param('orgId', new ParseUUIDPipe()) orgId: string,
+    @Param('itemId', new ParseUUIDPipe()) itemId: string,
+    @Body(new ZodValidationPipe(markItemRepairSchema)) body: any,
+  ) {
+    return await this.items.markRepair(orgId, itemId, body);
+  }
+
+  @Post('items/:itemId/mark-withdrawn')
+  async markWithdrawn(
+    @Param('orgId', new ParseUUIDPipe()) orgId: string,
+    @Param('itemId', new ParseUUIDPipe()) itemId: string,
+    @Body(new ZodValidationPipe(markItemWithdrawnSchema)) body: any,
+  ) {
+    return await this.items.markWithdrawn(orgId, itemId, body);
   }
 }

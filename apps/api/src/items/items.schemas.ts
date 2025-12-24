@@ -47,10 +47,49 @@ export const updateItemSchema = z.object({
   barcode: z.string().trim().min(1).max(64).optional(),
   call_number: z.string().trim().min(1).max(128).optional(),
   location_id: z.string().uuid().optional(),
-  status: itemStatusSchema.optional(),
   acquired_at: z.string().datetime().nullable().optional(),
   last_inventory_at: z.string().datetime().nullable().optional(),
   notes: z.string().trim().min(1).max(1000).nullable().optional(),
 });
 
 export type UpdateItemInput = z.infer<typeof updateItemSchema>;
+
+/**
+ * Item status actions（動作端點）
+ *
+ * 重要：冊的狀態（status）影響流通與報表，屬於「重要業務狀態」，
+ * 因此我們不讓它走一般的 PATCH（避免沒有 actor/audit、也避免不合理轉換）。
+ *
+ * 本輪（US-045）先落地三個最常用的「異常狀態」動作：
+ * - mark-lost：標記遺失
+ * - mark-repair：標記修復中
+ * - mark-withdrawn：標記報廢/下架
+ *
+ * 這些動作都要求 actor_user_id（館員/管理者），後端會寫入 audit_events。
+ */
+
+const actorUserIdSchema = z.string().uuid();
+
+// note：選填，方便館員補充原因（會寫入 audit_events.metadata，不會覆寫 item.notes）
+const optionalNoteSchema = z.string().trim().min(1).max(1000).optional();
+
+export const markItemLostSchema = z.object({
+  actor_user_id: actorUserIdSchema,
+  note: optionalNoteSchema,
+});
+
+export type MarkItemLostInput = z.infer<typeof markItemLostSchema>;
+
+export const markItemRepairSchema = z.object({
+  actor_user_id: actorUserIdSchema,
+  note: optionalNoteSchema,
+});
+
+export type MarkItemRepairInput = z.infer<typeof markItemRepairSchema>;
+
+export const markItemWithdrawnSchema = z.object({
+  actor_user_id: actorUserIdSchema,
+  note: optionalNoteSchema,
+});
+
+export type MarkItemWithdrawnInput = z.infer<typeof markItemWithdrawnSchema>;
