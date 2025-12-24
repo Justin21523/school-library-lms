@@ -293,6 +293,9 @@ export default function AuditEventsPage({ params }: { params: { orgId: string } 
                 <option value="hold.create" />
                 <option value="hold.cancel" />
                 <option value="hold.fulfill" />
+                <option value="item.mark_lost" />
+                <option value="item.mark_repair" />
+                <option value="item.mark_withdrawn" />
               </datalist>
             </label>
 
@@ -374,4 +377,3 @@ export default function AuditEventsPage({ params }: { params: { orgId: string } 
     </div>
   );
 }
-

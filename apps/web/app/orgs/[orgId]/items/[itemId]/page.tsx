@@ -4,10 +4,14 @@
  * 對應 API：
  * - GET   /api/v1/orgs/:orgId/items/:itemId
  * - PATCH /api/v1/orgs/:orgId/items/:itemId
+ * - POST  /api/v1/orgs/:orgId/items/:itemId/mark-lost
+ * - POST  /api/v1/orgs/:orgId/items/:itemId/mark-repair
+ * - POST  /api/v1/orgs/:orgId/items/:itemId/mark-withdrawn
  *
  * 這頁後續會提供：
  * - 查看冊資訊（條碼、索書號、狀態、位置）
- * - 更新冊（例如標記 lost/repair、改 location、補 notes）
+ * - 更新冊（改 location、補 notes 等主檔欄位）
+ * - 冊異常狀態（lost/repair/withdrawn）：走 action endpoints + 寫 audit_events（可追溯）
  */
 
 // 需要抓資料與更新表單，因此用 Client Component。
@@ -17,9 +21,22 @@ import { useEffect, useMemo, useState } from 'react';
 
 import Link from 'next/link';
 
-import type { ItemCopy, ItemStatus, Location } from '../../../../lib/api';
-import { getItem, listLocations, updateItem } from '../../../../lib/api';
+import type { ItemCopy, Location, User } from '../../../../lib/api';
+import {
+  getItem,
+  listLocations,
+  listUsers,
+  markItemLost,
+  markItemRepair,
+  markItemWithdrawn,
+  updateItem,
+} from '../../../../lib/api';
 import { formatErrorMessage } from '../../../../lib/error';
+
+// actor 候選人：必須是 active 的 admin/librarian（對齊後端的最小 RBAC）
+function isActorCandidate(user: User) {
+  return user.status === 'active' && (user.role === 'admin' || user.role === 'librarian');
+}
 
 export default function ItemDetailPage({
   params,
@@ -28,10 +45,15 @@ export default function ItemDetailPage({
 }) {
   const [item, setItem] = useState<ItemCopy | null>(null);
   const [locations, setLocations] = useState<Location[] | null>(null);
+  const [users, setUsers] = useState<User[] | null>(null);
 
   const [loading, setLoading] = useState(false);
+  const [loadingUsers, setLoadingUsers] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+
+  // actorUserId：館員/管理者（用於冊異常狀態動作，寫入 audit_events）
+  const [actorUserId, setActorUserId] = useState('');
 
   // ------ 更新表單（checkbox + payload）------
   const [updateBarcode, setUpdateBarcode] = useState(false);
@@ -42,9 +64,6 @@ export default function ItemDetailPage({
 
   const [updateLocationId, setUpdateLocationId] = useState(false);
   const [locationId, setLocationId] = useState('');
-
-  const [updateStatus, setUpdateStatus] = useState(false);
-  const [status, setStatus] = useState<ItemStatus>('available');
 
   const [updateNotes, setUpdateNotes] = useState(false);
   const [notes, setNotes] = useState('');
@@ -57,26 +76,41 @@ export default function ItemDetailPage({
 
   const [updating, setUpdating] = useState(false);
 
+  // ------ 冊異常狀態（lost/repair/withdrawn）------
+  const [actionNote, setActionNote] = useState('');
+  const [marking, setMarking] = useState<'lost' | 'repair' | 'withdrawn' | null>(null);
+
   const locationOptions = useMemo(() => locations ?? [], [locations]);
+  const actorCandidates = useMemo(() => (users ?? []).filter(isActorCandidate), [users]);
 
   async function refreshAll() {
     setLoading(true);
+    setLoadingUsers(true);
     setError(null);
-    setSuccess(null);
     try {
-      const [itemResult, locationsResult] = await Promise.all([
+      const [itemResult, locationsResult, usersResult] = await Promise.all([
         getItem(params.orgId, params.itemId),
         listLocations(params.orgId),
+        listUsers(params.orgId),
       ]);
 
       setItem(itemResult);
       setLocations(locationsResult);
+      setUsers(usersResult);
+
+      // 若尚未選 actor，就預設第一個可用館員（提升可用性）。
+      if (!actorUserId) {
+        const first = usersResult.find(isActorCandidate);
+        if (first) setActorUserId(first.id);
+      }
     } catch (e) {
       setItem(null);
       setLocations(null);
+      setUsers(null);
       setError(formatErrorMessage(e));
     } finally {
       setLoading(false);
+      setLoadingUsers(false);
     }
   }
 
@@ -91,7 +125,6 @@ export default function ItemDetailPage({
     setBarcode(item.barcode);
     setCallNumber(item.call_number);
     setLocationId(item.location_id);
-    setStatus(item.status);
     setNotes(item.notes ?? '');
     setAcquiredAt(item.acquired_at ?? '');
     setLastInventoryAt(item.last_inventory_at ?? '');
@@ -104,7 +137,6 @@ export default function ItemDetailPage({
       barcode?: string;
       call_number?: string;
       location_id?: string;
-      status?: ItemStatus;
       notes?: string | null;
       acquired_at?: string | null;
       last_inventory_at?: string | null;
@@ -136,8 +168,6 @@ export default function ItemDetailPage({
       payload.location_id = locationId;
     }
 
-    if (updateStatus) payload.status = status;
-
     // notes/acquired_at/last_inventory_at：schema 允許 nullable；空字串視為 null。
     if (updateNotes) payload.notes = notes.trim() ? notes.trim() : null;
     if (updateAcquiredAt) payload.acquired_at = acquiredAt.trim() ? acquiredAt.trim() : null;
@@ -162,7 +192,6 @@ export default function ItemDetailPage({
       setUpdateBarcode(false);
       setUpdateCallNumber(false);
       setUpdateLocationId(false);
-      setUpdateStatus(false);
       setUpdateNotes(false);
       setUpdateAcquiredAt(false);
       setUpdateLastInventoryAt(false);
@@ -170,6 +199,42 @@ export default function ItemDetailPage({
       setError(formatErrorMessage(e));
     } finally {
       setUpdating(false);
+    }
+  }
+
+  // ----------------------------
+  // 冊異常狀態：快捷按鈕（寫 audit_events）
+  // ----------------------------
+
+  async function runStatusAction(
+    action: 'lost' | 'repair' | 'withdrawn',
+    fn: () => Promise<void>,
+  ) {
+    setError(null);
+    setSuccess(null);
+
+    // 這些動作必須帶 actor_user_id（館員/管理者），後端才允許並寫 audit
+    if (!actorUserId) {
+      setError('請先選擇 actor_user_id（館員/管理者）');
+      return;
+    }
+
+    // withdrawn（報廢）通常是不可逆；前端做一次確認，降低誤點風險
+    if (action === 'withdrawn') {
+      const ok = window.confirm(
+        '確認要把此冊標記為 withdrawn（報廢/下架）嗎？此動作會影響流通與報表，通常不可逆。',
+      );
+      if (!ok) return;
+    }
+
+    setMarking(action);
+    try {
+      await fn();
+      await refreshAll();
+    } catch (e) {
+      setError(formatErrorMessage(e));
+    } finally {
+      setMarking(null);
     }
   }
 
@@ -191,6 +256,7 @@ export default function ItemDetailPage({
         </div>
 
         {loading ? <p className="muted">載入中…</p> : null}
+        {loadingUsers ? <p className="muted">載入 users（actor）中…</p> : null}
         {error ? <p className="error">錯誤：{error}</p> : null}
         {success ? <p className="success">{success}</p> : null}
 
@@ -214,8 +280,105 @@ export default function ItemDetailPage({
       </section>
 
       <section className="panel">
+        <h2 style={{ marginTop: 0 }}>冊異常狀態（US-045）</h2>
+        <p className="muted">
+          這些動作會呼叫 item status action endpoints，並寫入 <code>audit_events</code>，可到{' '}
+          <code>/orgs/:orgId/audit-events</code> 追溯誰改的。
+        </p>
+
+        <label>
+          actor_user_id（操作者：admin/librarian）
+          <select value={actorUserId} onChange={(e) => setActorUserId(e.target.value)} disabled={loadingUsers}>
+            <option value="">（請選擇）</option>
+            {actorCandidates.map((u) => (
+              <option key={u.id} value={u.id}>
+                {u.name} ({u.role}) · {u.external_id}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <label>
+          note（選填：寫入 audit metadata）
+          <input
+            value={actionNote}
+            onChange={(e) => setActionNote(e.target.value)}
+            placeholder="例：盤點找不到、封面破損送修、淘汰報廢"
+          />
+        </label>
+
+        {item ? (
+          <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 12 }}>
+            <button
+              type="button"
+              onClick={() =>
+                void runStatusAction('lost', async () => {
+                  await markItemLost(params.orgId, params.itemId, {
+                    actor_user_id: actorUserId,
+                    note: actionNote.trim() || undefined,
+                  });
+                  setSuccess('已標記為 lost');
+                })
+              }
+              disabled={
+                !actorUserId ||
+                marking !== null ||
+                !(item.status === 'available' || item.status === 'checked_out')
+              }
+            >
+              {marking === 'lost' ? '標記中…' : '標記遺失（lost）'}
+            </button>
+
+            <button
+              type="button"
+              onClick={() =>
+                void runStatusAction('repair', async () => {
+                  await markItemRepair(params.orgId, params.itemId, {
+                    actor_user_id: actorUserId,
+                    note: actionNote.trim() || undefined,
+                  });
+                  setSuccess('已標記為 repair');
+                })
+              }
+              disabled={!actorUserId || marking !== null || item.status !== 'available'}
+            >
+              {marking === 'repair' ? '標記中…' : '標記修復（repair）'}
+            </button>
+
+            <button
+              type="button"
+              onClick={() =>
+                void runStatusAction('withdrawn', async () => {
+                  await markItemWithdrawn(params.orgId, params.itemId, {
+                    actor_user_id: actorUserId,
+                    note: actionNote.trim() || undefined,
+                  });
+                  setSuccess('已標記為 withdrawn');
+                })
+              }
+              disabled={
+                !actorUserId ||
+                marking !== null ||
+                !(item.status === 'available' || item.status === 'repair' || item.status === 'lost')
+              }
+            >
+              {marking === 'withdrawn' ? '標記中…' : '標記報廢（withdrawn）'}
+            </button>
+          </div>
+        ) : null}
+
+        {item ? (
+          <p className="muted" style={{ marginTop: 12 }}>
+            目前狀態：<code>{item.status}</code>。若按鈕被停用，代表前端已先做基本防呆；更完整規則仍以後端為準。
+          </p>
+        ) : null}
+      </section>
+
+      <section className="panel">
         <h2 style={{ marginTop: 0 }}>更新冊（PATCH）</h2>
-        <p className="muted">勾選欄位 → 只送出勾選的欄位（部分更新）。</p>
+        <p className="muted">
+          勾選欄位 → 只送出勾選的欄位（部分更新）。冊狀態（lost/repair/withdrawn）請用上方「冊異常狀態」按鈕。
+        </p>
 
         <form onSubmit={onUpdate} className="stack" style={{ marginTop: 12 }}>
           <label>
@@ -252,19 +415,6 @@ export default function ItemDetailPage({
                   {loc.name} ({loc.code})
                 </option>
               ))}
-            </select>
-          </label>
-
-          <label>
-            <input type="checkbox" checked={updateStatus} onChange={(e) => setUpdateStatus(e.target.checked)} /> 更新
-            status
-            <select value={status} onChange={(e) => setStatus(e.target.value as ItemStatus)} disabled={!updateStatus}>
-              <option value="available">available</option>
-              <option value="checked_out">checked_out</option>
-              <option value="on_hold">on_hold</option>
-              <option value="lost">lost</option>
-              <option value="withdrawn">withdrawn</option>
-              <option value="repair">repair</option>
             </select>
           </label>
 

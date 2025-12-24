@@ -642,7 +642,6 @@ export async function updateItem(
     barcode?: string;
     call_number?: string;
     location_id?: string;
-    status?: ItemStatus;
     acquired_at?: string | null;
     last_inventory_at?: string | null;
     notes?: string | null;
@@ -652,6 +651,50 @@ export async function updateItem(
     method: 'PATCH',
     body: input,
   });
+}
+
+/**
+ * Item status actions（冊異常狀態動作）
+ *
+ * 注意：這些動作會影響流通與報表，因此：
+ * - 需要 actor_user_id（館員/管理者）
+ * - 後端會寫入 audit_events，方便在 `/audit-events` 追溯
+ */
+
+export async function markItemLost(
+  orgId: string,
+  itemId: string,
+  input: { actor_user_id: string; note?: string },
+) {
+  return await requestJson<ItemCopy>(`/api/v1/orgs/${orgId}/items/${itemId}/mark-lost`, {
+    method: 'POST',
+    body: input,
+  });
+}
+
+export async function markItemRepair(
+  orgId: string,
+  itemId: string,
+  input: { actor_user_id: string; note?: string },
+) {
+  return await requestJson<ItemCopy>(`/api/v1/orgs/${orgId}/items/${itemId}/mark-repair`, {
+    method: 'POST',
+    body: input,
+  });
+}
+
+export async function markItemWithdrawn(
+  orgId: string,
+  itemId: string,
+  input: { actor_user_id: string; note?: string },
+) {
+  return await requestJson<ItemCopy>(
+    `/api/v1/orgs/${orgId}/items/${itemId}/mark-withdrawn`,
+    {
+      method: 'POST',
+      body: input,
+    },
+  );
 }
 
 export async function checkout(
