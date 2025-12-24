@@ -208,6 +208,35 @@ export type FulfillHoldResult = {
   due_at: string;
 };
 
+// reports：逾期清單（Overdue List）
+export type OverdueReportRow = {
+  // loan
+  loan_id: string;
+  checked_out_at: string;
+  due_at: string;
+  days_overdue: number;
+
+  // borrower
+  user_id: string;
+  user_external_id: string;
+  user_name: string;
+  user_role: User['role'];
+  user_org_unit: string | null;
+
+  // item
+  item_id: string;
+  item_barcode: string;
+  item_call_number: string;
+  item_status: ItemStatus;
+  item_location_id: string;
+  item_location_code: string;
+  item_location_name: string;
+
+  // bib
+  bibliographic_id: string;
+  bibliographic_title: string;
+};
+
 // API 錯誤格式（MVP 版本：以 error 物件包起來）
 export type ApiErrorBody = {
   error: {
@@ -330,6 +359,73 @@ async function requestJson<T>(
 
   // 6) 成功：把 json 當成 T 回傳
   return json as T;
+}
+
+/**
+ * 低階 request（text 版本）：用於下載 CSV 這類「非 JSON」回應
+ *
+ * 設計重點：
+ * - 仍沿用與 requestJson 相同的錯誤處理（盡量 parse `{ error: ... }`）
+ * - 成功時回傳純文字（例如 CSV）
+ */
+async function requestText(
+  path: string,
+  options: { method: string; query?: Record<string, QueryValue>; body?: unknown; accept?: string },
+): Promise<{ text: string; contentType: string | null }> {
+  // 1) 組出完整 URL（base + path + query）
+  const baseUrl = getApiBaseUrl();
+  const url = new URL(path, baseUrl);
+
+  if (options.query) {
+    const params = toSearchParams(options.query);
+    const queryString = params.toString();
+    if (queryString) url.search = queryString;
+  }
+
+  // 2) 組 fetch init
+  const headers: Record<string, string> = {};
+
+  // accept：讓後端知道我們想要的格式（例如 text/csv）
+  if (options.accept) headers['accept'] = options.accept;
+
+  // body：若有 body（通常是 POST），才宣告 content-type 並送 JSON
+  const init: RequestInit = { method: options.method, headers };
+  if (options.body !== undefined) {
+    headers['content-type'] = 'application/json';
+    init.body = JSON.stringify(options.body);
+  }
+
+  // 3) 發出 request
+  let response: Response;
+  try {
+    response = await fetch(url.toString(), init);
+  } catch (error) {
+    throw new ApiError(
+      error instanceof Error ? error.message : 'Network error',
+      0,
+      null,
+    );
+  }
+
+  // 4) 讀取 body（文字）
+  const text = await response.text();
+
+  // 5) 如果 HTTP status 非 2xx，統一丟出 ApiError
+  if (!response.ok) {
+    // 錯誤 body 可能是 JSON，也可能是純文字；這裡盡量 parse JSON 以取得 `{ error: ... }`
+    let json: unknown = null;
+    try {
+      json = text ? (JSON.parse(text) as unknown) : null;
+    } catch {
+      json = null;
+    }
+
+    const body = isApiErrorBody(json) ? json : null;
+    const message = body?.error?.message ?? `HTTP ${response.status}`;
+    throw new ApiError(message, response.status, body);
+  }
+
+  return { text, contentType: response.headers.get('content-type') };
 }
 
 /**
@@ -644,4 +740,47 @@ export async function fulfillHold(
     method: 'POST',
     body: input,
   });
+}
+
+/**
+ * Reports（報表）
+ *
+ * MVP 先提供第一個現場常用報表：逾期清單（Overdue List）
+ *
+ * 設計：
+ * - 報表通常包含敏感資料，因此要求 `actor_user_id`（admin/librarian）
+ * - 同一個 endpoint 可用 `format=csv` 下載 CSV
+ */
+
+export async function listOverdueReport(
+  orgId: string,
+  filters: {
+    actor_user_id: string;
+    as_of?: string;
+    org_unit?: string;
+    limit?: number;
+  },
+) {
+  return await requestJson<OverdueReportRow[]>(`/api/v1/orgs/${orgId}/reports/overdue`, {
+    method: 'GET',
+    query: { ...filters, format: 'json' },
+  });
+}
+
+export async function downloadOverdueReportCsv(
+  orgId: string,
+  filters: {
+    actor_user_id: string;
+    as_of?: string;
+    org_unit?: string;
+    limit?: number;
+  },
+) {
+  const result = await requestText(`/api/v1/orgs/${orgId}/reports/overdue`, {
+    method: 'GET',
+    query: { ...filters, format: 'csv' },
+    accept: 'text/csv',
+  });
+
+  return result.text;
 }
