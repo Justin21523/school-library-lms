@@ -17,6 +17,19 @@ const statusSchema = z.enum(['active', 'inactive']);
 // UUID：多個端點都會用到（actor_user_id / userId / orgId ...）
 const uuidSchema = z.string().uuid();
 
+// limit：query string → int（1..500）
+const intFromStringSchema = z.preprocess((value) => {
+  if (value === undefined || value === null) return undefined;
+
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (!trimmed) return undefined;
+    return Number.parseInt(trimmed, 10);
+  }
+
+  return value;
+}, z.number().int().min(1).max(500));
+
 export const createUserSchema = z.object({
   // external_id：學號/教職員編號（來源系統的唯一鍵），比姓名可靠。
   external_id: z.string().trim().min(1).max(64),
@@ -32,6 +45,66 @@ export const createUserSchema = z.object({
 });
 
 export type CreateUserInput = z.infer<typeof createUserSchema>;
+
+/**
+ * list users query（US-011）
+ *
+ * 需求：館員要能以姓名/學號/班級篩選使用者
+ * - query：模糊搜尋（external_id / name / org_unit）
+ * - role/status：精準篩選（避免搜尋結果太雜）
+ *
+ * 注意：
+ * - 雖然 API-DRAFT 提到分頁/cursor，但目前 users 仍採 MVP 的「最多 200 筆」模式
+ * - 先把常用 filter 做起來，讓 circulation/報表/稽核的操作更順手
+ */
+export const listUsersQuerySchema = z.object({
+  query: z.string().trim().min(1).max(200).optional(),
+  role: roleSchema.optional(),
+  status: statusSchema.optional(),
+  limit: intFromStringSchema.optional(),
+});
+
+export type ListUsersQuery = z.infer<typeof listUsersQuerySchema>;
+
+/**
+ * update user（PATCH）
+ *
+ * 為什麼 PATCH 要帶 actor_user_id？
+ * - MVP 目前沒有 auth（登入/權杖），後端無法從 token 推導操作者
+ * - 但「停用/改角色」屬於敏感操作，因此仍必須有一個最小身份來源（actor_user_id）
+ *
+ * 設計：
+ * - name/role/org_unit/status 為可更新欄位
+ * - org_unit 支援 null（清空）
+ * - status 用於停用/啟用（active/inactive）
+ */
+export const updateUserSchema = z
+  .object({
+    actor_user_id: uuidSchema,
+
+    name: z.string().trim().min(1).max(200).optional(),
+    role: roleSchema.optional(),
+
+    // nullable：允許送 null 表示「清空班級/單位」
+    org_unit: z.string().trim().min(1).max(64).nullable().optional(),
+
+    status: statusSchema.optional(),
+
+    // note：選填的操作備註（寫入 audit metadata 用）
+    note: z.string().trim().min(1).max(200).optional(),
+  })
+  .refine(
+    (value) =>
+      value.name !== undefined ||
+      value.role !== undefined ||
+      value.org_unit !== undefined ||
+      value.status !== undefined,
+    {
+      message: 'At least one field must be provided to update user',
+    },
+  );
+
+export type UpdateUserInput = z.infer<typeof updateUserSchema>;
 
 /**
  * US-010：使用者 CSV 匯入

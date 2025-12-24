@@ -13,13 +13,19 @@ import {
   Body,
   Controller,
   Get,
+  Patch,
   Param,
   ParseUUIDPipe,
   Post,
   Query,
 } from '@nestjs/common';
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
-import { createUserSchema, importUsersCsvSchema } from './users.schemas';
+import {
+  createUserSchema,
+  importUsersCsvSchema,
+  listUsersQuerySchema,
+  updateUserSchema,
+} from './users.schemas';
 import { UsersService } from './users.service';
 
 @Controller('api/v1/orgs/:orgId/users')
@@ -29,9 +35,11 @@ export class UsersController {
   @Get()
   async list(
     @Param('orgId', new ParseUUIDPipe()) orgId: string,
-    @Query('query') query?: string,
+    @Query(new ZodValidationPipe(listUsersQuerySchema)) query: any,
   ) {
-    // query 是可選的搜尋字串；若沒給就列出最新 200 筆。
+    // query filters（US-011）：
+    // - query：模糊搜尋 external_id/name/org_unit
+    // - role/status：精準篩選
     return await this.users.list(orgId, query);
   }
 
@@ -41,6 +49,25 @@ export class UsersController {
     @Body(new ZodValidationPipe(createUserSchema)) body: any,
   ) {
     return await this.users.create(orgId, body);
+  }
+
+  /**
+   * 更新/停用使用者（US-011）
+   *
+   * PATCH /api/v1/orgs/:orgId/users/:userId
+   *
+   * 設計重點：
+   * - 需要 actor_user_id（admin/librarian），後端做最小 RBAC + 寫 audit
+   * - 支援 status=inactive（停用）/status=active（啟用）
+   * - 其他欄位（name/org_unit/role）可用於更正資料
+   */
+  @Patch(':userId')
+  async update(
+    @Param('orgId', new ParseUUIDPipe()) orgId: string,
+    @Param('userId', new ParseUUIDPipe()) userId: string,
+    @Body(new ZodValidationPipe(updateUserSchema)) body: any,
+  ) {
+    return await this.users.update(orgId, userId, body);
   }
 
   /**

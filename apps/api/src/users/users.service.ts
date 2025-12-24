@@ -4,6 +4,7 @@
  * 目前提供：
  * - list：列出/搜尋使用者（以 external_id / name / org_unit）
  * - create：新增使用者
+ * - update（US-011）：更新/停用使用者（寫入 audit）
  * - importCsv（US-010）：CSV 匯入名冊（preview/apply + 批次停用 + audit）
  *
  * 注意：MVP 的重點是「資料結構正確」與「操作省力」，
@@ -22,7 +23,13 @@ import type { PoolClient } from 'pg';
 import { DbService } from '../db/db.service';
 import { parseCsv } from '../common/csv';
 import type { CreateUserInput } from './users.schemas';
-import type { ImportUsersCsvInput, UserRole, UserStatus } from './users.schemas';
+import type {
+  ImportUsersCsvInput,
+  ListUsersQuery,
+  UpdateUserInput,
+  UserRole,
+  UserStatus,
+} from './users.schemas';
 
 // UserRow：SQL 查詢回傳的 user 欄位。
 type UserRow = {
@@ -38,7 +45,11 @@ type UserRow = {
 };
 
 // staff：能做「匯入」這種敏感操作的角色（對齊 circulation / reports / audit 的最小 RBAC）
-const IMPORT_ACTOR_ROLES: UserRole[] = ['admin', 'librarian'];
+// - 後續若導入 auth，actor 將由 token 推導；這裡的最小 RBAC 依然可當作 guard 規則基礎
+const STAFF_ACTOR_ROLES: UserRole[] = ['admin', 'librarian'];
+
+// staff roles：權限較高的帳號（不應被一般館員隨意修改）
+const STAFF_ROLES: UserRole[] = ['admin', 'librarian'];
 
 // roster 匯入的角色範圍（US-010 明確是學生/教師名冊）
 type RosterRole = 'student' | 'teacher';
@@ -128,27 +139,53 @@ export type UsersCsvImportResult = UsersCsvImportPreviewResult | UsersCsvImportA
 export class UsersService {
   constructor(private readonly db: DbService) {}
 
-  async list(orgId: string, query?: string): Promise<UserRow[]> {
-    // 簡化搜尋：用 ILIKE + %...% 做模糊查詢（適合 MVP）。
-    // - 如果 query 為空，search 會是 null，SQL 會直接略過條件。
-    const search = query?.trim() ? `%${query.trim()}%` : null;
+  /**
+   * US-011：查詢與篩選使用者
+   *
+   * - query：模糊搜尋（external_id/name/org_unit）
+   * - role/status：精準篩選
+   *
+   * 注意：
+   * - 目前仍採 MVP 的「最多回傳 N 筆」模式（未實作 cursor 分頁）
+   * - 這個端點會被很多頁面用來「挑 actor/borrrower」；因此要保持快且穩定
+   */
+  async list(orgId: string, query: ListUsersQuery): Promise<UserRow[]> {
+    // 1) 組 where clauses（只加有提供的 filter）
+    const whereClauses: string[] = ['organization_id = $1'];
+    const params: unknown[] = [orgId];
+
+    if (query.query) {
+      // 模糊搜尋：用 ILIKE + %...%（MVP 最實用）
+      params.push(`%${query.query}%`);
+      const p = `$${params.length}`;
+      whereClauses.push(`(external_id ILIKE ${p} OR name ILIKE ${p} OR org_unit ILIKE ${p})`);
+    }
+
+    if (query.role) {
+      params.push(query.role);
+      whereClauses.push(`role = $${params.length}::user_role`);
+    }
+
+    if (query.status) {
+      params.push(query.status);
+      whereClauses.push(`status = $${params.length}::user_status`);
+    }
+
+    const limit = query.limit ?? 200;
+    params.push(limit);
+    const limitParam = `$${params.length}`;
 
     const result = await this.db.query<UserRow>(
       `
       SELECT id, organization_id, external_id, name, role, org_unit, status, created_at, updated_at
       FROM users
-      WHERE organization_id = $1
-        AND (
-          $2::text IS NULL
-          OR external_id ILIKE $2
-          OR name ILIKE $2
-          OR org_unit ILIKE $2
-        )
+      WHERE ${whereClauses.join(' AND ')}
       ORDER BY created_at DESC
-      LIMIT 200
+      LIMIT ${limitParam}
       `,
-      [orgId, search],
+      params,
     );
+
     return result.rows;
   }
 
@@ -189,6 +226,138 @@ export class UsersService {
   }
 
   /**
+   * US-011：更新/停用使用者（寫入 audit_events）
+   *
+   * PATCH /orgs/:orgId/users/:userId
+   *
+   * 這裡處理兩類常見情境：
+   * 1) 更正主檔：name/org_unit/role（例如班級升級、姓名更正）
+   * 2) 停用/啟用：status=inactive/active（例如畢業、離校、離職）
+   *
+   * 權限策略（MVP）：
+   * - actor_user_id 必須是 admin/librarian
+   * - librarian 只能管理「非 staff 帳號」（student/teacher/guest）
+   * - admin 才能管理 staff（admin/librarian）或調整 role 到 staff
+   */
+  async update(orgId: string, userId: string, input: UpdateUserInput): Promise<UserRow> {
+    return await this.db.transaction(async (client) => {
+      // 1) 驗證操作者（admin/librarian 且 active）
+      const actor = await this.requireStaffActor(client, orgId, input.actor_user_id);
+
+      // 2) 鎖定目標使用者列（FOR UPDATE）：避免同時兩個人修改造成覆蓋
+      const targetResult = await client.query<UserRow>(
+        `
+        SELECT id, organization_id, external_id, name, role, org_unit, status, created_at, updated_at
+        FROM users
+        WHERE organization_id = $1
+          AND id = $2
+        FOR UPDATE
+        `,
+        [orgId, userId],
+      );
+
+      if (targetResult.rowCount === 0) {
+        throw new NotFoundException({
+          error: { code: 'NOT_FOUND', message: 'User not found' },
+        });
+      }
+
+      const target = targetResult.rows[0]!;
+
+      // 3) 權限與安全防呆：librarian 不可修改 staff 帳號、也不可把人升級成 staff
+      this.assertCanManageUser(actor.role, target.role, input.role);
+
+      // 4) 計算「實際有變更」的欄位（避免不必要 update + 保持 updated_at 穩定）
+      const updates: Partial<Pick<UserRow, 'name' | 'role' | 'org_unit' | 'status'>> = {};
+      const changes: Record<string, { from: unknown; to: unknown }> = {};
+
+      if (input.name !== undefined && input.name !== target.name) {
+        updates.name = input.name;
+        changes['name'] = { from: target.name, to: input.name };
+      }
+
+      if (input.role !== undefined && input.role !== target.role) {
+        updates.role = input.role;
+        changes['role'] = { from: target.role, to: input.role };
+      }
+
+      // org_unit：undefined=不更新；null=清空；string=設定
+      if (input.org_unit !== undefined) {
+        const desired = input.org_unit;
+        const current = target.org_unit ?? null;
+        if (current !== desired) {
+          updates.org_unit = desired;
+          changes['org_unit'] = { from: current, to: desired };
+        }
+      }
+
+      if (input.status !== undefined && input.status !== target.status) {
+        updates.status = input.status;
+        changes['status'] = { from: target.status, to: input.status };
+      }
+
+      // 5) 若沒有任何變更：直接回傳原資料（PATCH 的冪等性）
+      if (Object.keys(updates).length === 0) return target;
+
+      // 6) 組 UPDATE SQL（只更新變更欄位 + updated_at）
+      const setClauses: string[] = ['updated_at = now()'];
+      const params: unknown[] = [orgId, userId];
+
+      const pushSet = (column: string, value: unknown) => {
+        params.push(value);
+        setClauses.push(`${column} = $${params.length}`);
+      };
+
+      if (updates.name !== undefined) pushSet('name', updates.name);
+      if (updates.role !== undefined) pushSet('role', updates.role);
+      if (updates.org_unit !== undefined) pushSet('org_unit', updates.org_unit);
+      if (updates.status !== undefined) pushSet('status', updates.status);
+
+      const updatedResult = await client.query<UserRow>(
+        `
+        UPDATE users
+        SET ${setClauses.join(', ')}
+        WHERE organization_id = $1
+          AND id = $2
+        RETURNING id, organization_id, external_id, name, role, org_unit, status, created_at, updated_at
+        `,
+        params,
+      );
+
+      const updated = updatedResult.rows[0]!;
+
+      // 7) 寫 audit event：記錄「誰」改了「哪個 user」的「哪些欄位」
+      await client.query(
+        `
+        INSERT INTO audit_events (
+          organization_id,
+          actor_user_id,
+          action,
+          entity_type,
+          entity_id,
+          metadata
+        )
+        VALUES ($1, $2, $3, $4, $5, $6::jsonb)
+        `,
+        [
+          orgId,
+          actor.id,
+          'user.update',
+          'user',
+          updated.id,
+          JSON.stringify({
+            user_external_id: updated.external_id,
+            note: input.note ?? null,
+            changes,
+          }),
+        ],
+      );
+
+      return updated;
+    });
+  }
+
+  /**
    * US-010：CSV 匯入使用者名冊
    *
    * 核心能力（對齊 USER-STORIES.md 驗收）：
@@ -206,7 +375,7 @@ export class UsersService {
     // - apply：確保寫入與 audit event 同步成功/失敗（避免寫入成功但 audit 失敗）
     return await this.db.transaction(async (client) => {
       // 1) 權限控管（MVP）：匯入者必須是 staff（admin/librarian 且 active）
-      const actor = await this.requireImportActor(client, orgId, input.actor_user_id);
+      const actor = await this.requireStaffActor(client, orgId, input.actor_user_id);
 
       // 2) 解析 CSV → header + data rows
       const parsed = parseCsv(input.csv_text);
@@ -439,7 +608,7 @@ export class UsersService {
 
         // 注意：匯入名冊只接受 student/teacher
         // - 若 external_id 撞到 staff（admin/librarian），我們直接拒絕（避免誤改權限/身份）
-        if (existing && IMPORT_ACTOR_ROLES.includes(existing.role)) {
+        if (existing && STAFF_ROLES.includes(existing.role)) {
           invalidRowNumbers.add(r.row_number);
           errors.push({
             row_number: r.row_number,
@@ -795,7 +964,18 @@ export class UsersService {
   // query/helpers
   // ----------------------------
 
-  private async requireImportActor(client: PoolClient, orgId: string, actorUserId: string) {
+  /**
+   * requireStaffActor：驗證 actor_user_id 屬於此 org，且為 active 的 admin/librarian
+   *
+   * 我們把「需要 staff 才能做的操作」集中用這個 helper：
+   * - user.import_csv（US-010）
+   * - user.update（US-011）
+   *
+   * 好處：
+   * - 錯誤格式一致（NOT_FOUND/USER_INACTIVE/FORBIDDEN）
+   * - 未來導入 auth 時，可以把這段替換成「由 token 推導 actor」
+   */
+  private async requireStaffActor(client: PoolClient, orgId: string, actorUserId: string) {
     const result = await client.query<Pick<UserRow, 'id' | 'role' | 'status'>>(
       `
       SELECT id, role, status
@@ -820,13 +1000,54 @@ export class UsersService {
       });
     }
 
-    if (!IMPORT_ACTOR_ROLES.includes(actor.role)) {
+    if (!STAFF_ACTOR_ROLES.includes(actor.role)) {
       throw new ForbiddenException({
-        error: { code: 'FORBIDDEN', message: 'Actor is not allowed to import users' },
+        error: { code: 'FORBIDDEN', message: 'Actor is not allowed to manage users' },
       });
     }
 
     return actor;
+  }
+
+  /**
+   * 最小 RBAC：限制 librarian 對 staff 的變更
+   *
+   * - admin：可管理所有使用者（含 staff）
+   * - librarian：只能管理 student/teacher/guest；不可變更 admin/librarian
+   *
+   * 目的：
+   * - 降低「一般館員不小心把人升成 admin」或「停用 admin 導致無法維運」的風險
+   * - 即使 MVP 沒有 auth，仍保留最小安全邊界，並利於未來加 guard
+   */
+  private assertCanManageUser(
+    actorRole: UserRole,
+    targetRole: UserRole,
+    desiredRole: UserRole | undefined,
+  ) {
+    // admin：放行（MVP 最小控管）
+    if (actorRole === 'admin') return;
+
+    // 非 admin 只有 librarian 會進到這裡（因為 requireStaffActor 已經限制 staff roles）
+    // - 防呆：若未來 staff roles 擴充，這裡仍可保守拒絕
+    if (actorRole !== 'librarian') {
+      throw new ForbiddenException({
+        error: { code: 'FORBIDDEN', message: 'Actor is not allowed to manage users' },
+      });
+    }
+
+    // librarian 不可動 staff（admin/librarian）
+    if (STAFF_ROLES.includes(targetRole)) {
+      throw new ForbiddenException({
+        error: { code: 'FORBIDDEN', message: 'Librarian cannot modify staff accounts' },
+      });
+    }
+
+    // librarian 不可把人升級成 staff
+    if (desiredRole && STAFF_ROLES.includes(desiredRole)) {
+      throw new ForbiddenException({
+        error: { code: 'FORBIDDEN', message: 'Librarian cannot promote users to staff roles' },
+      });
+    }
   }
 
   private async getUsersByExternalIds(client: PoolClient, orgId: string, externalIds: string[]) {
