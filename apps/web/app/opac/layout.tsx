@@ -9,9 +9,9 @@
  * - Web Console：`/orgs/...`（館員/管理者操作）
  * - OPAC：`/opac/...`（讀者自助）
  *
- * MVP 限制：
- * - 目前沒有登入（auth），OPAC 會用 `user_external_id` 讓讀者查/下預約
- * - 這是「可用但不安全」的暫時方案；之後導入登入（例如校務 SSO）再補權限控管
+ * 版本演進：
+ * - 已支援 OPAC Account（Patron login）：可安全使用 `/me/*`（我的借閱/我的預約）
+ * - 仍保留 `user_external_id` 模式作為過渡（可用但不安全）
  */
 
 import type { ReactNode } from 'react';
@@ -40,4 +40,3 @@ export default function OpacLayout({ children }: { children: ReactNode }) {
     </div>
   );
 }
-

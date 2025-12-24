@@ -5,30 +5,39 @@
  * - 以 user_external_id 查詢自己的 holds
  * - 取消 queued/ready holds
  *
- * MVP 限制（重要）：
- * - 目前沒有登入；因此任何人只要知道 external_id，就能查/取消
- * - 這是「可用但不安全」的暫時方案，之後需要改成 auth（token/SSO）
+ * 版本演進：
+ * - 早期 MVP：用 user_external_id 查詢/取消（可用但不安全）
+ * - 目前：已支援 OPAC Account（Patron login）
+ *   - 若已登入：使用 `/me/holds` 與 `/me/holds/:id/cancel`（安全、只允許本人）
+ *   - 若未登入：仍保留 user_external_id 模式（過渡，請儘快導入登入）
  */
 
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 
 import type { HoldStatus, HoldWithDetails } from '../../../../lib/api';
-import { cancelHold, listHolds } from '../../../../lib/api';
+import { cancelHold, cancelMyHold, listHolds, listMyHolds } from '../../../../lib/api';
 import { formatErrorMessage } from '../../../../lib/error';
+import { useOpacSession } from '../../../../lib/use-opac-session';
 
 export default function OpacHoldsPage({ params }: { params: { orgId: string } }) {
   const searchParams = useSearchParams();
+
+  // OPAC session：若已登入，會用 /me 端點取代 user_external_id 模式。
+  const { ready: sessionReady, session } = useOpacSession(params.orgId);
 
   // 讀者輸入（可由 query string 預填，提升跨頁體驗）
   const [userExternalId, setUserExternalId] = useState('');
 
   // status filter：OPAC 預設看全部（ready 會被排在最前面）
   const [status, setStatus] = useState<HoldStatus | 'all'>('all');
+
+  // limit：避免一次載入過多（預設 200）
+  const [limit, setLimit] = useState('200');
 
   // list 結果與狀態
   const [holds, setHolds] = useState<HoldWithDetails[] | null>(null);
@@ -41,30 +50,51 @@ export default function OpacHoldsPage({ params }: { params: { orgId: string } })
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
+  const meLabel = useMemo(() => {
+    if (!session) return null;
+    return `${session.user.name}（${session.user.role}）· ${session.user.external_id}`;
+  }, [session]);
+
   // 初次載入：若 URL 有 user_external_id，就預填。
   useEffect(() => {
     const fromQuery = searchParams.get('user_external_id')?.trim();
+    // 若已登入：不需要也不應該使用 query string 的 external_id（避免誤用）
+    if (session) return;
     if (fromQuery && !userExternalId) setUserExternalId(fromQuery);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams]);
 
   async function refresh() {
-    const trimmed = userExternalId.trim();
-    if (!trimmed) {
-      setError('請輸入 user_external_id（學號/員編）');
-      return;
-    }
-
     setLoading(true);
     setError(null);
     setSuccess(null);
 
     try {
-      const result = await listHolds(params.orgId, {
-        status,
-        user_external_id: trimmed,
-        limit: 200,
-      });
+      // limit：空字串視為未提供；否則轉 int。
+      const trimmedLimit = limit.trim();
+      const limitNumber = trimmedLimit ? Number.parseInt(trimmedLimit, 10) : undefined;
+      if (trimmedLimit && !Number.isFinite(limitNumber)) {
+        throw new Error('limit 必須是整數');
+      }
+
+      // 依登入狀態選擇 API：
+      // - 已登入：/me/holds（安全）
+      // - 未登入：/holds?user_external_id=...（過渡、不安全）
+      const result = session
+        ? await listMyHolds(params.orgId, {
+            status,
+            limit: limitNumber,
+          })
+        : await (async () => {
+            const trimmed = userExternalId.trim();
+            if (!trimmed) throw new Error('請輸入 user_external_id（學號/員編）');
+            return await listHolds(params.orgId, {
+              status,
+              user_external_id: trimmed,
+              limit: limitNumber,
+            });
+          })();
+
       setHolds(result);
     } catch (e) {
       setHolds(null);
@@ -73,6 +103,13 @@ export default function OpacHoldsPage({ params }: { params: { orgId: string } })
       setLoading(false);
     }
   }
+
+  // 初次載入（已登入）：直接列出我的 holds（避免使用者還要按一次查詢）。
+  useEffect(() => {
+    if (!sessionReady || !session) return;
+    void refresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [params.orgId, sessionReady, session]);
 
   async function onSearch(e: React.FormEvent) {
     e.preventDefault();
@@ -85,8 +122,12 @@ export default function OpacHoldsPage({ params }: { params: { orgId: string } })
 
     setCancellingHoldId(holdId);
     try {
-      // OPAC 取消不傳 actor_user_id：後端會把 actor 視為 hold owner（MVP 暫時方案）
-      const result = await cancelHold(params.orgId, holdId, {});
+      // 依登入狀態選擇取消方式：
+      // - 已登入：/me/holds/:id/cancel（PatronAuthGuard 保證只能取消自己的 hold）
+      // - 未登入：/holds/:id/cancel（過渡版本；不安全）
+      const result = session
+        ? await cancelMyHold(params.orgId, holdId)
+        : await cancelHold(params.orgId, holdId, {});
       setSuccess(`已取消：hold_id=${result.id}`);
       await refresh();
     } catch (e) {
@@ -108,20 +149,37 @@ export default function OpacHoldsPage({ params }: { params: { orgId: string } })
           </span>
         </div>
 
-        <p className="muted">
-          MVP 尚未實作登入：請輸入 <code>user_external_id</code> 查詢你的預約，並可取消 queued/ready 預約。
-        </p>
+        {sessionReady ? null : <p className="muted">載入登入狀態中…</p>}
+
+        {sessionReady && session ? (
+          <p className="muted">
+            已登入：{meLabel}；對應 API：<code>GET/POST /api/v1/orgs/:orgId/me/holds</code>
+          </p>
+        ) : null}
+
+        {sessionReady && !session ? (
+          <p className="muted">
+            尚未登入：你仍可用 <code>user_external_id</code> 查詢/取消（過渡模式），但安全性較低；建議先{' '}
+            <Link href={`/opac/orgs/${params.orgId}/login`}>登入 OPAC Account</Link>。
+          </p>
+        ) : null}
 
         <form onSubmit={onSearch} className="stack" style={{ marginTop: 12 }}>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-            <label>
-              user_external_id（學號/員編）
-              <input
-                value={userExternalId}
-                onChange={(e) => setUserExternalId(e.target.value)}
-                placeholder="例：S1130123"
-              />
-            </label>
+            {!session ? (
+              <label>
+                user_external_id（學號/員編）
+                <input
+                  value={userExternalId}
+                  onChange={(e) => setUserExternalId(e.target.value)}
+                  placeholder="例：S1130123"
+                />
+              </label>
+            ) : (
+              <div className="muted" style={{ alignSelf: 'end' }}>
+                user_external_id：<code>{session.user.external_id}</code>（由登入身分推導）
+              </div>
+            )}
 
             <label>
               status
@@ -135,6 +193,11 @@ export default function OpacHoldsPage({ params }: { params: { orgId: string } })
               </select>
             </label>
           </div>
+
+          <label style={{ maxWidth: 240 }}>
+            limit（預設 200）
+            <input value={limit} onChange={(e) => setLimit(e.target.value)} />
+          </label>
 
           <button type="submit" disabled={loading}>
             {loading ? '查詢中…' : '查詢'}
@@ -195,4 +258,3 @@ export default function OpacHoldsPage({ params }: { params: { orgId: string } })
     </div>
   );
 }
-

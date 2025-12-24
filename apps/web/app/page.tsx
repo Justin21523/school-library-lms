@@ -49,8 +49,8 @@ export default function HomePage() {
         <section className="panel">
           <h2 style={{ marginTop: 0 }}>讀者端（OPAC）</h2>
           <p className="muted">
-            OPAC 提供讀者自助的查詢與預約流程（MVP 目前尚未做登入，因此會以{' '}
-            <code>user_external_id</code> 作為臨時識別）。
+            OPAC 提供讀者自助的查詢與預約流程，並已支援「OPAC Account（student/teacher 登入）」以安全地查看
+            「我的借閱/我的預約」。
           </p>
           <Link href="/opac">前往 OPAC</Link>
         </section>

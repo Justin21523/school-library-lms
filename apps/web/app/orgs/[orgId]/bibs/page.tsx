@@ -183,6 +183,9 @@ export default function BibsPage({ params }: { params: { orgId: string } }) {
           對應 API：<code>GET/POST /api/v1/orgs/:orgId/bibs</code>（支援 <code>?query=</code> /{' '}
           <code>?isbn=</code> / <code>?classification=</code>）
         </p>
+        <p className="muted">
+          批次匯入（US-022）：<Link href={`/orgs/${params.orgId}/bibs/import`}>Catalog CSV Import</Link>
+        </p>
 
         {/* 搜尋區 */}
         <form onSubmit={onSearch} className="stack" style={{ marginTop: 16 }}>

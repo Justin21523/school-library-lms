@@ -41,6 +41,7 @@ export default function CirculationPoliciesPage({ params }: { params: { orgId: s
   const [maxRenewals, setMaxRenewals] = useState('1');
   const [maxHolds, setMaxHolds] = useState('3');
   const [holdPickupDays, setHoldPickupDays] = useState('3');
+  const [overdueBlockDays, setOverdueBlockDays] = useState('7');
   const [creating, setCreating] = useState(false);
 
   async function refresh() {
@@ -98,6 +99,7 @@ export default function CirculationPoliciesPage({ params }: { params: { orgId: s
         max_renewals: parseIntField('max_renewals', maxRenewals),
         max_holds: parseIntField('max_holds', maxHolds),
         hold_pickup_days: parseIntField('hold_pickup_days', holdPickupDays),
+        overdue_block_days: parseIntField('overdue_block_days', overdueBlockDays),
       });
 
       // 成功後清空（或保留部分預設值）；MVP 先清空 code/name，數字保留便於連續建立。
@@ -192,6 +194,11 @@ export default function CirculationPoliciesPage({ params }: { params: { orgId: s
             </label>
           </div>
 
+          <label>
+            overdue_block_days（逾期達 X 天停權新增借閱；0=不啟用）
+            <input type="number" value={overdueBlockDays} onChange={(e) => setOverdueBlockDays(e.target.value)} />
+          </label>
+
           <button type="submit" disabled={creating}>
             {creating ? '建立中…' : '建立 Policy'}
           </button>
@@ -220,7 +227,7 @@ export default function CirculationPoliciesPage({ params }: { params: { orgId: s
                   <div className="muted">
                     role={p.audience_role} · loan_days={p.loan_days} · max_loans={p.max_loans} ·
                     max_renewals={p.max_renewals} · max_holds={p.max_holds} · hold_pickup_days=
-                    {p.hold_pickup_days}
+                    {p.hold_pickup_days} · overdue_block_days={p.overdue_block_days}
                   </div>
                 </div>
               </li>

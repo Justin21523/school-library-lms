@@ -6,7 +6,9 @@
  * - 搜尋書目並預約（place hold）
  * - 查詢/取消自己的預約
  *
- * 注意：目前沒有登入，因此「查詢/取消」是用 `user_external_id` 來定位讀者。
+ * 版本演進：
+ * - 已支援 OPAC Account（讀者登入）：可安全使用 `/me/*`（我的借閱/我的預約）
+ * - 仍保留 `user_external_id` 模式作為過渡（可用但不安全）
  */
 
 import Link from 'next/link';
@@ -21,7 +23,8 @@ export default function OpacHomePage() {
         </p>
 
         <p className="muted">
-          MVP 尚未實作登入，因此會使用 <code>user_external_id</code>（學號/員編）作為讀者識別。
+          建議使用 OPAC Account 登入（student/teacher），以安全地查看「我的借閱/我的預約」；未登入時仍可用{' '}
+          <code>user_external_id</code>（學號/員編）進行預約（過渡模式）。
         </p>
 
         <Link href="/opac/orgs">開始使用：選擇學校</Link>
@@ -29,4 +32,3 @@ export default function OpacHomePage() {
     </div>
   );
 }
-

@@ -27,7 +27,7 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 
 import type { User } from '../../../lib/api';
-import { createUser, listUsers, updateUser } from '../../../lib/api';
+import { createUser, listUsers, setStaffPassword, updateUser } from '../../../lib/api';
 import { formatErrorMessage } from '../../../lib/error';
 import { useStaffSession } from '../../../lib/use-staff-session';
 
@@ -73,6 +73,9 @@ export default function UsersPage({ params }: { params: { orgId: string } }) {
   const [role, setRole] = useState<User['role']>('student');
   const [orgUnit, setOrgUnit] = useState('');
   const [creating, setCreating] = useState(false);
+
+  // 設定/重設密碼（避免同時點多個）
+  const [settingPasswordUserId, setSettingPasswordUserId] = useState<string | null>(null);
 
   async function refresh() {
     setLoading(true);
@@ -192,6 +195,67 @@ export default function UsersPage({ params }: { params: { orgId: string } }) {
     }
   }
 
+  /**
+   * 設定/重設密碼（admin/librarian 動作）
+   *
+   * 對應 API：
+   * - POST /api/v1/orgs/:orgId/auth/set-password（需 StaffAuthGuard）
+   *
+   * 重要：
+   * - 後端已允許 target role 包含 student/teacher（用於 OPAC Account 登入）
+   * - 但不允許 guest（多半沒有需要，且避免濫用）
+   */
+  async function onSetPassword(user: User) {
+    setError(null);
+    setSuccess(null);
+
+    if (!actorUserId) {
+      setError('缺少 actor_user_id（請先登入）');
+      return;
+    }
+
+    if (user.role === 'guest') {
+      setError('guest 帳號不支援設定密碼');
+      return;
+    }
+
+    // prompt：MVP 先用最小可用方式取得新密碼（正式上線建議改成專用表單/強度檢查）
+    const first = window.prompt(`請輸入要設定給 ${user.name}（${user.external_id}）的新密碼：`);
+    if (first === null) return; // 使用者取消
+    if (!first.trim()) {
+      setError('new_password 不可為空');
+      return;
+    }
+
+    const second = window.prompt('請再輸入一次新密碼（確認）：');
+    if (second === null) return;
+    if (second !== first) {
+      setError('兩次輸入的密碼不一致');
+      return;
+    }
+
+    // 二次確認：避免誤把密碼設錯人（尤其是名冊匯入後常有大量帳號）
+    const ok = window.confirm(`確認要替 ${user.name}（${user.external_id} / ${user.role}）設定/重設密碼嗎？`);
+    if (!ok) return;
+
+    setSettingPasswordUserId(user.id);
+    try {
+      await setStaffPassword(params.orgId, {
+        actor_user_id: actorUserId,
+        target_user_id: user.id,
+        new_password: first,
+        ...(actionNote.trim() ? { note: actionNote.trim() } : {}),
+      });
+
+      // 不回顯密碼（避免在畫面上留下敏感資訊）
+      setSuccess(`已設定/重設密碼：${user.external_id}（讀者可用此密碼在 OPAC Login 登入）`);
+    } catch (e) {
+      setError(formatErrorMessage(e));
+    } finally {
+      setSettingPasswordUserId(null);
+    }
+  }
+
   // 登入門檻（放在所有 hooks 之後，避免違反 React hooks 規則）
   if (!sessionReady) {
     return (
@@ -235,7 +299,7 @@ export default function UsersPage({ params }: { params: { orgId: string } }) {
         </p>
 
         <label>
-          note（選填；寫入 audit metadata）
+          note（選填；寫入 audit metadata：停用/啟用/重設密碼等動作都會共用這個備註）
           <input
             value={actionNote}
             onChange={(e) => setActionNote(e.target.value)}
@@ -376,6 +440,26 @@ export default function UsersPage({ params }: { params: { orgId: string } }) {
                       title={!actorUserId ? '缺少 actor_user_id（請先登入）' : undefined}
                     >
                       {u.status === 'active' ? '停用' : '啟用'}
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => void onSetPassword(u)}
+                      disabled={
+                        !actorUserId ||
+                        loading ||
+                        settingPasswordUserId === u.id ||
+                        u.role === 'guest'
+                      }
+                      title={
+                        u.role === 'guest'
+                          ? 'guest 不支援設定密碼'
+                          : !actorUserId
+                            ? '缺少 actor_user_id（請先登入）'
+                            : undefined
+                      }
+                    >
+                      {settingPasswordUserId === u.id ? '設定中…' : '設定/重設密碼'}
                     </button>
                   </div>
                 </div>

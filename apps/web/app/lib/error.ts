@@ -17,6 +17,26 @@ export function formatErrorMessage(error: unknown) {
     const statusLabel = error.status ? `HTTP ${error.status}` : 'NETWORK';
     const code = error.body?.error?.code;
     const message = error.body?.error?.message ?? error.message;
+
+    // 特例：逾期停權（Policy enforcement）
+    // - 這是現場最常被問的錯誤：「為什麼不能借？」
+    // - 因此我們把 details 裡的門檻/天數一起顯示，讓館員能直接回答讀者
+    if (code === 'BORROWING_BLOCKED_DUE_TO_OVERDUE') {
+      const details = error.body?.error?.details as any;
+      const overdueBlockDays = typeof details?.overdue_block_days === 'number' ? details.overdue_block_days : null;
+      const maxDaysOverdue = typeof details?.max_days_overdue === 'number' ? details.max_days_overdue : null;
+      const overdueLoanCount = typeof details?.overdue_loan_count === 'number' ? details.overdue_loan_count : null;
+
+      const parts: string[] = [];
+      if (maxDaysOverdue !== null && overdueBlockDays !== null) {
+        parts.push(`max_days_overdue=${maxDaysOverdue} >= ${overdueBlockDays}`);
+      }
+      if (overdueLoanCount !== null) parts.push(`overdue_loan_count=${overdueLoanCount}`);
+
+      const suffix = parts.length > 0 ? `（${parts.join(' · ')}）` : '';
+      return code ? `${statusLabel} · ${code} · ${message}${suffix}` : `${statusLabel} · ${message}`;
+    }
+
     return code ? `${statusLabel} · ${code} · ${message}` : `${statusLabel} · ${message}`;
   }
 
@@ -26,4 +46,3 @@ export function formatErrorMessage(error: unknown) {
   // 3) 非 Error 物件（極少數）：保底轉字串
   return String(error);
 }
-

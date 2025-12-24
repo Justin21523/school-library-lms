@@ -8,14 +8,19 @@
  * 設計原則（對齊目前 API 的實作）：
  * - API 路由以 `/api/v1/...` 為前綴
  * - 錯誤回應多為 `{ error: { code, message, details? } }`
- * - MVP 階段沒有 auth，因此 circulation 需要在 body 傳 `actor_user_id`
+ * - MVP 仍保留 `actor_user_id`（用於寫 audit / RBAC），但會逐步收斂到「由登入身分推導」
  *
- * 本專案已開始導入「Staff Auth（Web Console 登入）」：
+ * 本專案已導入「Staff Auth（Web Console 登入）」：
  * - Web 端會把 access_token 存在 localStorage（依 orgId 分開）
  * - API client 會自動帶上 `Authorization: Bearer <token>`
  * - 後端的 StaffAuthGuard 會要求：actor_user_id 必須等於登入者（避免冒用）
+ *
+ * 本專案也開始導入「Patron Auth（OPAC Account / 讀者登入）」：
+ * - OPAC 端會把 access_token 存在 localStorage（依 orgId 分開）
+ * - `/api/v1/orgs/:orgId/me/*` 由 PatronAuthGuard 保護，必須帶「讀者 token」
  */
 
+import { getOpacAccessToken } from './opac-session';
 import { getStaffAccessToken } from './staff-session';
 
 // 這些型別是「Web 端看到的 API 回傳形狀」；
@@ -120,6 +125,79 @@ export type UsersCsvImportApplyResult = {
 
 export type UsersCsvImportResult = UsersCsvImportPreviewResult | UsersCsvImportApplyResult;
 
+// ----------------------------
+// US-022：Catalog CSV Import（書目/冊 匯入）
+// ----------------------------
+
+export type CatalogCsvImportMode = 'preview' | 'apply';
+
+export type CatalogCsvImportRowError = {
+  row_number: number;
+  code: string;
+  message: string;
+  field?: string;
+  details?: unknown;
+};
+
+export type CatalogCsvImportRowPlan = {
+  row_number: number;
+
+  // item
+  barcode: string;
+  call_number: string;
+  location_id: string;
+  status: ItemStatus;
+  acquired_at: string | null;
+  notes: string | null;
+
+  // bib
+  bibliographic_id: string | null;
+  isbn: string | null;
+  title: string | null;
+  creators: string[] | null;
+  publisher: string | null;
+  published_year: number | null;
+  language: string | null;
+  subjects: string[] | null;
+  classification: string | null;
+
+  // plan
+  bib_action: 'use_existing' | 'create_new' | 'invalid';
+  bib_key: string;
+  item_action: 'create' | 'update' | 'invalid';
+};
+
+export type CatalogCsvImportSummary = {
+  total_rows: number;
+  valid_rows: number;
+  invalid_rows: number;
+  bibs_to_create: number;
+  items_to_create: number;
+  items_to_update: number;
+};
+
+export type CatalogCsvImportPreviewResult = {
+  mode: 'preview';
+  csv: { header: string[]; sha256: string };
+  options: {
+    default_location_id: string | null;
+    update_existing_items: boolean;
+    allow_relink_bibliographic: boolean;
+  };
+  summary: CatalogCsvImportSummary;
+  errors: CatalogCsvImportRowError[];
+  rows: CatalogCsvImportRowPlan[];
+  bibs_to_create_preview: Array<{ bib_key: string; title: string | null; isbn: string | null }>;
+};
+
+export type CatalogCsvImportApplyResult = {
+  mode: 'apply';
+  summary: CatalogCsvImportSummary;
+  audit_event_id: string;
+};
+
+export type CatalogCsvImportResult = CatalogCsvImportPreviewResult | CatalogCsvImportApplyResult;
+
 export type CirculationPolicy = {
   id: string;
   organization_id: string;
@@ -131,6 +209,7 @@ export type CirculationPolicy = {
   max_renewals: number;
   max_holds: number;
   hold_pickup_days: number;
+  overdue_block_days: number;
   created_at: string;
   updated_at: string;
 };
@@ -360,6 +439,136 @@ export type FulfillHoldResult = {
   due_at: string;
 };
 
+// ----------------------------
+// Inventory（盤點）
+// ----------------------------
+
+/**
+ * InventorySessionWithDetails：盤點 session（含 location/actor/stats）
+ *
+ * 對應 API：
+ * - POST /inventory/sessions
+ * - GET  /inventory/sessions
+ */
+export type InventorySessionWithDetails = {
+  id: string;
+  organization_id: string;
+  location_id: string;
+  actor_user_id: string;
+  note: string | null;
+  started_at: string;
+  closed_at: string | null;
+
+  // join fields：方便 UI 顯示
+  location_code: string;
+  location_name: string;
+  actor_external_id: string;
+  actor_name: string;
+
+  // stats：方便 UI 顯示盤點進度
+  scanned_count: number;
+  unexpected_count: number;
+};
+
+export type InventoryScannedItem = {
+  id: string;
+  barcode: string;
+  call_number: string;
+  status: ItemStatus;
+  location_id: string;
+  location_code: string;
+  location_name: string;
+  bibliographic_id: string;
+  bibliographic_title: string;
+  last_inventory_at: string | null;
+};
+
+export type InventoryScanResult = {
+  scan_id: string;
+  session_id: string;
+  scanned_at: string;
+  flags: { location_mismatch: boolean; status_unexpected: boolean };
+  item: InventoryScannedItem;
+  session_location: { id: string; code: string; name: string };
+};
+
+export type CloseInventorySessionResult = {
+  ok: true;
+  session: {
+    id: string;
+    organization_id: string;
+    location_id: string;
+    actor_user_id: string;
+    note: string | null;
+    started_at: string;
+    closed_at: string;
+  };
+  summary: {
+    expected_available_count: number;
+    scanned_count: number;
+    missing_count: number;
+    unexpected_count: number;
+  };
+  audit_event_id: string;
+};
+
+// reports：Inventory Diff（盤點差異清單）
+export type InventoryDiffSession = {
+  inventory_session_id: string;
+  location_id: string;
+  location_code: string;
+  location_name: string;
+  actor_user_id: string;
+  actor_external_id: string;
+  actor_name: string;
+  note: string | null;
+  started_at: string;
+  closed_at: string | null;
+};
+
+export type InventoryDiffSummary = {
+  expected_available_count: number;
+  scanned_count: number;
+  missing_count: number;
+  unexpected_count: number;
+};
+
+export type InventoryMissingRow = {
+  item_id: string;
+  item_barcode: string;
+  item_call_number: string;
+  item_status: ItemStatus;
+  item_location_code: string;
+  item_location_name: string;
+  last_inventory_at: string | null;
+  bibliographic_id: string;
+  bibliographic_title: string;
+};
+
+export type InventoryUnexpectedRow = {
+  scan_id: string;
+  scanned_at: string;
+  item_id: string;
+  item_barcode: string;
+  item_call_number: string;
+  item_status: ItemStatus;
+  item_location_id: string;
+  item_location_code: string;
+  item_location_name: string;
+  last_inventory_at: string | null;
+  bibliographic_id: string;
+  bibliographic_title: string;
+  location_mismatch: boolean;
+  status_unexpected: boolean;
+};
+
+export type InventoryDiffResult = {
+  session: InventoryDiffSession;
+  summary: InventoryDiffSummary;
+  missing: InventoryMissingRow[];
+  unexpected: InventoryUnexpectedRow[];
+};
+
 // reports：取書架清單（Ready Holds / Pickup Shelf List）
 export type ReadyHoldsReportRow = {
   // hold
@@ -494,6 +703,21 @@ export type StaffLoginResult = {
   };
 };
 
+// Patron login（OPAC Account）回傳：
+// - 後端實作上與 StaffLoginResult 同形狀，但 role 會被 PatronAuthGuard 限制為 student/teacher。
+export type PatronLoginResult = {
+  access_token: string;
+  expires_at: string;
+  user: {
+    id: string;
+    organization_id: string;
+    external_id: string;
+    name: string;
+    role: 'student' | 'teacher';
+    status: User['status'];
+  };
+};
+
 /**
  * ApiError：把 HTTP status 與 API 的 error body 綁在一起，方便 UI 顯示。
  */
@@ -574,9 +798,21 @@ async function requestJson<T>(
     headers: { 'content-type': 'application/json' },
   };
 
-  // 2.1) Staff Auth：若該 path 是 org scoped，嘗試自動帶上 Bearer token
+  // 2.1) Auth：若該 path 是 org scoped，嘗試自動帶上 Bearer token
+  //
+  // 重要：同一個瀏覽器可能同時有 staff token 與 OPAC token。
+  // - staff token：用於後台（/orgs/...）受 StaffAuthGuard 保護的端點
+  // - OPAC token：用於讀者端（/opac/...）受 PatronAuthGuard 保護的 /me 端點
+  //
+  // 因此我們以「API path」決定要帶哪一種 token：
+  // - `/api/v1/orgs/:orgId/me/*` → 帶 OPAC token
+  // - 其他 org scoped 端點 → 帶 staff token（若有）
   const orgIdForAuth = extractOrgIdFromApiPath(path);
-  const token = orgIdForAuth ? getStaffAccessToken(orgIdForAuth) : null;
+  const token = orgIdForAuth
+    ? isPatronMeApiPath(path, orgIdForAuth)
+      ? getOpacAccessToken(orgIdForAuth)
+      : getStaffAccessToken(orgIdForAuth)
+    : null;
   if (token) (init.headers as Record<string, string>)['authorization'] = `Bearer ${token}`;
 
   // body 只有在需要時才帶（GET/HEAD 不應帶 body）。
@@ -641,9 +877,13 @@ async function requestText(
   // accept：讓後端知道我們想要的格式（例如 text/csv）
   if (options.accept) headers['accept'] = options.accept;
 
-  // Staff Auth：若該 path 是 org scoped，嘗試自動帶上 Bearer token
+  // Auth：邏輯同 requestJson（/me 帶 OPAC token，其它帶 staff token）
   const orgIdForAuth = extractOrgIdFromApiPath(path);
-  const token = orgIdForAuth ? getStaffAccessToken(orgIdForAuth) : null;
+  const token = orgIdForAuth
+    ? isPatronMeApiPath(path, orgIdForAuth)
+      ? getOpacAccessToken(orgIdForAuth)
+      : getStaffAccessToken(orgIdForAuth)
+    : null;
   if (token) headers['authorization'] = `Bearer ${token}`;
 
   // body：若有 body（通常是 POST），才宣告 content-type 並送 JSON
@@ -719,6 +959,20 @@ function extractOrgIdFromApiPath(path: string) {
 }
 
 /**
+ * isPatronMeApiPath：判斷一個 API path 是否屬於 OPAC（Patron）端點
+ *
+ * 規則（MVP）：
+ * - 只要是 `/api/v1/orgs/:orgId/me` 開頭，就視為 patron-only
+ *
+ * 為什麼不用「是否在 /opac 路由」判斷？
+ * - Web 與 API client 是共用的（/orgs 與 /opac 都會 import 同一支 api.ts）
+ * - 判斷 request 的目標（API path）才是最穩定的方式
+ */
+function isPatronMeApiPath(path: string, orgId: string) {
+  return path.startsWith(`/api/v1/orgs/${orgId}/me`);
+}
+
+/**
  * 對外的 domain functions：讓頁面用「語意化函式」呼叫 API。
  * 這比在每個 page 裡硬寫 URL 更容易維護與重構。
  */
@@ -735,7 +989,7 @@ export async function createOrganization(input: { name: string; code?: string })
 }
 
 // ----------------------------
-// Auth（Staff）
+// Auth（Staff / Patron）
 // ----------------------------
 
 export async function staffLogin(
@@ -743,6 +997,18 @@ export async function staffLogin(
   input: { external_id: string; password: string },
 ) {
   return await requestJson<StaffLoginResult>(`/api/v1/orgs/${orgId}/auth/login`, {
+    method: 'POST',
+    body: input,
+  });
+}
+
+export async function patronLogin(
+  orgId: string,
+  input: { external_id: string; password: string },
+) {
+  // 注意：後端為了「前端共用」刻意回傳與 staffLogin 相同的 shape，
+  // 但我們在 Web 端把 role 收斂成 student/teacher（避免 OPAC session 誤存 staff role）。
+  return await requestJson<PatronLoginResult>(`/api/v1/orgs/${orgId}/auth/patron-login`, {
     method: 'POST',
     body: input,
   });
@@ -765,6 +1031,59 @@ export async function bootstrapSetStaffPassword(
   return await requestJson<{ ok: true }>(`/api/v1/orgs/${orgId}/auth/bootstrap-set-password`, {
     method: 'POST',
     body: input,
+  });
+}
+
+// ----------------------------
+// OPAC Account（/me：登入後的讀者自助 API）
+// ----------------------------
+
+export type MeUser = {
+  id: string;
+  organization_id: string;
+  external_id: string;
+  name: string;
+  role: 'student' | 'teacher';
+  status: 'active' | 'inactive';
+};
+
+export async function getMe(orgId: string) {
+  return await requestJson<MeUser>(`/api/v1/orgs/${orgId}/me`, { method: 'GET' });
+}
+
+export async function listMyLoans(
+  orgId: string,
+  query?: { status?: 'open' | 'closed' | 'all'; limit?: number },
+) {
+  return await requestJson<LoanWithDetails[]>(`/api/v1/orgs/${orgId}/me/loans`, {
+    method: 'GET',
+    query: query ?? {},
+  });
+}
+
+export async function listMyHolds(
+  orgId: string,
+  query?: { status?: HoldStatus | 'all'; limit?: number },
+) {
+  return await requestJson<HoldWithDetails[]>(`/api/v1/orgs/${orgId}/me/holds`, {
+    method: 'GET',
+    query: query ?? {},
+  });
+}
+
+export async function placeMyHold(
+  orgId: string,
+  input: { bibliographic_id: string; pickup_location_id: string },
+) {
+  return await requestJson<HoldWithDetails>(`/api/v1/orgs/${orgId}/me/holds`, {
+    method: 'POST',
+    body: input,
+  });
+}
+
+export async function cancelMyHold(orgId: string, holdId: string) {
+  return await requestJson<HoldWithDetails>(`/api/v1/orgs/${orgId}/me/holds/${holdId}/cancel`, {
+    method: 'POST',
   });
 }
 
@@ -870,6 +1189,46 @@ export async function applyUsersCsvImport(
   });
 }
 
+// ----------------------------
+// US-022：Catalog CSV Import（書目/冊 匯入）
+// ----------------------------
+
+export async function previewCatalogCsvImport(
+  orgId: string,
+  input: {
+    actor_user_id: string;
+    csv_text: string;
+    default_location_id?: string;
+    update_existing_items?: boolean;
+    allow_relink_bibliographic?: boolean;
+    source_filename?: string;
+    source_note?: string;
+  },
+) {
+  return await requestJson<CatalogCsvImportPreviewResult>(`/api/v1/orgs/${orgId}/bibs/import`, {
+    method: 'POST',
+    body: { ...input, mode: 'preview' satisfies CatalogCsvImportMode },
+  });
+}
+
+export async function applyCatalogCsvImport(
+  orgId: string,
+  input: {
+    actor_user_id: string;
+    csv_text: string;
+    default_location_id?: string;
+    update_existing_items?: boolean;
+    allow_relink_bibliographic?: boolean;
+    source_filename?: string;
+    source_note?: string;
+  },
+) {
+  return await requestJson<CatalogCsvImportApplyResult>(`/api/v1/orgs/${orgId}/bibs/import`, {
+    method: 'POST',
+    body: { ...input, mode: 'apply' satisfies CatalogCsvImportMode },
+  });
+}
+
 export async function listPolicies(orgId: string) {
   return await requestJson<CirculationPolicy[]>(
     `/api/v1/orgs/${orgId}/circulation-policies`,
@@ -888,6 +1247,7 @@ export async function createPolicy(
     max_renewals: number;
     max_holds: number;
     hold_pickup_days: number;
+    overdue_block_days: number;
   },
 ) {
   return await requestJson<CirculationPolicy>(
@@ -1049,6 +1409,58 @@ export async function markItemWithdrawn(
 ) {
   return await requestJson<ItemCopy>(
     `/api/v1/orgs/${orgId}/items/${itemId}/mark-withdrawn`,
+    {
+      method: 'POST',
+      body: input,
+    },
+  );
+}
+
+// ----------------------------
+// Inventory（盤點）
+// ----------------------------
+
+export async function createInventorySession(
+  orgId: string,
+  input: { actor_user_id: string; location_id: string; note?: string },
+) {
+  return await requestJson<InventorySessionWithDetails>(`/api/v1/orgs/${orgId}/inventory/sessions`, {
+    method: 'POST',
+    body: input,
+  });
+}
+
+export async function listInventorySessions(
+  orgId: string,
+  query?: { location_id?: string; status?: 'open' | 'closed' | 'all'; limit?: number },
+) {
+  return await requestJson<InventorySessionWithDetails[]>(`/api/v1/orgs/${orgId}/inventory/sessions`, {
+    method: 'GET',
+    query: query ?? {},
+  });
+}
+
+export async function scanInventoryItem(
+  orgId: string,
+  sessionId: string,
+  input: { actor_user_id: string; item_barcode: string },
+) {
+  return await requestJson<InventoryScanResult>(
+    `/api/v1/orgs/${orgId}/inventory/sessions/${sessionId}/scan`,
+    {
+      method: 'POST',
+      body: input,
+    },
+  );
+}
+
+export async function closeInventorySession(
+  orgId: string,
+  sessionId: string,
+  input: { actor_user_id: string; note?: string },
+) {
+  return await requestJson<CloseInventorySessionResult>(
+    `/api/v1/orgs/${orgId}/inventory/sessions/${sessionId}/close`,
     {
       method: 'POST',
       body: input,
@@ -1224,12 +1636,36 @@ export async function applyExpireReadyHolds(
  * MVP 先把「學校每天會用」的查詢做成可匯出（JSON/CSV）的報表：
  * - ready-holds：取書架清單（可取書）
  * - overdue：逾期清單
+ * - inventory-diff：盤點差異清單
  * - US-050：熱門書、借閱量彙總
  *
  * 設計：
  * - 報表通常包含敏感資料，因此要求 `actor_user_id`（admin/librarian）
  * - 同一個 endpoint 可用 `format=csv` 下載 CSV
  */
+
+export async function getInventoryDiffReport(
+  orgId: string,
+  filters: { actor_user_id: string; inventory_session_id: string; limit?: number },
+) {
+  return await requestJson<InventoryDiffResult>(`/api/v1/orgs/${orgId}/reports/inventory-diff`, {
+    method: 'GET',
+    query: { ...filters, format: 'json' },
+  });
+}
+
+export async function downloadInventoryDiffReportCsv(
+  orgId: string,
+  filters: { actor_user_id: string; inventory_session_id: string; limit?: number },
+) {
+  const result = await requestText(`/api/v1/orgs/${orgId}/reports/inventory-diff`, {
+    method: 'GET',
+    query: { ...filters, format: 'csv' },
+    accept: 'text/csv',
+  });
+
+  return result.text;
+}
 
 export async function listReadyHoldsReport(
   orgId: string,
