@@ -213,4 +213,16 @@
 - `GET /orgs/{orgId}/reports/circulation-summary?from=...&to=...&group_by=day|week|month`：借閱量彙總（Librarian）
 
 ## 10) Audit Events
-- `GET /orgs/{orgId}/audit-events?from=...&to=...&actor_user_id=...&action=...`：查詢稽核事件（Admin）
+> audit_events 用於「追溯誰在什麼時間做了什麼」，通常包含敏感資訊，因此建議權限保守。
+
+### 10.1 查詢稽核事件（List audit events）
+- `GET /orgs/{orgId}/audit-events?actor_user_id=...&from=...&to=...&actor_query=...&action=...&entity_type=...&entity_id=...&limit=...`
+- 權限（MVP 最小控管）：
+  - `actor_user_id` 必填，且必須是 `admin/librarian`（active）
+- Query params：
+  - `from/to`：可選，ISO 8601（timestamptz），用於篩選 `audit_events.created_at`
+  - `actor_query`：可選，用事件操作者的 `users.external_id` 或 `users.name` 模糊查詢（ILIKE）
+  - `action`：可選，事件類型（例如 `loan.checkout`）
+  - `entity_type/entity_id`：可選，影響資料類型與 ID
+  - `limit`：可選（1..5000），預設 200
+- Response：回傳 audit_event + actor 可顯示欄位（snake_case）

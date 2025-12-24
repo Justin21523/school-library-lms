@@ -22,6 +22,7 @@
 - `docs/implementation/0005-loans-and-renew.md`
 - `docs/implementation/0006-holds-and-opac.md`
 - `docs/implementation/0007-overdue-report-and-csv.md`
+- `docs/implementation/0008-audit-events-query.md`
 
 ## 註解規範
 - `docs/commenting-guidelines.md`
