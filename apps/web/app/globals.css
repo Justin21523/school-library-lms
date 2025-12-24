@@ -1,0 +1,156 @@
+/*
+ * 全站共用樣式（Next.js App Router）
+ *
+ * 這裡刻意用「少量、可讀、可逐步擴充」的 CSS：
+ * - MVP 階段先追求可用與可維護，不先導入 Tailwind/Design System
+ * - 之後若要改成 Tailwind 或 UI library，只要替換這裡與元件 class 即可
+ */
+
+:root {
+  /* 讓色彩集中在變數，日後調整不需要全站搜尋取代。 */
+  --bg: #0b1020;
+  --panel: #111a33;
+  --text: #e8eefc;
+  --muted: #a9b6d6;
+  --border: rgba(255, 255, 255, 0.12);
+  --link: #7bb1ff;
+  --danger: #ff6b6b;
+  --success: #4cd964;
+
+  /* 版面設定 */
+  --max-width: 1100px;
+}
+
+/*
+ * Next.js 的 layout.tsx 會渲染 <body>。
+ * 我們把全站基礎字體、背景、顏色設定在 body。
+ */
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+}
+
+/* 讓連結在深色背景下仍清楚可辨。 */
+a {
+  color: var(--link);
+  text-decoration: none;
+}
+a:hover {
+  text-decoration: underline;
+}
+
+/* 常用的版面容器：集中內容、留白。 */
+.container {
+  max-width: var(--max-width);
+  margin: 0 auto;
+  padding: 24px;
+}
+
+/* 以 card/panel 呈現區塊（列表、表單）。 */
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 16px;
+}
+
+/* 讓 panel 之間有穩定間距。 */
+.stack {
+  display: grid;
+  gap: 16px;
+}
+
+/* Top bar（用於 console layout） */
+.topbar {
+  border-bottom: 1px solid var(--border);
+  background: rgba(17, 26, 51, 0.6);
+  backdrop-filter: blur(8px);
+}
+
+.topbarInner {
+  max-width: var(--max-width);
+  margin: 0 auto;
+  padding: 12px 24px;
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.topbarTitle {
+  font-weight: 700;
+}
+
+.topbarNav {
+  display: flex;
+  gap: 12px;
+}
+
+/* Org layout 內的側邊導覽 */
+.orgLayout {
+  max-width: var(--max-width);
+  margin: 0 auto;
+  padding: 24px;
+  display: grid;
+  grid-template-columns: 240px 1fr;
+  gap: 16px;
+}
+
+.orgNav {
+  position: sticky;
+  top: 16px;
+  align-self: start;
+}
+
+.orgNav ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.error {
+  color: var(--danger);
+}
+
+.success {
+  color: var(--success);
+}
+
+/* 表單：先用最小樣式讓 MVP 可操作 */
+label {
+  display: grid;
+  gap: 6px;
+  font-size: 14px;
+}
+
+input,
+select,
+textarea {
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text);
+}
+
+button {
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text);
+  cursor: pointer;
+}
+
+button:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+

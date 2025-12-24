@@ -11,7 +11,7 @@
 
 ## 專案現況（目前做到了哪裡）
 - 文件已整理成「可開發」：`MVP-SPEC.md`、`USER-STORIES.md`、`API-DRAFT.md`、`DATA-DICTIONARY.md`、`db/schema.sql`
-- 程式骨架已建立：`apps/api` 提供 `/health`，`apps/web` 提供首頁（尚未實作核心功能）
+- 程式已能端到端操作（MVP 版本）：`apps/api` 已落地主檔/書目/冊/借還 API（另有 `/health`），`apps/web` 已提供 Web Console（`/orgs`）呼叫既有 API
 - 架構決策已記錄（含擴充路線）：`ARCHITECTURE.md`、`docs/design-rationale.md`
 
 ## MVP 功能範圍（你可以期待什麼）
@@ -39,15 +39,15 @@ MVP 預設政策已定案（可調）：請見 `MVP-SPEC.md`。
 ```
 .
 ├─ apps/
-│  ├─ api/          # NestJS API（目前僅 health endpoint）
-│  └─ web/          # Next.js Web（首頁）
+│  ├─ api/          # NestJS API（org/location/user/policy/bib/item/circulation）
+│  └─ web/          # Next.js Web Console（/orgs）
 ├─ packages/
 │  └─ shared/       # 共用型別/工具（預留）
 ├─ db/
 │  ├─ schema.sql    # PostgreSQL schema 草案
 │  └─ README.md     # DB 說明
-├─ reference-docs/  # A–J 文獻與草案（含匯出完整版/摘要版）
 └─ docs/            # 新手友善：運作方式、入門、設計取捨
+   └─ reference-docs/  # A–J 文獻與草案（含匯出完整版/摘要版）
 ```
 
 ## 重要文件（你要找什麼就看這裡）
@@ -58,6 +58,7 @@ MVP 預設政策已定案（可調）：請見 `MVP-SPEC.md`。
 - ER Diagram（資料模型全貌）：`docs/er-diagram.md`
 - 開發用「真相來源」：`MVP-SPEC.md`、`USER-STORIES.md`、`API-DRAFT.md`、`DATA-DICTIONARY.md`、`db/schema.sql`
 - 實作說明（每次實作都會補）：`docs/implementation/0001-api-foundation-and-core-master-data.md`
+- Web Console 實作說明：`docs/implementation/0004-web-console-and-api-integration.md`
 - 註解與教學文件規範：`docs/commenting-guidelines.md`
 
 ## 本機開發（從 0 到跑起來）
@@ -87,7 +88,7 @@ npm run dev
 ```
 
 檢查：
-- Web：`http://localhost:3000`
+- Web：`http://localhost:3000`（Console：`/orgs`）
 - API：`http://localhost:3001/health`
 
 ## 如何把文件變成程式（建議工作流）
@@ -99,4 +100,4 @@ npm run dev
 
 ## 參與貢獻（文件與程式）
 - 參考 `AGENTS.md`（撰寫規範、命名、開發指令、文件同步原則）。
-- `reference-docs/` 內的「匯出完整版」可能含個資（如 `**User:**` 行）；若要公開倉庫，請先遮罩/移除。
+- `docs/reference-docs/` 內的「匯出完整版」可能含個資（如 `**User:**` 行）；若要公開倉庫，請先遮罩/移除。

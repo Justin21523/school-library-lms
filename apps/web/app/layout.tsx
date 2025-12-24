@@ -11,8 +11,14 @@
 // ReactNode 是 React 裡用來表示「可被渲染的內容」的型別（例如文字、元素、元件）。
 import type { ReactNode } from 'react';
 
+// Next.js 的 Metadata 型別：讓你在 TS 下寫 title/description 時有提示與檢查。
+import type { Metadata } from 'next';
+
+// 全站共用 CSS（App Router 規則：只能在 layout.tsx 這種「根」層級 import global CSS）。
+import './globals.css';
+
 // Next.js 會使用 metadata 來產生 <head> 的標題/描述（例如 SEO/分享卡片）。
-export const metadata = {
+export const metadata: Metadata = {
   title: 'Library System',
   description: 'Lean cloud library system for K–12 schools',
 };
@@ -21,8 +27,8 @@ export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     // `lang="zh-Hant"`：標示主要語言為繁體中文（對 SEO/螢幕閱讀器有幫助）。
     <html lang="zh-Hant">
-      {/* 這裡先用 inline style 做最小化排版；之後可以換成 CSS/Tailwind。 */}
-      <body style={{ fontFamily: 'system-ui, sans-serif', margin: 0 }}>{children}</body>
+      {/* body 的全站樣式在 globals.css，這裡只放 children。 */}
+      <body>{children}</body>
     </html>
   );
 }

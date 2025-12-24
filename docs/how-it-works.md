@@ -46,10 +46,10 @@
    `npm run dev`
 
 你應該會看到：
-- Web：`http://localhost:3000`
+- Web：`http://localhost:3000`（Console：`/orgs`）
 - API 健康檢查：`http://localhost:3001/health` 回 `{ ok: true }`
 
-> 目前骨架只提供最小可跑的 health endpoint；真正功能要依照 `USER-STORIES.md` 一步步加上。
+> 目前已落地主檔/書目/冊/借還等核心 API，Web 也有最小可操作的 Console；後續功能仍建議依 `USER-STORIES.md` 逐步擴充。
 
 ## 5) 一個請求在後端發生了什麼（NestJS 觀念）
 以 `GET /health` 為例：
@@ -90,4 +90,3 @@ Git 是版本控制工具，會把每次改動記錄成可追溯的歷史。
 3. 對照 `DATA-DICTIONARY.md` / `db/schema.sql` 確認資料欄位與 constraint（例如「同一冊只能有一筆未歸還借閱」）。
 4. 再開始寫程式（API → DB → Web），每一步都寫清楚驗收條件怎麼測。
 5. 寫完後回頭更新文件（讓文件永遠是最新的）。
-
