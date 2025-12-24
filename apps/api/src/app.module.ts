@@ -27,6 +27,7 @@ import { CirculationModule } from './circulation/circulation.module';
 import { LoansModule } from './loans/loans.module';
 import { HoldsModule } from './holds/holds.module';
 import { ReportsModule } from './reports/reports.module';
+import { AuditModule } from './audit/audit.module';
 
 @Module({
   // imports：把子模組「掛進」AppModule，讓 NestJS 掃描它們的 controller/provider。
@@ -42,6 +43,7 @@ import { ReportsModule } from './reports/reports.module';
     LoansModule,
     HoldsModule,
     ReportsModule,
+    AuditModule,
   ],
   controllers: [HealthController],
 })
