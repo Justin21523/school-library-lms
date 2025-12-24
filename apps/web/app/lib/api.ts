@@ -305,6 +305,20 @@ export type OverdueReportRow = {
   bibliographic_title: string;
 };
 
+// reports：US-050 熱門書（Top Circulation）
+export type TopCirculationRow = {
+  bibliographic_id: string;
+  bibliographic_title: string;
+  loan_count: number;
+  unique_borrowers: number;
+};
+
+// reports：US-050 借閱量彙總（Circulation Summary）
+export type CirculationSummaryRow = {
+  bucket_start: string;
+  loan_count: number;
+};
+
 // audit：稽核事件查詢
 export type AuditEventRow = {
   // audit_event
@@ -974,6 +988,58 @@ export async function downloadOverdueReportCsv(
   },
 ) {
   const result = await requestText(`/api/v1/orgs/${orgId}/reports/overdue`, {
+    method: 'GET',
+    query: { ...filters, format: 'csv' },
+    accept: 'text/csv',
+  });
+
+  return result.text;
+}
+
+export async function listTopCirculationReport(
+  orgId: string,
+  filters: { actor_user_id: string; from: string; to: string; limit?: number },
+) {
+  return await requestJson<TopCirculationRow[]>(
+    `/api/v1/orgs/${orgId}/reports/top-circulation`,
+    {
+      method: 'GET',
+      query: { ...filters, format: 'json' },
+    },
+  );
+}
+
+export async function downloadTopCirculationReportCsv(
+  orgId: string,
+  filters: { actor_user_id: string; from: string; to: string; limit?: number },
+) {
+  const result = await requestText(`/api/v1/orgs/${orgId}/reports/top-circulation`, {
+    method: 'GET',
+    query: { ...filters, format: 'csv' },
+    accept: 'text/csv',
+  });
+
+  return result.text;
+}
+
+export async function listCirculationSummaryReport(
+  orgId: string,
+  filters: { actor_user_id: string; from: string; to: string; group_by: 'day' | 'week' | 'month' },
+) {
+  return await requestJson<CirculationSummaryRow[]>(
+    `/api/v1/orgs/${orgId}/reports/circulation-summary`,
+    {
+      method: 'GET',
+      query: { ...filters, format: 'json' },
+    },
+  );
+}
+
+export async function downloadCirculationSummaryReportCsv(
+  orgId: string,
+  filters: { actor_user_id: string; from: string; to: string; group_by: 'day' | 'week' | 'month' },
+) {
+  const result = await requestText(`/api/v1/orgs/${orgId}/reports/circulation-summary`, {
     method: 'GET',
     query: { ...filters, format: 'csv' },
     accept: 'text/csv',
