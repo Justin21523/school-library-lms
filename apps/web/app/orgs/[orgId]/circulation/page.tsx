@@ -17,8 +17,8 @@
 
 import { useEffect, useMemo, useState } from 'react';
 
-import type { CheckinResult, CheckoutResult, User } from '../../../lib/api';
-import { checkin, checkout, listUsers } from '../../../lib/api';
+import type { CheckinResult, CheckoutResult, FulfillHoldResult, HoldWithDetails, User } from '../../../lib/api';
+import { checkin, checkout, fulfillHold, listHolds, listUsers } from '../../../lib/api';
 import { formatErrorMessage } from '../../../lib/error';
 
 // MVP 的「可操作 RBAC」：actor 只能是 admin/librarian，且必須是 active。
@@ -44,6 +44,15 @@ export default function CirculationPage({ params }: { params: { orgId: string } 
   const [checkinBarcode, setCheckinBarcode] = useState('');
   const [checkingIn, setCheckingIn] = useState(false);
   const [checkinResult, setCheckinResult] = useState<CheckinResult | null>(null);
+
+  // fulfill（取書借出 / Ready Hold → Loan）
+  // - 現場常見流程：讀者到館，館員從取書架拿到該冊，直接掃描冊條碼完成「取書借出」
+  // - 技術上 fulfill 需要 hold_id；因此我們會先用條碼查 ready holds，再執行 fulfill
+  const [fulfillBarcode, setFulfillBarcode] = useState('');
+  const [findingHold, setFindingHold] = useState(false);
+  const [fulfillCandidates, setFulfillCandidates] = useState<HoldWithDetails[] | null>(null);
+  const [fulfillingHoldId, setFulfillingHoldId] = useState<string | null>(null);
+  const [fulfillResult, setFulfillResult] = useState<FulfillHoldResult | null>(null);
 
   // 共用訊息
   const [error, setError] = useState<string | null>(null);
@@ -83,6 +92,8 @@ export default function CirculationPage({ params }: { params: { orgId: string } 
     setSuccess(null);
     setCheckoutResult(null);
     setCheckinResult(null);
+    setFulfillCandidates(null);
+    setFulfillResult(null);
 
     const trimmedBorrower = borrowerExternalId.trim();
     const trimmedBarcode = checkoutBarcode.trim();
@@ -125,6 +136,8 @@ export default function CirculationPage({ params }: { params: { orgId: string } 
     setSuccess(null);
     setCheckoutResult(null);
     setCheckinResult(null);
+    setFulfillCandidates(null);
+    setFulfillResult(null);
 
     const trimmedBarcode = checkinBarcode.trim();
 
@@ -150,6 +163,105 @@ export default function CirculationPage({ params }: { params: { orgId: string } 
       setError(formatErrorMessage(e));
     } finally {
       setCheckingIn(false);
+    }
+  }
+
+  /**
+   * 取書借出（掃冊條碼 → 找到 ready hold → fulfill）
+   *
+   * 設計重點：
+   * - 取書架上的冊通常是 `item_copies.status=on_hold`
+   * - fulfills 是「以 hold_id 為主鍵」的動作端點
+   * - 因此我們用 `GET /holds?status=ready&item_barcode=...` 先找到對應 hold，再呼叫 fulfill
+   */
+  async function onFulfillByBarcode(e: React.FormEvent) {
+    e.preventDefault();
+    setError(null);
+    setSuccess(null);
+    setCheckoutResult(null);
+    setCheckinResult(null);
+    setFulfillResult(null);
+
+    const trimmedBarcode = fulfillBarcode.trim();
+
+    if (!actorUserId) {
+      setError('請先選擇 actor_user_id（館員/管理者）');
+      return;
+    }
+    if (!trimmedBarcode) {
+      setError('item_barcode 不可為空');
+      return;
+    }
+
+    setFindingHold(true);
+    try {
+      // 1) 先查「這個冊條碼目前對應到哪一筆 ready hold」
+      // - 正常情況應該只會有 1 筆
+      // - 若回傳多筆（資料不一致或歷史資料），我們讓館員手動選要 fulfill 哪一筆
+      const candidates = await listHolds(params.orgId, {
+        status: 'ready',
+        item_barcode: trimmedBarcode,
+        limit: 5,
+      });
+
+      setFulfillCandidates(candidates);
+
+      if (candidates.length === 0) {
+        throw new Error(
+          `找不到對應的 ready hold（請確認此冊是否在取書架／是否已被取消／是否已過期需要跑 maintenance）`,
+        );
+      }
+
+      if (candidates.length > 1) {
+        setSuccess(`找到 ${candidates.length} 筆 ready holds，請從清單選擇要 fulfill 的那一筆。`);
+        return;
+      }
+
+      // 2) 若只有一筆：直接 fulfill
+      const hold = candidates[0]!;
+      setFulfillingHoldId(hold.id);
+
+      const result = await fulfillHold(params.orgId, hold.id, { actor_user_id: actorUserId });
+      setFulfillResult(result);
+      setSuccess(`取書借出成功：loan_id=${result.loan_id} · due_at=${result.due_at}`);
+
+      // 3) 成功後清掉 UI 狀態，方便下一位讀者
+      setFulfillBarcode('');
+      setFulfillCandidates(null);
+    } catch (e) {
+      setFulfillResult(null);
+      setError(formatErrorMessage(e));
+    } finally {
+      setFindingHold(false);
+      setFulfillingHoldId(null);
+    }
+  }
+
+  async function onFulfillHoldId(holdId: string) {
+    setError(null);
+    setSuccess(null);
+    setCheckoutResult(null);
+    setCheckinResult(null);
+    setFulfillResult(null);
+
+    if (!actorUserId) {
+      setError('請先選擇 actor_user_id（館員/管理者）');
+      return;
+    }
+
+    setFulfillingHoldId(holdId);
+    try {
+      const result = await fulfillHold(params.orgId, holdId, { actor_user_id: actorUserId });
+      setFulfillResult(result);
+      setSuccess(`取書借出成功：loan_id=${result.loan_id} · due_at=${result.due_at}`);
+
+      // fulfill 成功後，清掉候選清單（避免重複按）
+      setFulfillCandidates(null);
+      setFulfillBarcode('');
+    } catch (e) {
+      setError(formatErrorMessage(e));
+    } finally {
+      setFulfillingHoldId(null);
     }
   }
 
@@ -181,6 +293,86 @@ export default function CirculationPage({ params }: { params: { orgId: string } 
         {loadingUsers ? <p className="muted">載入可用操作者中…</p> : null}
         {error ? <p className="error">錯誤：{error}</p> : null}
         {success ? <p className="success">{success}</p> : null}
+      </section>
+
+      {/* 取書借出（Fulfill ready hold） */}
+      <section className="panel">
+        <h2 style={{ marginTop: 0 }}>取書借出（Fulfill / 掃冊條碼）</h2>
+        <p className="muted">
+          現場流程：讀者到館取書 → 館員從取書架拿到該冊 → 掃描冊條碼 → 系統找到對應的 <code>ready hold</code> →{' '}
+          執行 <code>fulfill</code>（建立 loan）。
+        </p>
+
+        <p className="muted">
+          對應 API：<code>GET /api/v1/orgs/:orgId/holds?status=ready&amp;item_barcode=...</code> +{' '}
+          <code>POST /api/v1/orgs/:orgId/holds/:holdId/fulfill</code>
+        </p>
+
+        <form onSubmit={onFulfillByBarcode} className="stack" style={{ marginTop: 12 }}>
+          <label>
+            item_barcode（取書冊條碼）
+            <input
+              value={fulfillBarcode}
+              onChange={(e) => setFulfillBarcode(e.target.value)}
+              placeholder="例：LIB-00001234"
+            />
+          </label>
+
+          <button type="submit" disabled={findingHold || Boolean(fulfillingHoldId)}>
+            {findingHold ? '查找 ready hold 中…' : fulfillingHoldId ? '取書借出中…' : '取書借出'}
+          </button>
+        </form>
+
+        {fulfillResult ? (
+          <div className="muted" style={{ marginTop: 12 }}>
+            fulfill 結果：hold_id={fulfillResult.hold_id} · loan_id={fulfillResult.loan_id} · due_at={fulfillResult.due_at}
+          </div>
+        ) : null}
+
+        {fulfillCandidates && fulfillCandidates.length > 1 ? (
+          <div style={{ marginTop: 12 }}>
+            <p className="muted">
+              這個條碼對應到多筆 <code>ready</code> holds（不常見，通常代表資料不一致）。請手動選擇要 fulfill 哪一筆：
+            </p>
+
+            <div style={{ overflowX: 'auto' }}>
+              <table>
+                <thead>
+                  <tr>
+                    <th>borrower</th>
+                    <th>title</th>
+                    <th>ready_until</th>
+                    <th>hold_id</th>
+                    <th>action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {fulfillCandidates.map((h) => (
+                    <tr key={h.id}>
+                      <td>
+                        {h.user_name} ({h.user_external_id})
+                      </td>
+                      <td>{h.bibliographic_title}</td>
+                      <td>{h.ready_until ?? ''}</td>
+                      <td>
+                        <code style={{ fontSize: 12 }}>{h.id}</code>
+                      </td>
+                      <td>
+                        <button
+                          type="button"
+                          onClick={() => void onFulfillHoldId(h.id)}
+                          disabled={Boolean(fulfillingHoldId)}
+                        >
+                          {fulfillingHoldId === h.id ? '取書借出中…' : 'Fulfill'}
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        ) : null}
       </section>
 
       {/* 借出 */}
