@@ -826,15 +826,25 @@ export class CirculationService {
       JOIN users u
         ON u.id = h.user_id
        AND u.organization_id = h.organization_id
-      LEFT JOIN circulation_policies p
-        ON p.organization_id = h.organization_id
-       AND p.audience_role = u.role
+      -- policy（取「最新一筆」）：
+      -- - circulation_policies 允許同 role 多筆（例如政策調整時新增）
+      -- - 若直接 JOIN，會造成同一筆 hold 乘上多筆 policy，導致結果不穩定
+      -- - 用 LATERAL subquery 固定只取最新政策
+      LEFT JOIN LATERAL (
+        SELECT cp.hold_pickup_days
+        FROM circulation_policies cp
+        WHERE cp.organization_id = h.organization_id
+          AND cp.audience_role = u.role
+        ORDER BY cp.created_at DESC
+        LIMIT 1
+      ) p ON true
       WHERE h.organization_id = $1
         AND h.bibliographic_id = $2
         AND h.status = 'queued'
       ORDER BY h.placed_at ASC
       LIMIT 1
-      FOR UPDATE
+      -- 只鎖隊首 hold，避免把 users/policies 一起鎖住造成等待
+      FOR UPDATE OF h
       `,
       [orgId, bibId],
     );

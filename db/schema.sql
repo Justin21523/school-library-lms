@@ -222,6 +222,13 @@ CREATE INDEX IF NOT EXISTS holds_org_bib_queue
   ON holds (organization_id, bibliographic_id, placed_at)
   WHERE status = 'queued';
 
+-- DB 保證一致性：同一位讀者對同一書目同時只能有一筆「進行中」的 hold（queued/ready）
+-- - 這能避免：重複排隊、以及併發下「先查不存在 → 同時 insert」造成的重複資料
+-- - 部分狀態（cancelled/fulfilled/expired）屬於歷史資料，不應阻擋新預約
+CREATE UNIQUE INDEX IF NOT EXISTS holds_one_active_per_user_bib
+  ON holds (organization_id, bibliographic_id, user_id)
+  WHERE status IN ('queued'::hold_status, 'ready'::hold_status);
+
 -- audit_events：稽核事件（追溯誰在什麼時間做了什麼）
 -- - entity_type/entity_id 是多型指向（polymorphic），可記錄 item/loan/hold/... 的異動
 CREATE TABLE IF NOT EXISTS audit_events (
