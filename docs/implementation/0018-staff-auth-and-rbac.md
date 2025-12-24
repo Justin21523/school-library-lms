@@ -26,7 +26,7 @@
 - 讓 Web Console 先有「最小可用」登入（staff only）
 - 後端用 Guard 強制：`actor_user_id` 必須等於登入者（token.sub）
 
-> 注意：OPAC（讀者端）目前仍是「無登入」模式；本輪只先把 staff 後台收斂到可控。
+> 補充：後續已新增 OPAC Account（讀者登入 + `/me/*`），見 `docs/implementation/0022-opac-account.md`；本篇重點仍以 staff 後台登入/權限收斂為主。
 
 ---
 

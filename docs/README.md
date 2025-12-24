@@ -33,6 +33,10 @@
 - `docs/implementation/0016-us-051-zero-circulation-report.md`
 - `docs/implementation/0017-us-061-loan-history-retention.md`
 - `docs/implementation/0018-staff-auth-and-rbac.md`
+- `docs/implementation/0019-inventory-workbench.md`
+- `docs/implementation/0020-policy-overdue-block.md`
+- `docs/implementation/0021-us-022-catalog-csv-import.md`
+- `docs/implementation/0022-opac-account.md`
 
 ## 註解規範
 - `docs/commenting-guidelines.md`

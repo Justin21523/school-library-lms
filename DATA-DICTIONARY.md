@@ -28,6 +28,18 @@
 | created_at | datetime | Y | 建立時間 | `2025-12-24T00:00:00Z` |
 | updated_at | datetime | Y | 更新時間 | `2025-12-24T00:00:00Z` |
 
+## 1.1) user_credentials（密碼/憑證；內部用）
+> 這張表用於登入（Staff/Patron），避免把密碼欄位與 users 混在一起造成誤回傳風險。
+
+| 欄位 | 型別 | 必填 | 說明 | 例子 |
+| --- | --- | --- | --- | --- |
+| user_id | string | Y | users.id（PK/FK） | `u_3f2...` |
+| password_salt | text | Y | 雜湊用 salt | `base64...` |
+| password_hash | text | Y | 密碼雜湊 | `base64...` |
+| algorithm | string | Y | 演算法版本（MVP：`scrypt-v1`） | `scrypt-v1` |
+| created_at | datetime | Y | 建立時間 | `2025-12-24T00:00:00Z` |
+| updated_at | datetime | Y | 更新時間 | `2025-12-24T00:00:00Z` |
+
 ## 2) bibliographic_records（書目記錄）
 | 欄位 | 型別 | 必填 | 說明 | 例子 |
 | --- | --- | --- | --- | --- |
@@ -56,6 +68,28 @@
 | acquired_at | datetime | N | 入藏/取得日期 | `2024-09-01T00:00:00Z` |
 | last_inventory_at | datetime | N | 最近盤點掃到時間 | `2025-11-01T03:20:00Z` |
 | notes | text | N | 備註（破損、贈書等） | `封面破損` |
+
+## 3.1) inventory_sessions（盤點作業）
+| 欄位 | 型別 | 必填 | 說明 | 例子 |
+| --- | --- | --- | --- | --- |
+| id | string | Y | 盤點 session ID（UUID） | `inv_s_...` |
+| organization_id | string | Y | 所屬 organization | `org_1a2...` |
+| location_id | string | Y | 盤點位置/分館 | `loc_abc...` |
+| actor_user_id | string | Y | 開始/關閉盤點的操作者（staff） | `u_admin...` |
+| note | text | N | 盤點備註 | `期末盤點` |
+| started_at | datetime | Y | 開始時間 | `2025-12-24T08:00:00Z` |
+| closed_at | datetime | N | 結束時間（未結束為空） | `2025-12-24T10:00:00Z` |
+
+## 3.2) inventory_scans（盤點掃描紀錄）
+| 欄位 | 型別 | 必填 | 說明 | 例子 |
+| --- | --- | --- | --- | --- |
+| id | string | Y | scan ID（UUID） | `inv_sc_...` |
+| organization_id | string | Y | 所屬 organization | `org_1a2...` |
+| session_id | string | Y | 對應 inventory_sessions.id | `inv_s_...` |
+| location_id | string | Y | 盤點 location（與 session 同） | `loc_abc...` |
+| item_id | string | Y | 掃到的冊（item_copies.id） | `i_12c...` |
+| actor_user_id | string | Y | 執行掃描的操作者（staff） | `u_admin...` |
+| scanned_at | datetime | Y | 掃描時間 | `2025-12-24T08:30:00Z` |
 
 ## 4) loans（借閱）
 | 欄位 | 型別 | 必填 | 說明 | 例子 |
@@ -99,6 +133,7 @@
 | max_renewals | int | Y | 續借上限 | `1` |
 | max_holds | int | Y | 預約上限 | `3` |
 | hold_pickup_days | int | Y | 到書後保留天數 | `3` |
+| overdue_block_days | int | Y | 逾期達 X 天後禁止新增借閱（checkout/renew/hold/fulfill；0=不啟用） | `7` |
 
 ## 7) locations（位置/分館/書架區）
 | 欄位 | 型別 | 必填 | 說明 | 例子 |

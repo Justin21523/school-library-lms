@@ -2,7 +2,7 @@
 
 本文件說明我在第六輪實作完成的兩個關鍵能力：
 1) **Holds（預約/保留）**：以「書目」為單位排隊（queued），並在可取書時轉為 ready，最終由館員 fulfill（取書借出）。  
-2) **OPAC 自助流程**：讀者可以在 Web 上搜尋書目並自助預約、查自己的預約、取消預約（MVP 無登入，改用 `user_external_id`）。
+2) **OPAC 自助流程**：讀者可以在 Web 上搜尋書目並自助預約、查自己的預約、取消預約（第六輪時採「無登入」的 `user_external_id` 模式；後續已補上 OPAC Account，見 `docs/implementation/0022-opac-account.md`）。
 
 > 延續你的學習需求：本輪新增/修改的 TypeScript/TSX 檔案同樣維持高密度註解；本文件會用「程式片段 + 解釋」把狀態機、鎖（lock）、一致性（consistency）的原因講清楚。
 
@@ -164,7 +164,7 @@ if (hold.status === 'ready' && hold.assigned_item_id) {
 
 ## 8) OPAC（讀者自助）如何操作 holds
 
-新增 OPAC 路由（MVP 無登入，因此靠 `user_external_id`）：
+新增 OPAC 路由（第六輪時為 MVP 無登入，因此靠 `user_external_id`）：
 - `/opac`：入口
 - `/opac/orgs`：選擇學校（org）
 - `/opac/orgs/:orgId`：搜尋書目並「Place hold」
@@ -173,6 +173,10 @@ if (hold.status === 'ready' && hold.assigned_item_id) {
 重要安全註記（MVP 限制）：
 - 因為沒有 auth，「任何人只要知道 external_id 就能查/取消」存在冒用風險
 - 目前先以「holdId 是 UUID、不易猜」降低部分風險；真正解法是導入登入（例如校務 SSO）
+
+後續更新（請以最新版為準）：
+- 已新增 OPAC Account（讀者登入 + `/me/*`）：見 `docs/implementation/0022-opac-account.md`
+- 在 Web 端：已登入會走 `/api/v1/orgs/:orgId/me/holds`；未登入仍保留 `user_external_id` 模式作為過渡
 
 ---
 

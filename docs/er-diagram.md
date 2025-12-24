@@ -45,19 +45,29 @@ erDiagram
   organizations ||--o{ loans : includes
   organizations ||--o{ holds : includes
   organizations ||--o{ audit_events : records
+  organizations ||--o{ inventory_sessions : inventories
+  organizations ||--o{ inventory_scans : scans
 
   bibliographic_records ||--o{ item_copies : has
   bibliographic_records ||--o{ holds : requested_for
 
   locations ||--o{ item_copies : stores
   locations ||--o{ holds : pickup_at
+  locations ||--o{ inventory_sessions : inventories
+  locations ||--o{ inventory_scans : scans
 
   users ||--o{ loans : borrows
   users ||--o{ holds : places
   users ||--o{ audit_events : acts
+  users ||--o| user_credentials : has
+  users ||--o{ inventory_sessions : starts
+  users ||--o{ inventory_scans : scans
 
   item_copies ||--o{ loans : loaned_as
   item_copies |o--o{ holds : assigned_item
+  item_copies ||--o{ inventory_scans : scanned_in
+
+  inventory_sessions ||--o{ inventory_scans : includes
 
   organizations {
     uuid id PK
@@ -82,6 +92,13 @@ erDiagram
     user_status status
   }
 
+  user_credentials {
+    uuid user_id PK,FK
+    text password_salt
+    text password_hash
+    text algorithm
+  }
+
   bibliographic_records {
     uuid id PK
     uuid organization_id FK
@@ -98,6 +115,7 @@ erDiagram
     text barcode
     text call_number
     item_status status
+    timestamptz last_inventory_at
   }
 
   circulation_policies {
@@ -110,6 +128,26 @@ erDiagram
     int max_renewals
     int max_holds
     int hold_pickup_days
+    int overdue_block_days
+  }
+
+  inventory_sessions {
+    uuid id PK
+    uuid organization_id FK
+    uuid location_id FK
+    uuid actor_user_id FK
+    timestamptz started_at
+    timestamptz closed_at
+  }
+
+  inventory_scans {
+    uuid id PK
+    uuid organization_id FK
+    uuid session_id FK
+    uuid location_id FK
+    uuid item_id FK
+    uuid actor_user_id FK
+    timestamptz scanned_at
   }
 
   loans {
@@ -161,15 +199,24 @@ erDiagram
 | 組織 → 借閱 | `loans.organization_id` → `organizations.id` | 是 | `organizations 1 → loans 0..N` | `loans N → organizations 1` |
 | 組織 → 預約 | `holds.organization_id` → `organizations.id` | 是 | `organizations 1 → holds 0..N` | `holds N → organizations 1` |
 | 組織 → 稽核事件 | `audit_events.organization_id` → `organizations.id` | 是 | `organizations 1 → audit_events 0..N` | `audit_events N → organizations 1` |
+| 組織 → 盤點 session | `inventory_sessions.organization_id` → `organizations.id` | 是 | `organizations 1 → inventory_sessions 0..N` | `inventory_sessions N → organizations 1` |
+| 組織 → 盤點掃描 | `inventory_scans.organization_id` → `organizations.id` | 是 | `organizations 1 → inventory_scans 0..N` | `inventory_scans N → organizations 1` |
 | 書目 → 冊 | `item_copies.bibliographic_id` → `bibliographic_records.id` | 是 | `bibliographic_records 1 → item_copies 0..N` | `item_copies N → bibliographic_records 1` |
 | 書目 → 預約（排隊） | `holds.bibliographic_id` → `bibliographic_records.id` | 是 | `bibliographic_records 1 → holds 0..N` | `holds N → bibliographic_records 1` |
 | 位置 → 冊 | `item_copies.location_id` → `locations.id` | 是 | `locations 1 → item_copies 0..N` | `item_copies N → locations 1` |
 | 取書位置 → 預約 | `holds.pickup_location_id` → `locations.id` | 是 | `locations 1 → holds 0..N` | `holds N → locations 1` |
+| 位置 → 盤點 session | `inventory_sessions.location_id` → `locations.id` | 是 | `locations 1 → inventory_sessions 0..N` | `inventory_sessions N → locations 1` |
+| 位置 → 盤點掃描 | `inventory_scans.location_id` → `locations.id` | 是 | `locations 1 → inventory_scans 0..N` | `inventory_scans N → locations 1` |
 | 使用者 → 借閱 | `loans.user_id` → `users.id` | 是 | `users 1 → loans 0..N` | `loans N → users 1` |
 | 冊 → 借閱（歷史） | `loans.item_id` → `item_copies.id` | 是 | `item_copies 1 → loans 0..N` | `loans N → item_copies 1` |
 | 使用者 → 預約 | `holds.user_id` → `users.id` | 是 | `users 1 → holds 0..N` | `holds N → users 1` |
 | 冊 → 預約（可選指派） | `holds.assigned_item_id` → `item_copies.id` | 否 | `item_copies 1 → holds 0..N`（跨時間） | `holds N → item_copies 0..1` |
 | 使用者 → 稽核事件 | `audit_events.actor_user_id` → `users.id` | 是 | `users 1 → audit_events 0..N` | `audit_events N → users 1` |
+| 使用者 → 憑證 | `user_credentials.user_id` → `users.id` | 是 | `users 1 → user_credentials 0..1` | `user_credentials 1 → users 1` |
+| 使用者 → 盤點 session（actor） | `inventory_sessions.actor_user_id` → `users.id` | 是 | `users 1 → inventory_sessions 0..N` | `inventory_sessions N → users 1` |
+| 使用者 → 盤點掃描（actor） | `inventory_scans.actor_user_id` → `users.id` | 是 | `users 1 → inventory_scans 0..N` | `inventory_scans N → users 1` |
+| 盤點 session → 掃描 | `inventory_scans.session_id` → `inventory_sessions.id` | 是 | `inventory_sessions 1 → inventory_scans 0..N` | `inventory_scans N → inventory_sessions 1` |
+| 冊 → 盤點掃描 | `inventory_scans.item_id` → `item_copies.id` | 是 | `item_copies 1 → inventory_scans 0..N` | `inventory_scans N → item_copies 1` |
 
 ## 5) 逐條關聯解釋（為什麼是這個基數）
 下面用「業務語意」＋「資料庫如何保證」兩個角度來解釋每條關聯。

@@ -11,7 +11,7 @@
 
 ## 專案現況（目前做到了哪裡）
 - 文件已整理成「可開發」：`MVP-SPEC.md`、`USER-STORIES.md`、`API-DRAFT.md`、`DATA-DICTIONARY.md`、`db/schema.sql`
-- 程式已能端到端操作（MVP 版本）：`apps/api` 已落地主檔/使用者名冊匯入（CSV）/書目/冊/借還/續借/借閱查詢/預約（holds）/預約到期處理（holds expire-ready maintenance）/取書架清單（ready holds report + CSV/列印）/逾期報表（overdue report）/熱門書與借閱量報表（US-050）/稽核查詢（audit events）/冊異常狀態（lost/repair/withdrawn）/Staff Auth（館員登入）API（另有 `/health`），`apps/web` 已提供 Web Console（`/orgs`）並逐步補齊 OPAC
+- 程式已能端到端操作（MVP 版本）：`apps/api` 已落地主檔/使用者名冊匯入（CSV）/書目/冊/書目冊匯入（US-022）/借還/續借/借閱查詢/預約（holds）/預約到期處理（holds expire-ready maintenance）/取書架清單（ready holds report + CSV/列印）/逾期報表（overdue report）/熱門書與借閱量報表（US-050）/稽核查詢（audit events）/冊異常狀態（lost/repair/withdrawn）/盤點（Inventory sessions + 差異清單 + CSV）/逾期停權（policy enforcement）/Staff Auth（館員登入）+ Patron Auth（OPAC 登入）API（另有 `/health`），`apps/web` 已提供 Web Console（`/orgs`）與 OPAC（`/opac`）
 - 架構決策已記錄（含擴充路線）：`ARCHITECTURE.md`、`docs/design-rationale.md`
 
 ## MVP 功能範圍（你可以期待什麼）
@@ -20,8 +20,10 @@
 - 書目（Bibliographic）與冊（Item/Copy）管理：多冊、條碼、索書號、位置、狀態
 - 檢索（OPAC）：關鍵字 + 欄位查詢（書名/作者/ISBN/主題）與基本容錯
 - 流通：借出、歸還、續借、預約、逾期清單（以停權/提醒取代罰款）
+- 盤點：盤點 session + 掃碼工作台 + 差異清單（missing/unexpected）+ CSV
 - 報表（CSV）：熱門書、借閱量、逾期清單（先做可匯出，避免被系統鎖死）
 - 稽核：借還/匯入/狀態異動的 audit events（可追溯）
+- OPAC Account：讀者登入（student/teacher）+ 我的借閱/我的預約（/me）
 
 MVP 預設政策已定案（可調）：請見 `MVP-SPEC.md`。
 
@@ -73,6 +75,10 @@ MVP 預設政策已定案（可調）：請見 `MVP-SPEC.md`。
 - US-051 零借閱清單（Zero Circulation）實作說明：`docs/implementation/0016-us-051-zero-circulation-report.md`
 - US-061 借閱歷史保存期限（Retention）實作說明：`docs/implementation/0017-us-061-loan-history-retention.md`
 - Staff Auth / 權限收斂（Bearer token + actor_user_id 對齊）實作說明：`docs/implementation/0018-staff-auth-and-rbac.md`
+- 盤點（Inventory）工作台實作說明：`docs/implementation/0019-inventory-workbench.md`
+- 逾期停權（Policy enforcement）實作說明：`docs/implementation/0020-policy-overdue-block.md`
+- US-022 書目/冊 CSV 匯入實作說明：`docs/implementation/0021-us-022-catalog-csv-import.md`
+- OPAC Account（讀者登入 + 我的借閱/我的預約）實作說明：`docs/implementation/0022-opac-account.md`
 - 註解與教學文件規範：`docs/commenting-guidelines.md`
 
 ## 本機開發（從 0 到跑起來）

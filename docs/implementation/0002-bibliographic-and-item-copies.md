@@ -9,7 +9,7 @@
 - **US-020 新增/編輯書目**：已做（API）
 - **US-021 為同一書目新增多冊**：已做（API）
 - **US-030 搜尋館藏（關鍵字/欄位）**：完成基礎搜尋（書目 query + 可借冊數）
-- **US-022 批次匯入書目/冊**：尚未做（後續加入匯入流程）
+- **US-022 批次匯入書目/冊**：已做（見 `docs/implementation/0021-us-022-catalog-csv-import.md`）
 
 對照 `API-DRAFT.md`（v1）已落地端點：
 - `GET /api/v1/orgs/:orgId/bibs?query=&isbn=&classification=`

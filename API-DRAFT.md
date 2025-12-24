@@ -20,8 +20,9 @@
   - token 是 org scoped：token 內的 `org` 必須等於路徑 `orgId`（多租戶隔離）
   - 仍保留 `actor_user_id`（寫 audit/一致性），但後端會要求它必須等於登入者（避免冒用）
 - Patron（OPAC）：
-  - MVP 仍保留部分「不需登入」的端點（例如書目/館別查詢、部分 holds 操作）
-  - 注意：這是 MVP 的最小可用假設；正式上線建議導入讀者身分驗證或另設 OPAC 權杖
+  - 已支援讀者登入：token 由 `POST /orgs/{orgId}/auth/patron-login` 取得（僅 student/teacher）
+  - `/orgs/{orgId}/me/*` 端點需 `Authorization: Bearer <access_token>`（PatronAuthGuard），並由 token 推導 user_id（只回本人資料）
+  - 仍保留部分「不需登入」的端點（例如書目/館別查詢、部分 holds 操作）作為過渡；正式上線建議全面收斂到 auth/SSO
 
 > 環境變數：`AUTH_TOKEN_SECRET`（token 簽章 secret）、`AUTH_BOOTSTRAP_SECRET`（第一次設定密碼用；未設定即禁用）
 
@@ -74,6 +75,20 @@
 ## 4) Bibliographic Records（書目）
 - `GET /orgs/{orgId}/bibs?query=...&isbn=...&classification=...`：查詢書目（含可借/總冊數；query 會比對 title/creators/subjects 等）
 - `POST /orgs/{orgId}/bibs`：新增書目（Librarian）
+- `POST /orgs/{orgId}/bibs/import`：書目/冊 CSV 匯入（US-022；preview/apply；Librarian）
+  - 權限：需 Bearer token（StaffAuthGuard）+ `actor_user_id`（admin/librarian，且必須等於登入者）
+  - Request（摘要）：
+    ```json
+    {
+      "actor_user_id": "u_admin_or_librarian",
+      "mode": "preview|apply",
+      "csv_text": "barcode,call_number,title,...\\n...",
+      "default_location_id": "optional",
+      "update_existing_items": true,
+      "allow_relink_bibliographic": false
+    }
+    ```
+  - audit：apply 成功後寫入 `audit_events`（action=`catalog.import_csv`；entity_id=csv_sha256）
 - `GET /orgs/{orgId}/bibs/{bibId}`：取得書目（含可借冊數）
 - `PATCH /orgs/{orgId}/bibs/{bibId}`：更新書目（Librarian）
 
@@ -299,6 +314,12 @@ Holds 同時服務兩條流程：
 - `POST /orgs/{orgId}/circulation-policies`：建立政策（Librarian）
 - `PATCH /orgs/{orgId}/circulation-policies/{policyId}`：更新政策（Librarian）
 
+政策欄位（摘要，詳見 `DATA-DICTIONARY.md`）：
+- 借期：`loan_days`
+- 上限：`max_loans` / `max_renewals` / `max_holds`
+- 取書期限：`hold_pickup_days`
+- 逾期停權：`overdue_block_days`（逾期達 X 天後，禁止新增借閱：checkout/renew/hold/fulfill；0 代表不啟用）
+
 ## 9) Reports（CSV/JSON）
 > 報表通常包含較敏感資訊（例如逾期名單），因此本專案把 reports 視為 staff-only：
 > - 需要 `Authorization: Bearer <token>`（StaffAuthGuard）
@@ -424,6 +445,20 @@ Holds 同時服務兩條流程：
 - CSV Response：
   - `format=csv` 時回傳 `text/csv`（含 UTF-8 BOM），並以 `Content-Disposition: attachment` 觸發下載
 
+### 9.5 Inventory Diff（盤點差異清單）
+> 這份清單用於盤點後的「異常處理」：missing（在架但未掃）與 unexpected（掃到但系統顯示非在架/位置不符）。
+
+- `GET /orgs/{orgId}/reports/inventory-diff?actor_user_id=...&inventory_session_id=...&limit=...&format=json|csv`
+- 權限（MVP 最小控管）：
+  - `actor_user_id` 必填，且必須是 `admin/librarian`（active）
+- Query params：
+  - `inventory_session_id`：必填（UUID）
+  - `limit`：可選（1..5000），預設 5000
+  - `format`：可選 `json|csv`，預設 `json`
+- JSON Response（摘要）：回傳 `{ session, summary, missing, unexpected }`（方便前端分區顯示）
+- CSV Response：
+  - missing/unexpected 會合併成一張表，並用 `diff_type` 欄位區分（CSV 含 UTF-8 BOM）
+
 ## 10) Audit Events
 > audit_events 用於「追溯誰在什麼時間做了什麼」，通常包含敏感資訊，因此本專案把它視為 staff-only：
 > - 需要 `Authorization: Bearer <token>`（StaffAuthGuard）
@@ -442,8 +477,8 @@ Holds 同時服務兩條流程：
   - `limit`：可選（1..5000），預設 200
 - Response：回傳 audit_event + actor 可顯示欄位（snake_case）
 
-## 11) Auth（Staff）
-> 提供 Web Console（館員後台）的最小可用登入機制（MVP 版本）。
+## 11) Auth（Staff / Patron）
+> 提供 Web Console（館員後台）與 OPAC Account（讀者端）的最小可用登入機制（MVP 版本）。
 
 ### 11.1 Staff Login
 - `POST /orgs/{orgId}/auth/login`
@@ -463,7 +498,18 @@ Holds 同時服務兩條流程：
   - 目前只允許 staff role（`admin/librarian`）登入
   - 若密碼尚未設定，會回 409（`PASSWORD_NOT_SET`）
 
-### 11.2 Set Staff Password（需要登入）
+### 11.2 Patron Login（OPAC Account）
+- `POST /orgs/{orgId}/auth/patron-login`
+- Request：
+  ```json
+  { "external_id": "S1130123", "password": "your-password" }
+  ```
+- Response：與 Staff Login 相同 shape（`access_token/expires_at/user`）
+- 說明：
+  - 只允許 `student/teacher` 登入（對齊 circulation policy 的 audience_role）
+  - 若密碼尚未設定，會回 409（`PASSWORD_NOT_SET`）
+
+### 11.3 Set Password（需要登入；可用於 staff 與 patron）
 - `POST /orgs/{orgId}/auth/set-password`
 - Header：
   - `Authorization: Bearer <access_token>`
@@ -471,7 +517,7 @@ Holds 同時服務兩條流程：
   ```json
   {
     "actor_user_id": "u_admin_or_librarian",
-    "target_user_id": "u_target_staff",
+    "target_user_id": "u_target_user",
     "new_password": "new-password",
     "note": "optional"
   }
@@ -479,8 +525,11 @@ Holds 同時服務兩條流程：
 - 說明：
   - 後端會寫入 `audit_events`（action=`auth.set_password`）
   - StaffAuthGuard 會要求 `actor_user_id` 必須等於登入者（避免冒用）
+  - `target_user_id` 允許：
+    - staff：admin/librarian（Web Console 登入）
+    - patron：student/teacher（OPAC Account 登入）
 
-### 11.3 Bootstrap Set Password（第一次設定密碼）
+### 11.4 Bootstrap Set Password（第一次設定密碼）
 > 用於第一次導入：當 `user_credentials` 全空時，還沒有人能登入。
 
 - `POST /orgs/{orgId}/auth/bootstrap-set-password`
@@ -496,3 +545,42 @@ Holds 同時服務兩條流程：
 - 說明：
   - 需要設定環境變數 `AUTH_BOOTSTRAP_SECRET`；未設定時此端點會被禁用
   - 後端會寫入 `audit_events`（action=`auth.bootstrap_set_password`）
+
+## 12) Inventory（盤點）
+> 盤點屬於 staff 作業，因此本組端點視為 staff-only：
+> - 需要 `Authorization: Bearer <token>`（StaffAuthGuard）
+> - 仍要求 `actor_user_id`（admin/librarian），且必須等於登入者（避免冒用）
+
+- `POST /orgs/{orgId}/inventory/sessions`：開始盤點（建立 session）
+  - Request：
+    ```json
+    { "actor_user_id": "u_admin_or_librarian", "location_id": "loc_...", "note": "optional" }
+    ```
+- `GET /orgs/{orgId}/inventory/sessions?location_id=&status=open|closed|all&limit=`：列出盤點 sessions
+- `POST /orgs/{orgId}/inventory/sessions/{sessionId}/scan`：掃冊條碼
+  - Request：
+    ```json
+    { "actor_user_id": "u_admin_or_librarian", "item_barcode": "LIB-00001234" }
+    ```
+  - 行為：寫入 `inventory_scans`，並更新 `item_copies.last_inventory_at`
+- `POST /orgs/{orgId}/inventory/sessions/{sessionId}/close`：結束盤點（關閉 session）
+  - Request：
+    ```json
+    { "actor_user_id": "u_admin_or_librarian", "note": "optional" }
+    ```
+  - audit：寫入 `audit_events`（action=`inventory.session_closed`；metadata 含摘要）
+
+## 13) OPAC Account（Me / 我的借閱與預約）
+> `/me/*` 是「登入後」的讀者自助 API：
+> - 需要 `Authorization: Bearer <token>`（PatronAuthGuard；token 由 `POST /auth/patron-login` 取得）
+> - user_id 由 token 推導，不允許前端用 `user_external_id` 指定他人
+
+- `GET /orgs/{orgId}/me`：取得我的基本資料
+- `GET /orgs/{orgId}/me/loans?status=open|closed|all&limit=`：我的借閱
+- `GET /orgs/{orgId}/me/holds?status=queued|ready|cancelled|fulfilled|expired|all&limit=`：我的預約
+- `POST /orgs/{orgId}/me/holds`：替自己建立預約
+  - Request：
+    ```json
+    { "bibliographic_id": "b_...", "pickup_location_id": "loc_..." }
+    ```
+- `POST /orgs/{orgId}/me/holds/{holdId}/cancel`：取消自己的預約
