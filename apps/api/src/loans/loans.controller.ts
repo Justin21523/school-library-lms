@@ -11,10 +11,10 @@
  * - 因此 list 會回傳「loan + borrower + item + bib title」的組合資料
  */
 
-import { Controller, Get, Param, ParseUUIDPipe, Query } from '@nestjs/common';
+import { Body, Controller, Get, Param, ParseUUIDPipe, Post, Query } from '@nestjs/common';
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
 import { LoansService } from './loans.service';
-import { listLoansQuerySchema } from './loans.schemas';
+import { listLoansQuerySchema, purgeLoanHistorySchema } from './loans.schemas';
 
 @Controller('api/v1/orgs/:orgId/loans')
 export class LoansController {
@@ -28,5 +28,20 @@ export class LoansController {
   ) {
     return await this.loans.list(orgId, query);
   }
-}
 
+  /**
+   * US-061：借閱歷史保存期限（Purge loan history）
+   *
+   * POST /api/v1/orgs/:orgId/loans/purge-history
+   *
+   * - mode=preview：只回傳候選清單與摘要（不寫 DB）
+   * - mode=apply：實際刪除（寫 DB + 寫 audit）
+   */
+  @Post('purge-history')
+  async purgeHistory(
+    @Param('orgId', new ParseUUIDPipe()) orgId: string,
+    @Body(new ZodValidationPipe(purgeLoanHistorySchema)) body: any,
+  ) {
+    return await this.loans.purgeHistory(orgId, body);
+  }
+}
