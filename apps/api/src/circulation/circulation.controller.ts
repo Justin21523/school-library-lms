@@ -1,0 +1,35 @@
+/**
+ * CirculationController
+ *
+ * 路由前綴：/api/v1/orgs/:orgId/circulation
+ * - POST /checkout 借出
+ * - POST /checkin  歸還
+ *
+ * 這裡只做 HTTP 層的參數綁定與驗證，核心邏輯放在 Service。
+ */
+
+import { Body, Controller, Param, ParseUUIDPipe, Post } from '@nestjs/common';
+import { ZodValidationPipe } from '../common/zod-validation.pipe';
+import { CirculationService } from './circulation.service';
+import { checkoutSchema, checkinSchema } from './circulation.schemas';
+
+@Controller('api/v1/orgs/:orgId/circulation')
+export class CirculationController {
+  constructor(private readonly circulation: CirculationService) {}
+
+  @Post('checkout')
+  async checkout(
+    @Param('orgId', new ParseUUIDPipe()) orgId: string,
+    @Body(new ZodValidationPipe(checkoutSchema)) body: any,
+  ) {
+    return await this.circulation.checkout(orgId, body);
+  }
+
+  @Post('checkin')
+  async checkin(
+    @Param('orgId', new ParseUUIDPipe()) orgId: string,
+    @Body(new ZodValidationPipe(checkinSchema)) body: any,
+  ) {
+    return await this.circulation.checkin(orgId, body);
+  }
+}

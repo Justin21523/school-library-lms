@@ -52,7 +52,11 @@
 - `POST /orgs/{orgId}/circulation/checkout`：借出（Librarian）
   - Request：
     ```json
-    { "user_external_id": "S1130123", "item_barcode": "LIB-00001234" }
+    {
+      "user_external_id": "S1130123",
+      "item_barcode": "LIB-00001234",
+      "actor_user_id": "u_admin..."
+    }
     ```
   - Response（摘要）：
     ```json
@@ -62,9 +66,18 @@
 - `POST /orgs/{orgId}/circulation/checkin`：歸還（Librarian）
   - Request：
     ```json
-    { "item_barcode": "LIB-00001234" }
+    { "item_barcode": "LIB-00001234", "actor_user_id": "u_admin..." }
     ```
-  - Response：回傳冊的新狀態（`available` 或 `on_hold`）與是否觸發保留
+  - Response：回傳冊的新狀態（`available` 或 `on_hold`）與保留資訊
+    ```json
+    {
+      "loan_id": "l_...",
+      "item_id": "i_...",
+      "item_status": "available",
+      "hold_id": null,
+      "ready_until": null
+    }
+    ```
 
 - `POST /orgs/{orgId}/circulation/renew`：續借（Librarian/Teacher/Student）
   - Request：`{ "loan_id": "l_..." }`

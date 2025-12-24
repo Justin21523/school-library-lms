@@ -17,6 +17,7 @@
 ## 實作說明（Implementation Notes）
 - `docs/implementation/0001-api-foundation-and-core-master-data.md`
 - `docs/implementation/0002-bibliographic-and-item-copies.md`
+- `docs/implementation/0003-circulation-checkout-checkin.md`
 
 ## 註解規範
 - `docs/commenting-guidelines.md`

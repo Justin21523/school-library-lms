@@ -23,6 +23,7 @@ import { UsersModule } from './users/users.module';
 import { PoliciesModule } from './policies/policies.module';
 import { BibsModule } from './bibs/bibs.module';
 import { ItemsModule } from './items/items.module';
+import { CirculationModule } from './circulation/circulation.module';
 
 @Module({
   // imports：把子模組「掛進」AppModule，讓 NestJS 掃描它們的 controller/provider。
@@ -34,6 +35,7 @@ import { ItemsModule } from './items/items.module';
     PoliciesModule,
     BibsModule,
     ItemsModule,
+    CirculationModule,
   ],
   controllers: [HealthController],
 })
