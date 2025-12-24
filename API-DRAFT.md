@@ -179,7 +179,36 @@
 - `PATCH /orgs/{orgId}/circulation-policies/{policyId}`：更新政策（Librarian）
 
 ## 9) Reports（CSV/JSON）
-- `GET /orgs/{orgId}/reports/overdue?as_of=...`：逾期清單（Librarian）
+> 報表通常包含較敏感資訊（例如逾期名單），因此即使 MVP 尚未做登入，也建議在報表端點要求 `actor_user_id`。
+
+### 9.1 Overdue List（逾期清單）
+- `GET /orgs/{orgId}/reports/overdue?actor_user_id=...&as_of=...&org_unit=...&limit=...&format=json|csv`
+- 權限（MVP 最小控管）：
+  - `actor_user_id` 必填，且必須是 `admin/librarian`（active）
+- Query params：
+  - `as_of`：可選，ISO 8601（timestamptz）；未提供時以「現在」為基準
+  - `org_unit`：可選，班級/單位（對應 `users.org_unit`，MVP 先做精確比對）
+  - `limit`：可選（1..5000），預設 500
+  - `format`：可選 `json|csv`，預設 `json`
+- JSON Response：回傳逾期 loans 的可顯示欄位（loan + borrower + item + bib + location）
+  ```json
+  [
+    {
+      "loan_id": "l_...",
+      "due_at": "2025-12-15T23:59:59Z",
+      "days_overdue": 9,
+      "user_external_id": "S1130123",
+      "user_name": "王小明",
+      "user_org_unit": "601",
+      "item_barcode": "LIB-00001234",
+      "bibliographic_title": "哈利波特：神秘的魔法石"
+    }
+  ]
+  ```
+- CSV Response：
+  - `format=csv` 時回傳 `text/csv`，並以 `Content-Disposition: attachment` 觸發下載
+
+### 9.2（預留）Top Circulation / Summary
 - `GET /orgs/{orgId}/reports/top-circulation?from=...&to=...&limit=...`：熱門書（Librarian）
 - `GET /orgs/{orgId}/reports/circulation-summary?from=...&to=...&group_by=day|week|month`：借閱量彙總（Librarian）
 
