@@ -160,6 +160,13 @@ export default function LoansPage({ params }: { params: { orgId: string } }) {
           <code>POST /api/v1/orgs/:orgId/circulation/renew</code>
         </p>
 
+        <p className="muted">
+          借閱歷史保存期限（US-061）屬於系統管理作業：請到{' '}
+          <Link href={`/orgs/${params.orgId}/loans/maintenance`}>Loans Maintenance</Link> 先預覽（preview）再套用（apply），
+          並可在 <Link href={`/orgs/${params.orgId}/audit-events`}>Audit Events</Link> 用 action{' '}
+          <code>loan.purge_history</code> 追溯清理紀錄。
+        </p>
+
         <label>
           actor_user_id（操作者：admin/librarian）
           <select value={actorUserId} onChange={(e) => setActorUserId(e.target.value)} disabled={loadingUsers}>

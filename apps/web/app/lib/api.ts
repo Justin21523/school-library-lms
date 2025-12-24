@@ -228,6 +228,48 @@ export type RenewResult = {
   renewed_count: number;
 };
 
+// loans maintenance：借閱歷史保存期限（US-061）
+export type PurgeLoanHistoryPreviewRow = {
+  loan_id: string;
+  checked_out_at: string;
+  returned_at: string;
+  user_external_id: string;
+  user_name: string;
+  user_role: User['role'];
+  user_org_unit: string | null;
+  item_barcode: string;
+  bibliographic_title: string;
+};
+
+export type PurgeLoanHistoryPreviewResult = {
+  mode: 'preview';
+  as_of: string;
+  retention_days: number;
+  cutoff: string;
+  limit: number;
+  include_audit_events: boolean;
+  candidates_total: number;
+  loans: PurgeLoanHistoryPreviewRow[];
+};
+
+export type PurgeLoanHistoryApplyResult = {
+  mode: 'apply';
+  as_of: string;
+  retention_days: number;
+  cutoff: string;
+  limit: number;
+  include_audit_events: boolean;
+  summary: {
+    candidates_total: number;
+    deleted_loans: number;
+    deleted_audit_events: number;
+  };
+  audit_event_id: string | null;
+  deleted_loan_ids: string[];
+};
+
+export type PurgeLoanHistoryResult = PurgeLoanHistoryPreviewResult | PurgeLoanHistoryApplyResult;
+
 // holds（預約/保留）
 // - status 與 db/schema.sql 的 hold_status enum 對齊
 export type HoldStatus = 'queued' | 'ready' | 'cancelled' | 'fulfilled' | 'expired';
@@ -972,6 +1014,41 @@ export async function renewLoan(
   return await requestJson<RenewResult>(`/api/v1/orgs/${orgId}/circulation/renew`, {
     method: 'POST',
     body: input,
+  });
+}
+
+// loans maintenance：借閱歷史保存期限（US-061）
+export async function previewPurgeLoanHistory(
+  orgId: string,
+  input: {
+    actor_user_id: string;
+    retention_days: number;
+    as_of?: string;
+    limit?: number;
+    include_audit_events?: boolean;
+    note?: string;
+  },
+) {
+  return await requestJson<PurgeLoanHistoryPreviewResult>(`/api/v1/orgs/${orgId}/loans/purge-history`, {
+    method: 'POST',
+    body: { ...input, mode: 'preview' as const },
+  });
+}
+
+export async function applyPurgeLoanHistory(
+  orgId: string,
+  input: {
+    actor_user_id: string;
+    retention_days: number;
+    as_of?: string;
+    limit?: number;
+    include_audit_events?: boolean;
+    note?: string;
+  },
+) {
+  return await requestJson<PurgeLoanHistoryApplyResult>(`/api/v1/orgs/${orgId}/loans/purge-history`, {
+    method: 'POST',
+    body: { ...input, mode: 'apply' as const },
   });
 }
 

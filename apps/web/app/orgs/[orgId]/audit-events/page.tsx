@@ -290,6 +290,7 @@ export default function AuditEventsPage({ params }: { params: { orgId: string } 
                 <option value="loan.checkout" />
                 <option value="loan.checkin" />
                 <option value="loan.renew" />
+                <option value="loan.purge_history" />
                 <option value="hold.create" />
                 <option value="hold.cancel" />
                 <option value="hold.fulfill" />
