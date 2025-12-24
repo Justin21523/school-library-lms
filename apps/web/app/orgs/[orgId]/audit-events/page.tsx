@@ -293,6 +293,7 @@ export default function AuditEventsPage({ params }: { params: { orgId: string } 
                 <option value="hold.create" />
                 <option value="hold.cancel" />
                 <option value="hold.fulfill" />
+                <option value="hold.expire" />
                 <option value="user.import_csv" />
                 <option value="user.update" />
                 <option value="item.mark_lost" />

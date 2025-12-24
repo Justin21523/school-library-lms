@@ -364,6 +364,13 @@ export default function HoldsPage({ params }: { params: { orgId: string } }) {
           MVP 尚未實作登入，因此需要由前端提供 <code>actor_user_id</code> 才能寫入 audit_events。
         </p>
 
+        <p className="muted">
+          到書未取（ready_until 過期）屬於每日例行作業：請到{' '}
+          <Link href={`/orgs/${params.orgId}/holds/maintenance`}>Holds Maintenance</Link> 先預覽（preview）再套用（apply），
+          並可在 <Link href={`/orgs/${params.orgId}/audit-events`}>Audit Events</Link> 用 action <code>hold.expire</code>{' '}
+          追溯處理紀錄。
+        </p>
+
         <label>
           actor_user_id（操作者：admin/librarian）
           <select

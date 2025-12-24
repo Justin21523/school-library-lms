@@ -266,6 +266,41 @@ export type HoldWithDetails = {
   assigned_item_status: ItemStatus | null;
 };
 
+// holds maintenance：到期處理（ready_until → expired）
+export type ExpireReadyHoldsPreviewResult = {
+  mode: 'preview';
+  as_of: string;
+  limit: number;
+  candidates_total: number;
+  holds: HoldWithDetails[];
+};
+
+export type ExpireReadyHoldsApplyRow = {
+  hold_id: string;
+  assigned_item_id: string | null;
+  assigned_item_barcode: string | null;
+  item_status_before: ItemStatus | null;
+  item_status_after: ItemStatus | null;
+  transferred_to_hold_id: string | null;
+  audit_event_id: string;
+};
+
+export type ExpireReadyHoldsApplyResult = {
+  mode: 'apply';
+  as_of: string;
+  limit: number;
+  summary: {
+    candidates_total: number;
+    processed: number;
+    transferred: number;
+    released: number;
+    skipped_item_action: number;
+  };
+  results: ExpireReadyHoldsApplyRow[];
+};
+
+export type ExpireReadyHoldsResult = ExpireReadyHoldsPreviewResult | ExpireReadyHoldsApplyResult;
+
 // fulfill 的回傳是「動作結果」：成功建立 loan 後，回傳 loan 與 item 的關鍵欄位
 export type FulfillHoldResult = {
   hold_id: string;
@@ -950,6 +985,26 @@ export async function fulfillHold(
   return await requestJson<FulfillHoldResult>(`/api/v1/orgs/${orgId}/holds/${holdId}/fulfill`, {
     method: 'POST',
     body: input,
+  });
+}
+
+export async function previewExpireReadyHolds(
+  orgId: string,
+  input: { actor_user_id: string; as_of?: string; limit?: number; note?: string },
+) {
+  return await requestJson<ExpireReadyHoldsPreviewResult>(`/api/v1/orgs/${orgId}/holds/expire-ready`, {
+    method: 'POST',
+    body: { ...input, mode: 'preview' as const },
+  });
+}
+
+export async function applyExpireReadyHolds(
+  orgId: string,
+  input: { actor_user_id: string; as_of?: string; limit?: number; note?: string },
+) {
+  return await requestJson<ExpireReadyHoldsApplyResult>(`/api/v1/orgs/${orgId}/holds/expire-ready`, {
+    method: 'POST',
+    body: { ...input, mode: 'apply' as const },
   });
 }
 
