@@ -18,7 +18,11 @@
 import { Controller, Get, Param, ParseUUIDPipe, Query, Res } from '@nestjs/common';
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
 import { ReportsService } from './reports.service';
-import { overdueReportQuerySchema } from './reports.schemas';
+import {
+  circulationSummaryReportQuerySchema,
+  overdueReportQuerySchema,
+  topCirculationReportQuerySchema,
+} from './reports.schemas';
 
 @Controller('api/v1/orgs/:orgId/reports')
 export class ReportsController {
@@ -52,4 +56,89 @@ export class ReportsController {
 
     return rows;
   }
+
+  /**
+   * US-050：熱門書（Top Circulation）
+   *
+   * - 同一端點支援 JSON + CSV（?format=csv）
+   * - 回傳的是「書目層級」的熱門排行（以 loans 數量統計）
+   */
+  @Get('top-circulation')
+  async topCirculation(
+    @Param('orgId', new ParseUUIDPipe()) orgId: string,
+    @Query(new ZodValidationPipe(topCirculationReportQuerySchema)) query: any,
+    @Res({ passthrough: true }) res: any,
+  ) {
+    const rows = await this.reports.listTopCirculation(orgId, query);
+
+    const format = (query.format ?? 'json') as 'json' | 'csv';
+    if (format === 'csv') {
+      const csv = this.reports.buildTopCirculationCsv(rows);
+
+      const safeFrom = safeIsoDateForFilename(query.from);
+      const safeTo = safeIsoDateForFilename(query.to);
+
+      res.setHeader('content-type', 'text/csv; charset=utf-8');
+      res.setHeader(
+        'content-disposition',
+        `attachment; filename="top-circulation-${safeFrom}-${safeTo}.csv"`,
+      );
+      res.setHeader('cache-control', 'no-store');
+      return csv;
+    }
+
+    return rows;
+  }
+
+  /**
+   * US-050：借閱量彙總（Circulation Summary）
+   *
+   * - from/to：期間
+   * - group_by：彙總顆粒度（day/week/month）
+   * - format=csv：輸出 CSV（含 BOM，Excel 友善）
+   */
+  @Get('circulation-summary')
+  async circulationSummary(
+    @Param('orgId', new ParseUUIDPipe()) orgId: string,
+    @Query(new ZodValidationPipe(circulationSummaryReportQuerySchema)) query: any,
+    @Res({ passthrough: true }) res: any,
+  ) {
+    const rows = await this.reports.listCirculationSummary(orgId, query);
+
+    const format = (query.format ?? 'json') as 'json' | 'csv';
+    if (format === 'csv') {
+      const csv = this.reports.buildCirculationSummaryCsv(rows);
+
+      const safeFrom = safeIsoDateForFilename(query.from);
+      const safeTo = safeIsoDateForFilename(query.to);
+
+      res.setHeader('content-type', 'text/csv; charset=utf-8');
+      res.setHeader(
+        'content-disposition',
+        `attachment; filename="circulation-summary-${query.group_by}-${safeFrom}-${safeTo}.csv"`,
+      );
+      res.setHeader('cache-control', 'no-store');
+      return csv;
+    }
+
+    return rows;
+  }
+}
+
+/**
+ * 產生檔名用的安全日期字串（YYYY-MM-DD）
+ *
+ * - 使用者可能傳入任意格式的 from/to（只要 Postgres 能 parse）
+ * - 檔名最好不要直接用原字串（可能含冒號/空白，對檔案系統不友善）
+ */
+function safeIsoDateForFilename(value: unknown) {
+  const fallback = new Date().toISOString().slice(0, 10);
+  if (typeof value !== 'string') return fallback;
+
+  const trimmed = value.trim();
+  if (!trimmed) return fallback;
+
+  const d = new Date(trimmed);
+  if (Number.isNaN(d.getTime())) return fallback;
+  return d.toISOString().slice(0, 10);
 }

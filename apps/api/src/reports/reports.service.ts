@@ -25,7 +25,11 @@ import {
 } from '@nestjs/common';
 import type { PoolClient } from 'pg';
 import { DbService } from '../db/db.service';
-import type { OverdueReportQuery } from './reports.schemas';
+import type {
+  CirculationSummaryReportQuery,
+  OverdueReportQuery,
+  TopCirculationReportQuery,
+} from './reports.schemas';
 
 type UserRole = 'admin' | 'librarian' | 'teacher' | 'student' | 'guest';
 type UserStatus = 'active' | 'inactive';
@@ -68,6 +72,32 @@ export type OverdueReportRow = {
   // bib
   bibliographic_id: string;
   bibliographic_title: string;
+};
+
+/**
+ * TopCirculationRow（US-050 熱門書）
+ *
+ * 定義：在某段期間內，依「借出次數（loans count）」排序的書目排行
+ *
+ * 注意：
+ * - 我們以 loans（借出交易）作為統計依據，代表「被借出」的次數
+ * - 不看 returned_at（不論是否歸還，只要在期間內借出都算一次）
+ */
+export type TopCirculationRow = {
+  bibliographic_id: string;
+  bibliographic_title: string;
+  loan_count: number;
+  unique_borrowers: number;
+};
+
+/**
+ * CirculationSummaryRow（US-050 借閱量彙總）
+ *
+ * 定義：在某段期間內，依 group_by（日/週/月）彙總「借出筆數」
+ */
+export type CirculationSummaryRow = {
+  bucket_start: string;
+  loan_count: number;
 };
 
 @Injectable()
@@ -176,6 +206,141 @@ export class ReportsService {
   }
 
   /**
+   * US-050：listTopCirculation（熱門書）
+   *
+   * - 以 loans.checked_out_at 落在 from..to 的借出交易為統計母體
+   * - group by bibliographic_records（書目層級）
+   * - order by loan_count desc（熱門排行）
+   */
+  async listTopCirculation(
+    orgId: string,
+    query: TopCirculationReportQuery,
+  ): Promise<TopCirculationRow[]> {
+    // 1) 驗證 actor（館員/管理者）
+    await this.db.transaction(async (client) => {
+      await this.requireStaffActor(client, orgId, query.actor_user_id);
+    });
+
+    // 2) from/to：使用者必填（讓「期間」明確，避免不小心掃全表）
+    const from = query.from.trim();
+    const to = query.to.trim();
+
+    // 前端會先做一次檢查；後端再做一次保險（避免 from > to）
+    this.assertRangeOrder(from, to);
+
+    // 3) limit：預設 50，避免一次回太多
+    const limit = query.limit ?? 50;
+
+    try {
+      const result = await this.db.query<TopCirculationRow>(
+        `
+        SELECT
+          b.id AS bibliographic_id,
+          b.title AS bibliographic_title,
+          COUNT(l.id)::int AS loan_count,
+          COUNT(DISTINCT l.user_id)::int AS unique_borrowers
+        FROM loans l
+        JOIN item_copies i
+          ON i.id = l.item_id
+         AND i.organization_id = l.organization_id
+        JOIN bibliographic_records b
+          ON b.id = i.bibliographic_id
+         AND b.organization_id = l.organization_id
+        WHERE l.organization_id = $1
+          AND l.checked_out_at >= $2::timestamptz
+          AND l.checked_out_at <= $3::timestamptz
+        GROUP BY b.id, b.title
+        ORDER BY loan_count DESC, bibliographic_title ASC
+        LIMIT $4
+        `,
+        [orgId, from, to, limit],
+      );
+
+      return result.rows;
+    } catch (error: any) {
+      // 22P02/22007：timestamptz 解析失敗（from/to 格式錯）
+      if (error?.code === '22P02' || error?.code === '22007') {
+        throw new BadRequestException({
+          error: { code: 'VALIDATION_ERROR', message: 'Invalid query format' },
+        });
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * US-050：listCirculationSummary（借閱量彙總）
+   *
+   * - 以 loans.checked_out_at 作為借出時間
+   * - group_by：day/week/month
+   * - 使用 generate_series 產生「完整時間軸」，讓沒有借出的一天也會出現 0
+   *   （這對圖表或 Excel 報表很重要，不然中間會缺洞）
+   */
+  async listCirculationSummary(
+    orgId: string,
+    query: CirculationSummaryReportQuery,
+  ): Promise<CirculationSummaryRow[]> {
+    // 1) 驗證 actor（館員/管理者）
+    await this.db.transaction(async (client) => {
+      await this.requireStaffActor(client, orgId, query.actor_user_id);
+    });
+
+    const from = query.from.trim();
+    const to = query.to.trim();
+    this.assertRangeOrder(from, to);
+
+    // 2) 防呆：避免使用者選太長區間導致 generate_series 產生大量列
+    // - 例如 group_by=day 但 from/to 跨 20 年 → 7000+ 列
+    // - MVP 先設一個合理上限（1000 bucket）
+    this.assertBucketCountNotTooLarge(from, to, query.group_by);
+
+    try {
+      const result = await this.db.query<CirculationSummaryRow>(
+        `
+        WITH buckets AS (
+          SELECT generate_series(
+            date_trunc($4::text, $2::timestamptz),
+            date_trunc($4::text, $3::timestamptz),
+            CASE
+              WHEN $4::text = 'day' THEN interval '1 day'
+              WHEN $4::text = 'week' THEN interval '1 week'
+              WHEN $4::text = 'month' THEN interval '1 month'
+            END
+          ) AS bucket_start
+        ),
+        counts AS (
+          SELECT
+            date_trunc($4::text, checked_out_at) AS bucket_start,
+            COUNT(*)::int AS loan_count
+          FROM loans
+          WHERE organization_id = $1
+            AND checked_out_at >= $2::timestamptz
+            AND checked_out_at <= $3::timestamptz
+          GROUP BY 1
+        )
+        SELECT
+          b.bucket_start,
+          COALESCE(c.loan_count, 0)::int AS loan_count
+        FROM buckets b
+        LEFT JOIN counts c
+          ON c.bucket_start = b.bucket_start
+        ORDER BY b.bucket_start ASC
+        `,
+        [orgId, from, to, query.group_by],
+      );
+
+      return result.rows;
+    } catch (error: any) {
+      if (error?.code === '22P02' || error?.code === '22007') {
+        throw new BadRequestException({
+          error: { code: 'VALIDATION_ERROR', message: 'Invalid query format' },
+        });
+      }
+      throw error;
+    }
+  }
+
+  /**
    * buildOverdueCsv：把逾期清單 rows 轉成 CSV 字串（給 controller 回傳）
    *
    * CSV 欄位順序（建議）：
@@ -223,6 +388,62 @@ export class ReportsService {
     return `\ufeff${[headerLine, ...dataLines].join('\r\n')}\r\n`;
   }
 
+  /**
+   * US-050：buildTopCirculationCsv
+   *
+   * 欄位順序（建議）：
+   * - loan_count（借出次數）
+   * - unique_borrowers（借閱人數）
+   * - title（書名）
+   * - bibliographic_id（方便對帳/跳轉）
+   */
+  buildTopCirculationCsv(rows: TopCirculationRow[]) {
+    const headers: Array<{ key: keyof TopCirculationRow; label: string }> = [
+      { key: 'loan_count', label: 'loan_count' },
+      { key: 'unique_borrowers', label: 'unique_borrowers' },
+      { key: 'bibliographic_title', label: 'title' },
+      { key: 'bibliographic_id', label: 'bibliographic_id' },
+    ];
+
+    const headerLine = headers.map((h) => escapeCsvCell(h.label)).join(',');
+    const dataLines = rows.map((row) =>
+      headers
+        .map((h) => {
+          const value = row[h.key];
+          return escapeCsvCell(value);
+        })
+        .join(','),
+    );
+
+    return `\ufeff${[headerLine, ...dataLines].join('\r\n')}\r\n`;
+  }
+
+  /**
+   * US-050：buildCirculationSummaryCsv
+   *
+   * 欄位順序：
+   * - bucket_start：這個 bucket 的起始時間（ISO；UTC）
+   * - loan_count：該 bucket 的借出筆數
+   */
+  buildCirculationSummaryCsv(rows: CirculationSummaryRow[]) {
+    const headers: Array<{ key: keyof CirculationSummaryRow; label: string }> = [
+      { key: 'bucket_start', label: 'bucket_start' },
+      { key: 'loan_count', label: 'loan_count' },
+    ];
+
+    const headerLine = headers.map((h) => escapeCsvCell(h.label)).join(',');
+    const dataLines = rows.map((row) =>
+      headers
+        .map((h) => {
+          const value = row[h.key];
+          return escapeCsvCell(value);
+        })
+        .join(','),
+    );
+
+    return `\ufeff${[headerLine, ...dataLines].join('\r\n')}\r\n`;
+  }
+
   // ----------------------------
   // helpers
   // ----------------------------
@@ -267,6 +488,105 @@ export class ReportsService {
 
     return actor;
   }
+
+  /**
+   * from/to 合法性（最低限度）
+   *
+   * 我們把「格式是否為可被 Postgres 解析的 timestamptz」交給 DB；
+   * 但 from > to 這類「邏輯錯誤」可以在後端先擋下來，讓錯誤更可讀。
+   */
+  private assertRangeOrder(from: string, to: string) {
+    const fromDate = new Date(from);
+    const toDate = new Date(to);
+    if (Number.isNaN(fromDate.getTime()) || Number.isNaN(toDate.getTime())) return;
+
+    if (fromDate.getTime() > toDate.getTime()) {
+      throw new BadRequestException({
+        error: { code: 'RANGE_INVALID', message: 'from must be earlier than or equal to to' },
+      });
+    }
+  }
+
+  /**
+   * generate_series 的安全防呆：限制 bucket 數量
+   *
+   * - day：1000 天約 2.7 年
+   * - week：1000 週約 19 年
+   * - month：1000 月約 83 年
+   *
+   * 對學校現場（學期/學年）而言已足夠，同時避免「誤選 10 年日統計」造成 DB 壓力。
+   */
+  private assertBucketCountNotTooLarge(
+    from: string,
+    to: string,
+    groupBy: 'day' | 'week' | 'month',
+  ) {
+    const fromDate = new Date(from);
+    const toDate = new Date(to);
+    if (Number.isNaN(fromDate.getTime()) || Number.isNaN(toDate.getTime())) return;
+
+    const maxBuckets = 1000;
+    const count = countBucketsUtc(fromDate, toDate, groupBy);
+    if (count > maxBuckets) {
+      throw new BadRequestException({
+        error: {
+          code: 'RANGE_TOO_LARGE',
+          message: `Selected range is too large for group_by=${groupBy} (max buckets=${maxBuckets})`,
+          details: { bucket_count: count, max_buckets: maxBuckets, group_by: groupBy },
+        },
+      });
+    }
+  }
+}
+
+/**
+ * countBucketsUtc：估算 from..to（含端點）會產生多少 bucket
+ *
+ * 目的：
+ * - 這是「安全防呆」用途，不需要做到 100% 與 Postgres date_trunc 完全一致
+ * - 只要能避免極端範圍（例如 10 年日統計）把 DB 打爆即可
+ *
+ * 實作策略：
+ * - day：用 UTC 日期的 00:00 做差
+ * - week：用「週一 00:00（UTC）」做差
+ * - month：用 YYYY/MM 做差（月份差 + 1）
+ */
+function countBucketsUtc(from: Date, to: Date, groupBy: 'day' | 'week' | 'month') {
+  if (groupBy === 'month') {
+    const fromYear = from.getUTCFullYear();
+    const fromMonth = from.getUTCMonth();
+    const toYear = to.getUTCFullYear();
+    const toMonth = to.getUTCMonth();
+    return (toYear - fromYear) * 12 + (toMonth - fromMonth) + 1;
+  }
+
+  const fromStart = bucketStartUtc(from, groupBy);
+  const toStart = bucketStartUtc(to, groupBy);
+
+  const diffMs = toStart.getTime() - fromStart.getTime();
+  if (diffMs < 0) return 0;
+
+  const diffDays = Math.floor(diffMs / 86_400_000);
+
+  if (groupBy === 'day') return diffDays + 1;
+  // week：每週 7 天
+  return Math.floor(diffDays / 7) + 1;
+}
+
+function bucketStartUtc(date: Date, groupBy: 'day' | 'week') {
+  // day：當天 00:00（UTC）
+  if (groupBy === 'day') {
+    return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+  }
+
+  // week：Postgres date_trunc('week', ...) 的概念是「週一 00:00」
+  // - JS getUTCDay(): 0=Sun, 1=Mon, ... 6=Sat
+  // - 轉成「距離週一的天數」：Mon=0, Tue=1, ... Sun=6
+  const day = date.getUTCDay();
+  const daysSinceMonday = (day + 6) % 7;
+  const startOfDay = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+  startOfDay.setUTCDate(startOfDay.getUTCDate() - daysSinceMonday);
+  return startOfDay;
 }
 
 /**
@@ -289,4 +609,3 @@ function escapeCsvCell(value: unknown) {
   const escaped = text.replaceAll('"', '""');
   return `"${escaped}"`;
 }
-

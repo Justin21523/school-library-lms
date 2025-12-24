@@ -195,6 +195,12 @@ CREATE INDEX IF NOT EXISTS loans_org_due_open
   ON loans (organization_id, due_at)
   WHERE returned_at IS NULL;
 
+-- 報表用索引（US-050 / Reports）：
+-- - 熱門書/借閱量彙總會依 checked_out_at 做期間查詢
+-- - 加上 (organization_id, checked_out_at) 能讓「指定期間」的掃描更快
+CREATE INDEX IF NOT EXISTS loans_org_checked_out_at
+  ON loans (organization_id, checked_out_at);
+
 -- holds：預約/保留
 -- - 預約以書目為主（bibliographic_id）：讀者想借「這本書」，不在乎是哪一冊
 -- - assigned_item_id 是可選：到 ready 階段才會指派某一冊

@@ -58,3 +58,47 @@ export const overdueReportQuerySchema = z.object({
 
 export type OverdueReportQuery = z.infer<typeof overdueReportQuerySchema>;
 
+/**
+ * US-050：Top Circulation（熱門書）
+ *
+ * 需求：館員能選一段期間，查「借閱次數最高的書」（通常用於閱讀推廣、補書決策）
+ *
+ * 設計：
+ * - from/to：期間邊界（timestamptz）
+ * - limit：回傳前 N 名（預設 50）
+ * - format：json/csv（同一端點支援匯出）
+ */
+export const topCirculationReportQuerySchema = z.object({
+  actor_user_id: uuidSchema,
+
+  from: z.string().trim().min(1).max(64),
+  to: z.string().trim().min(1).max(64),
+
+  limit: intFromStringSchema.optional(),
+  format: reportFormatSchema.optional(),
+});
+
+export type TopCirculationReportQuery = z.infer<typeof topCirculationReportQuerySchema>;
+
+/**
+ * US-050：Circulation Summary（借閱量彙總）
+ *
+ * 需求：館員能選一段期間，並以 day/week/month 彙總借閱量（借出筆數）
+ *
+ * 注意：
+ * - 「學期」在 MVP 先視為「你自行選擇 from/to 的期間」（例如 113-1）
+ * - group_by 則是「統計顆粒度」（日/週/月）
+ */
+export const circulationSummaryGroupBySchema = z.enum(['day', 'week', 'month']);
+
+export const circulationSummaryReportQuerySchema = z.object({
+  actor_user_id: uuidSchema,
+
+  from: z.string().trim().min(1).max(64),
+  to: z.string().trim().min(1).max(64),
+
+  group_by: circulationSummaryGroupBySchema,
+  format: reportFormatSchema.optional(),
+});
+
+export type CirculationSummaryReportQuery = z.infer<typeof circulationSummaryReportQuerySchema>;
