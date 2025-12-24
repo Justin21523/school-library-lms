@@ -562,10 +562,23 @@ export async function createLocation(
   });
 }
 
-export async function listUsers(orgId: string, query?: string) {
+export async function listUsers(
+  orgId: string,
+  queryOrFilters?:
+    | string
+    | { query?: string; role?: User['role']; status?: User['status']; limit?: number },
+) {
+  // Backward-compatible signature：
+  // - 早期版本只支援 listUsers(orgId, query?: string)
+  // - US-011 之後支援 role/status/limit 等 filter
+  //
+  // 為了不一次改爆所有頁面，我們允許第二個參數既可以是 string，也可以是 filters object。
+  const filters =
+    typeof queryOrFilters === 'string' ? { query: queryOrFilters } : (queryOrFilters ?? {});
+
   return await requestJson<User[]>(`/api/v1/orgs/${orgId}/users`, {
     method: 'GET',
-    query: { query },
+    query: filters,
   });
 }
 
@@ -575,6 +588,24 @@ export async function createUser(
 ) {
   return await requestJson<User>(`/api/v1/orgs/${orgId}/users`, {
     method: 'POST',
+    body: input,
+  });
+}
+
+export async function updateUser(
+  orgId: string,
+  userId: string,
+  input: {
+    actor_user_id: string;
+    name?: string;
+    role?: User['role'];
+    org_unit?: string | null;
+    status?: User['status'];
+    note?: string;
+  },
+) {
+  return await requestJson<User>(`/api/v1/orgs/${orgId}/users/${userId}`, {
+    method: 'PATCH',
     body: input,
   });
 }
