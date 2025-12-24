@@ -5,12 +5,16 @@
  *
  * 重要背景：
  * - DB 的 holds.status 是 enum：queued/ready/cancelled/fulfilled/expired
- * - MVP 目前尚未做登入（auth），因此：
- *   - staff（館員/管理者）操作會帶 actor_user_id
- *   - patron（讀者自助 OPAC）可以不帶 actor_user_id，後端會視為「本人操作」
+ * - 本專案同時支援兩種使用情境：
+ *   1) staff（館員後台 Web Console）：已導入 Staff Auth（Bearer token）
+ *      - 重要 staff 動作端點（例如 fulfill / expire-ready）在 controller 層套用 StaffAuthGuard
+ *      - actor_user_id 仍保留在 body（寫 audit / RBAC），但 guard 會要求它必須等於登入者（避免冒用）
+ *   2) patron（讀者自助 OPAC）：目前仍是「無登入」模式
+ *      - create/cancel 等端點允許不帶 actor_user_id，後端會視為「本人操作」
  *
- * 注意：沒有 auth 的情況下，這些規則只能做到「最小可用」；
- * 後續加 auth 後，建議把 actor 由 token 推導，並在 controller 層加 guard。
+ * 注意：
+ * - 目前 OPAC 仍未導入讀者登入，因此「本人操作」仍屬 MVP 的最小可用假設
+ * - 後續若要真正安全，建議導入讀者身分驗證（或另開 OPAC 專用端點/權杖）
  */
 
 import { z } from 'zod';

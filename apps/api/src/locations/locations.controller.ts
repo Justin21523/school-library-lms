@@ -10,7 +10,8 @@
  * - 以 URL 表達多租戶邊界：/orgs/{orgId}/...
  */
 
-import { Body, Controller, Get, Param, ParseUUIDPipe, Post } from '@nestjs/common';
+import { Body, Controller, Get, Param, ParseUUIDPipe, Post, UseGuards } from '@nestjs/common';
+import { StaffAuthGuard } from '../auth/staff-auth.guard';
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
 import { createLocationSchema } from './locations.schemas';
 import { LocationsService } from './locations.service';
@@ -24,6 +25,7 @@ export class LocationsController {
     return await this.locations.list(orgId);
   }
 
+  @UseGuards(StaffAuthGuard)
   @Post()
   async create(
     @Param('orgId', new ParseUUIDPipe()) orgId: string,

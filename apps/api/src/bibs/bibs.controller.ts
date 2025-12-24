@@ -19,7 +19,9 @@ import {
   Patch,
   Post,
   Query,
+  UseGuards,
 } from '@nestjs/common';
+import { StaffAuthGuard } from '../auth/staff-auth.guard';
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
 import { BibsService } from './bibs.service';
 import { createBibliographicSchema, updateBibliographicSchema } from './bibs.schemas';
@@ -39,6 +41,7 @@ export class BibsController {
     return await this.bibs.list(orgId, { query, isbn, classification });
   }
 
+  @UseGuards(StaffAuthGuard)
   @Post()
   async create(
     @Param('orgId', new ParseUUIDPipe()) orgId: string,
@@ -55,6 +58,7 @@ export class BibsController {
     return await this.bibs.getById(orgId, bibId);
   }
 
+  @UseGuards(StaffAuthGuard)
   @Patch(':bibId')
   async update(
     @Param('orgId', new ParseUUIDPipe()) orgId: string,

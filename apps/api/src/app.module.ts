@@ -28,11 +28,13 @@ import { LoansModule } from './loans/loans.module';
 import { HoldsModule } from './holds/holds.module';
 import { ReportsModule } from './reports/reports.module';
 import { AuditModule } from './audit/audit.module';
+import { AuthModule } from './auth/auth.module';
 
 @Module({
   // imports：把子模組「掛進」AppModule，讓 NestJS 掃描它們的 controller/provider。
   imports: [
     DbModule,
+    AuthModule,
     OrgsModule,
     LocationsModule,
     UsersModule,

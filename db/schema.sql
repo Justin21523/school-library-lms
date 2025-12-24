@@ -83,6 +83,20 @@ CREATE TABLE IF NOT EXISTS users (
   UNIQUE (organization_id, external_id)
 );
 
+-- user_credentials：使用者登入憑證（Staff Auth）
+-- - 這張表把「密碼」與「user 本體資料」分離：
+--   1) 減少不必要的查詢/回傳時誤把密碼資料帶出去的風險
+--   2) 未來若要改成 SSO/LDAP，也能只調整 auth 模組
+-- - user_id 為 PK：一個 user 最多一組登入憑證（MVP 版本）
+CREATE TABLE IF NOT EXISTS user_credentials (
+  user_id uuid PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  password_salt text NOT NULL,
+  password_hash text NOT NULL,
+  algorithm text NOT NULL DEFAULT 'scrypt-v1',
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+
 -- trigram index：支援 name 的模糊搜尋（例如打錯字、部分匹配）
 CREATE INDEX IF NOT EXISTS users_org_name_trgm
   ON users USING gin (name gin_trgm_ops);

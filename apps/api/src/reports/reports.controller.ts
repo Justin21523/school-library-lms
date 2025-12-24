@@ -18,7 +18,8 @@
  * - 因此這裡不使用 `Response` 型別（避免 TypeScript 編譯錯誤）
  */
 
-import { Controller, Get, Param, ParseUUIDPipe, Query, Res } from '@nestjs/common';
+import { Controller, Get, Param, ParseUUIDPipe, Query, Res, UseGuards } from '@nestjs/common';
+import { StaffAuthGuard } from '../auth/staff-auth.guard';
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
 import { ReportsService } from './reports.service';
 import {
@@ -30,6 +31,7 @@ import {
 } from './reports.schemas';
 
 @Controller('api/v1/orgs/:orgId/reports')
+@UseGuards(StaffAuthGuard)
 export class ReportsController {
   constructor(private readonly reports: ReportsService) {}
 

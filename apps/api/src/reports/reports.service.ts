@@ -855,9 +855,13 @@ export class ReportsService {
   /**
    * requireStaffActor：驗證查詢者是同 org 的 admin/librarian
    *
-   * 這是「MVP 的最小權限控管」：
-   * - 沒有登入時，actor_user_id 仍可能被冒用
-   * - 但至少能避免「完全不帶任何身份」就拿到敏感資料
+   * 重要背景：
+   * - reports controller 已套用 StaffAuthGuard（authentication）
+   * - 但本專案仍保留 actor_user_id（查詢者）在 query 裡，作為「稽核/一致性」欄位
+   *
+   * 因此這個 helper 的角色是：
+   * - service 層的 RBAC 防線：確保 actor 仍為 active 的 admin/librarian
+   * - 讓錯誤碼與行為在 service 層一致（即使未來某些 reports 端點改成不走 guard）
    */
   private async requireStaffActor(client: PoolClient, orgId: string, actorUserId: string) {
     const result = await client.query<ActorRow>(

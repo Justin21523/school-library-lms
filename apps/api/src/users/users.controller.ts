@@ -5,8 +5,9 @@
  * - GET  列出/搜尋 users（query=...）
  * - POST 建立 user
  *
- * 目前沒有登入/權限控管（MVP 先把資料模型與流程做起來）。
- * 之後加上 auth 時，會在 controller 層加 guard 來限制誰能操作。
+ * Auth/權限：
+ * - 這是 staff 後台端點，因此整個 controller 套用 StaffAuthGuard（需要 Bearer token）
+ * - 另外，敏感操作（例如停用/啟用、名冊匯入）仍會在 service 層做 RBAC + 寫 audit_events
  */
 
 import {
@@ -18,7 +19,9 @@ import {
   ParseUUIDPipe,
   Post,
   Query,
+  UseGuards,
 } from '@nestjs/common';
+import { StaffAuthGuard } from '../auth/staff-auth.guard';
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
 import {
   createUserSchema,
@@ -28,6 +31,7 @@ import {
 } from './users.schemas';
 import { UsersService } from './users.service';
 
+@UseGuards(StaffAuthGuard)
 @Controller('api/v1/orgs/:orgId/users')
 export class UsersController {
   constructor(private readonly users: UsersService) {}

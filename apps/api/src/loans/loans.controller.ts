@@ -11,11 +11,13 @@
  * - 因此 list 會回傳「loan + borrower + item + bib title」的組合資料
  */
 
-import { Body, Controller, Get, Param, ParseUUIDPipe, Post, Query } from '@nestjs/common';
+import { Body, Controller, Get, Param, ParseUUIDPipe, Post, Query, UseGuards } from '@nestjs/common';
+import { StaffAuthGuard } from '../auth/staff-auth.guard';
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
 import { LoansService } from './loans.service';
 import { listLoansQuerySchema, purgeLoanHistorySchema } from './loans.schemas';
 
+@UseGuards(StaffAuthGuard)
 @Controller('api/v1/orgs/:orgId/loans')
 export class LoansController {
   constructor(private readonly loans: LoansService) {}

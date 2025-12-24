@@ -11,11 +11,13 @@
  * - 一致的驗證：用 zod + ZodValidationPipe 驗證 query
  */
 
-import { Controller, Get, Param, ParseUUIDPipe, Query } from '@nestjs/common';
+import { Controller, Get, Param, ParseUUIDPipe, Query, UseGuards } from '@nestjs/common';
+import { StaffAuthGuard } from '../auth/staff-auth.guard';
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
 import { AuditService } from './audit.service';
 import { listAuditEventsQuerySchema } from './audit.schemas';
 
+@UseGuards(StaffAuthGuard)
 @Controller('api/v1/orgs/:orgId/audit-events')
 export class AuditController {
   constructor(private readonly audit: AuditService) {}
@@ -28,4 +30,3 @@ export class AuditController {
     return await this.audit.list(orgId, query);
   }
 }
-

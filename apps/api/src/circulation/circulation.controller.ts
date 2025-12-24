@@ -8,11 +8,13 @@
  * 這裡只做 HTTP 層的參數綁定與驗證，核心邏輯放在 Service。
  */
 
-import { Body, Controller, Param, ParseUUIDPipe, Post } from '@nestjs/common';
+import { Body, Controller, Param, ParseUUIDPipe, Post, UseGuards } from '@nestjs/common';
+import { StaffAuthGuard } from '../auth/staff-auth.guard';
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
 import { CirculationService } from './circulation.service';
 import { checkoutSchema, checkinSchema, renewSchema } from './circulation.schemas';
 
+@UseGuards(StaffAuthGuard)
 @Controller('api/v1/orgs/:orgId/circulation')
 export class CirculationController {
   constructor(private readonly circulation: CirculationService) {}

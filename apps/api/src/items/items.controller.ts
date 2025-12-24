@@ -19,7 +19,9 @@ import {
   Patch,
   Post,
   Query,
+  UseGuards,
 } from '@nestjs/common';
+import { StaffAuthGuard } from '../auth/staff-auth.guard';
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
 import { ItemsService } from './items.service';
 import {
@@ -30,6 +32,7 @@ import {
   updateItemSchema,
 } from './items.schemas';
 
+@UseGuards(StaffAuthGuard)
 @Controller('api/v1/orgs/:orgId')
 export class ItemsController {
   constructor(private readonly items: ItemsService) {}

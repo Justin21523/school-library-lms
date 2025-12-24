@@ -14,7 +14,8 @@
  * - 一致的驗證：用 zod + ZodValidationPipe 驗證 body/query
  */
 
-import { Body, Controller, Get, Param, ParseUUIDPipe, Post, Query } from '@nestjs/common';
+import { Body, Controller, Get, Param, ParseUUIDPipe, Post, Query, UseGuards } from '@nestjs/common';
+import { StaffAuthGuard } from '../auth/staff-auth.guard';
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
 import { HoldsService } from './holds.service';
 import {
@@ -55,6 +56,7 @@ export class HoldsController {
   }
 
   @Post(':holdId/fulfill')
+  @UseGuards(StaffAuthGuard)
   async fulfill(
     @Param('orgId', new ParseUUIDPipe()) orgId: string,
     @Param('holdId', new ParseUUIDPipe()) holdId: string,
@@ -72,6 +74,7 @@ export class HoldsController {
    * - mode=apply：實際更新 holds + 釋放/轉派 item（寫 DB + 寫 audit）
    */
   @Post('expire-ready')
+  @UseGuards(StaffAuthGuard)
   async expireReady(
     @Param('orgId', new ParseUUIDPipe()) orgId: string,
     @Body(new ZodValidationPipe(expireReadyHoldsSchema)) body: any,

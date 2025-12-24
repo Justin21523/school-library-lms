@@ -6,11 +6,13 @@
  * - POST 建立 policy
  */
 
-import { Body, Controller, Get, Param, ParseUUIDPipe, Post } from '@nestjs/common';
+import { Body, Controller, Get, Param, ParseUUIDPipe, Post, UseGuards } from '@nestjs/common';
+import { StaffAuthGuard } from '../auth/staff-auth.guard';
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
 import { createPolicySchema } from './policies.schemas';
 import { PoliciesService } from './policies.service';
 
+@UseGuards(StaffAuthGuard)
 @Controller('api/v1/orgs/:orgId/circulation-policies')
 export class PoliciesController {
   constructor(private readonly policies: PoliciesService) {}
