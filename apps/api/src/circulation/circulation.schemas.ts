@@ -34,3 +34,16 @@ export const checkinSchema = z.object({
 });
 
 export type CheckinInput = z.infer<typeof checkinSchema>;
+
+// renew：續借（MVP 先以 loan_id 作為續借目標）
+// - 理由：loan 是借閱交易的主體，續借本質上是「延長 loan 的 due_at」
+// - Web 端會先用 loans list 查出 loan_id，再呼叫 renew
+export const renewSchema = z.object({
+  // loan_id：要續借的借閱紀錄（UUID）
+  loan_id: uuidSchema,
+
+  // actor_user_id：操作者（館員/管理者，或未來的登入使用者）
+  actor_user_id: uuidSchema,
+});
+
+export type RenewInput = z.infer<typeof renewSchema>;

@@ -11,7 +11,7 @@
 import { Body, Controller, Param, ParseUUIDPipe, Post } from '@nestjs/common';
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
 import { CirculationService } from './circulation.service';
-import { checkoutSchema, checkinSchema } from './circulation.schemas';
+import { checkoutSchema, checkinSchema, renewSchema } from './circulation.schemas';
 
 @Controller('api/v1/orgs/:orgId/circulation')
 export class CirculationController {
@@ -31,5 +31,13 @@ export class CirculationController {
     @Body(new ZodValidationPipe(checkinSchema)) body: any,
   ) {
     return await this.circulation.checkin(orgId, body);
+  }
+
+  @Post('renew')
+  async renew(
+    @Param('orgId', new ParseUUIDPipe()) orgId: string,
+    @Body(new ZodValidationPipe(renewSchema)) body: any,
+  ) {
+    return await this.circulation.renew(orgId, body);
   }
 }

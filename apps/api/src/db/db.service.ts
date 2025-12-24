@@ -12,7 +12,7 @@
  */
 
 import { Injectable, OnModuleDestroy } from '@nestjs/common';
-import { Pool, PoolClient, QueryResult } from 'pg';
+import { Pool, PoolClient, QueryResult, QueryResultRow } from 'pg';
 
 @Injectable()
 export class DbService implements OnModuleDestroy {
@@ -36,7 +36,10 @@ export class DbService implements OnModuleDestroy {
     await this.pool.end();
   }
 
-  async query<T>(sql: string, params: unknown[] = []): Promise<QueryResult<T>> {
+  async query<T extends QueryResultRow>(
+    sql: string,
+    params: unknown[] = [],
+  ): Promise<QueryResult<T>> {
     // `pool.query` 會自動向 pool 取得連線並執行查詢，完成後釋放。
     return await this.pool.query<T>(sql, params);
   }
