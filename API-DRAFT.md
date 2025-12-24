@@ -212,6 +212,57 @@
   }
   ```
 
+### 7.5 到書未取到期處理（Expire ready holds / Maintenance）
+> ready hold 超過取書期限（`ready_until`）後，必須由館員定期處理；否則冊會長期卡在 `on_hold`，降低可借率。
+
+- `POST /orgs/{orgId}/holds/expire-ready`
+- 權限（MVP 最小控管）：
+  - `actor_user_id` 必填，且必須是 `admin/librarian`（active）
+- Request（JSON）：
+  ```json
+  {
+    "actor_user_id": "u_admin_or_librarian",
+    "mode": "preview|apply",
+    "as_of": "2025-12-24T00:00:00Z",
+    "limit": 200,
+    "note": "每日到期處理（選填）"
+  }
+  ```
+- 行為（摘要）：
+  - 找出 `status=ready AND ready_until < as_of` 的 holds
+  - `mode=preview`：只回傳清單（不寫 DB）
+  - `mode=apply`：逐筆把 hold 標記為 `expired`，並視情況「轉派」或「釋放」指派冊：
+    - 若同書目仍有人 queued：把同冊指派給「隊首 queued」並轉成 ready（重新計算 `ready_until`）
+    - 若無 queued：把冊釋放回 `available`
+    - 若 item 狀態不合理（checked_out/lost/withdrawn/repair）或書目不符：只 expire hold、不動 item
+  - 寫入 `audit_events`（action=`hold.expire`；每筆 hold 一個事件，便於用 `entity_id=holdId` 追溯）
+- Response（preview）：
+  ```json
+  {
+    "mode": "preview",
+    "as_of": "2025-12-24T00:00:00Z",
+    "limit": 200,
+    "candidates_total": 12,
+    "holds": []
+  }
+  ```
+- Response（apply）：
+  ```json
+  {
+    "mode": "apply",
+    "as_of": "2025-12-24T00:00:00Z",
+    "limit": 200,
+    "summary": {
+      "candidates_total": 12,
+      "processed": 12,
+      "transferred": 7,
+      "released": 5,
+      "skipped_item_action": 0
+    },
+    "results": []
+  }
+  ```
+
 ## 8) Policies
 - `GET /orgs/{orgId}/circulation-policies`：列出政策
 - `POST /orgs/{orgId}/circulation-policies`：建立政策（Librarian）
