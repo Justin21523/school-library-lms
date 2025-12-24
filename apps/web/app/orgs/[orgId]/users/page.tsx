@@ -17,6 +17,8 @@
 
 import { useEffect, useState } from 'react';
 
+import Link from 'next/link';
+
 import type { User } from '../../../lib/api';
 import { createUser, listUsers } from '../../../lib/api';
 import { formatErrorMessage } from '../../../lib/error';
@@ -113,6 +115,9 @@ export default function UsersPage({ params }: { params: { orgId: string } }) {
         <p className="muted">
           對應 API：<code>GET/POST /api/v1/orgs/:orgId/users</code>（可用 <code>?query=</code>{' '}
           搜尋）。
+        </p>
+        <p className="muted">
+          批次名冊匯入（US-010）：<Link href={`/orgs/${params.orgId}/users/import`}>Users CSV Import</Link>
         </p>
 
         {/* 搜尋表單 */}

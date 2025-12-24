@@ -45,6 +45,74 @@ export type User = {
   updated_at: string;
 };
 
+// ----------------------------
+// US-010：Users CSV Import（名冊匯入）
+// ----------------------------
+
+// roster_role：名冊匯入的角色範圍（US-010：student/teacher）
+export type RosterRole = 'student' | 'teacher';
+
+export type UsersCsvImportMode = 'preview' | 'apply';
+
+export type UsersCsvImportRowError = {
+  row_number: number;
+  code: string;
+  message: string;
+  field?: string;
+  details?: unknown;
+};
+
+export type UsersCsvImportRowPlan = {
+  row_number: number;
+  external_id: string;
+  name: string;
+  role: RosterRole;
+  org_unit: string | null | undefined;
+  status: User['status'] | undefined;
+  action: 'create' | 'update' | 'unchanged' | 'invalid';
+  changes: Array<'external_id' | 'name' | 'role' | 'org_unit' | 'status'>;
+};
+
+export type UsersCsvImportSummary = {
+  total_rows: number;
+  valid_rows: number;
+  invalid_rows: number;
+  to_create: number;
+  to_update: number;
+  unchanged: number;
+  to_deactivate: number;
+};
+
+export type UsersCsvImportPreviewResult = {
+  mode: 'preview';
+  csv: { header: string[]; sha256: string };
+  options: {
+    deactivate_missing: boolean;
+    deactivate_missing_roles: RosterRole[];
+    default_role: RosterRole | null;
+    update_status: boolean;
+    update_org_unit: boolean;
+  };
+  summary: UsersCsvImportSummary;
+  errors: UsersCsvImportRowError[];
+  rows: UsersCsvImportRowPlan[];
+  to_deactivate_preview: Array<{
+    id: string;
+    external_id: string;
+    name: string;
+    role: RosterRole;
+    status: User['status'];
+  }>;
+};
+
+export type UsersCsvImportApplyResult = {
+  mode: 'apply';
+  summary: UsersCsvImportSummary;
+  audit_event_id: string;
+};
+
+export type UsersCsvImportResult = UsersCsvImportPreviewResult | UsersCsvImportApplyResult;
+
 export type CirculationPolicy = {
   id: string;
   organization_id: string;
@@ -508,6 +576,42 @@ export async function createUser(
   return await requestJson<User>(`/api/v1/orgs/${orgId}/users`, {
     method: 'POST',
     body: input,
+  });
+}
+
+export async function previewUsersCsvImport(
+  orgId: string,
+  input: {
+    actor_user_id: string;
+    csv_text: string;
+    default_role?: RosterRole;
+    deactivate_missing?: boolean;
+    deactivate_missing_roles?: RosterRole[];
+    source_filename?: string;
+    source_note?: string;
+  },
+) {
+  return await requestJson<UsersCsvImportPreviewResult>(`/api/v1/orgs/${orgId}/users/import`, {
+    method: 'POST',
+    body: { ...input, mode: 'preview' satisfies UsersCsvImportMode },
+  });
+}
+
+export async function applyUsersCsvImport(
+  orgId: string,
+  input: {
+    actor_user_id: string;
+    csv_text: string;
+    default_role?: RosterRole;
+    deactivate_missing?: boolean;
+    deactivate_missing_roles?: RosterRole[];
+    source_filename?: string;
+    source_note?: string;
+  },
+) {
+  return await requestJson<UsersCsvImportApplyResult>(`/api/v1/orgs/${orgId}/users/import`, {
+    method: 'POST',
+    body: { ...input, mode: 'apply' satisfies UsersCsvImportMode },
   });
 }
 
