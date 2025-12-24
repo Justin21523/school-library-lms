@@ -69,6 +69,7 @@ MVP 預設政策已定案（可調）：請見 `MVP-SPEC.md`。
 - Reports（US-050 熱門書/借閱量）實作說明：`docs/implementation/0012-us-050-reports-top-circulation-and-summary.md`
 - Holds 到期處理（ready_until → expired）實作說明：`docs/implementation/0013-holds-expiry-and-maintenance.md`
 - 取書架清單（Ready Holds）實作說明：`docs/implementation/0014-ready-holds-report-and-print-slips.md`
+- 櫃台取書借出掃碼（Circulation fulfill）實作說明：`docs/implementation/0015-circulation-fulfill-scan-workstation.md`
 - 註解與教學文件規範：`docs/commenting-guidelines.md`
 
 ## 本機開發（從 0 到跑起來）

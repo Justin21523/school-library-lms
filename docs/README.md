@@ -29,6 +29,7 @@
 - `docs/implementation/0012-us-050-reports-top-circulation-and-summary.md`
 - `docs/implementation/0013-holds-expiry-and-maintenance.md`
 - `docs/implementation/0014-ready-holds-report-and-print-slips.md`
+- `docs/implementation/0015-circulation-fulfill-scan-workstation.md`
 
 ## 註解規範
 - `docs/commenting-guidelines.md`
