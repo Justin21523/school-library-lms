@@ -2,7 +2,7 @@
  * Organization Layout（單一 organization 的導覽框架）
  *
  * 這個 layout 的目的，是把「一所學校（org）底下的功能」集中在同一個側邊導覽：
- * - locations / users / policies / bibs / items / circulation
+ * - locations / users / policies / bibs / items / loans / circulation
  * - URL 上用 orgId 表達多租戶邊界（對齊 API：/api/v1/orgs/:orgId/...）
  *
  * 重要：這裡不做資料抓取（fetch org name），先用 orgId 顯示即可。
@@ -62,6 +62,9 @@ export default function OrgLayout({
               <Link href={`/orgs/${orgId}/items`}>Items</Link>
             </li>
             <li>
+              <Link href={`/orgs/${orgId}/loans`}>Loans</Link>
+            </li>
+            <li>
               <Link href={`/orgs/${orgId}/circulation`}>Circulation</Link>
             </li>
           </ul>
@@ -73,4 +76,3 @@ export default function OrgLayout({
     </div>
   );
 }
-

@@ -119,6 +119,47 @@ export type CheckinResult = {
   ready_until: string | null;
 };
 
+export type LoanStatus = 'open' | 'closed';
+
+// loans list 會回「loan + borrower + item + bib title」，方便 UI 顯示。
+export type LoanWithDetails = {
+  // loan
+  id: string;
+  organization_id: string;
+  item_id: string;
+  user_id: string;
+  checked_out_at: string;
+  due_at: string;
+  returned_at: string | null;
+  renewed_count: number;
+  status: LoanStatus;
+  is_overdue: boolean;
+
+  // borrower
+  user_external_id: string;
+  user_name: string;
+  user_role: User['role'];
+  user_status: User['status'];
+
+  // item
+  item_barcode: string;
+  item_status: ItemStatus;
+  item_call_number: string;
+  item_location_id: string;
+
+  // bib
+  bibliographic_id: string;
+  bibliographic_title: string;
+};
+
+export type RenewResult = {
+  loan_id: string;
+  item_id: string;
+  user_id: string;
+  due_at: string;
+  renewed_count: number;
+};
+
 // API 錯誤格式（MVP 版本：以 error 物件包起來）
 export type ApiErrorBody = {
   error: {
@@ -162,12 +203,18 @@ function getApiBaseUrl() {
  * - 一堆 `if (x) url += ...` 的樣板碼
  * - 把 undefined/null 拼進 query string（變成 "undefined"）
  */
-function toSearchParams(query: Record<string, string | undefined | null>) {
+type QueryValue = string | number | boolean | undefined | null;
+
+function toSearchParams(query: Record<string, QueryValue>) {
   const params = new URLSearchParams();
 
   for (const [key, value] of Object.entries(query)) {
     if (value === undefined || value === null) continue;
-    const trimmed = value.trim();
+
+    // QueryParam 一律以字串送出：
+    // - string：trim 後送出
+    // - number/boolean：轉成字串後送出（例如 limit=200, overdue=true）
+    const trimmed = (typeof value === 'string' ? value : String(value)).trim();
     if (!trimmed) continue;
     params.set(key, trimmed);
   }
@@ -184,7 +231,7 @@ function toSearchParams(query: Record<string, string | undefined | null>) {
  */
 async function requestJson<T>(
   path: string,
-  options: { method: string; query?: Record<string, string | undefined | null>; body?: unknown },
+  options: { method: string; query?: Record<string, QueryValue>; body?: unknown },
 ): Promise<T> {
   // 1) 組出完整 URL（base + path + query）
   const baseUrl = getApiBaseUrl();
@@ -464,3 +511,27 @@ export async function checkin(
   });
 }
 
+export async function listLoans(
+  orgId: string,
+  filters: {
+    status?: 'open' | 'closed' | 'all';
+    user_external_id?: string;
+    item_barcode?: string;
+    limit?: number;
+  },
+) {
+  return await requestJson<LoanWithDetails[]>(`/api/v1/orgs/${orgId}/loans`, {
+    method: 'GET',
+    query: filters,
+  });
+}
+
+export async function renewLoan(
+  orgId: string,
+  input: { loan_id: string; actor_user_id: string },
+) {
+  return await requestJson<RenewResult>(`/api/v1/orgs/${orgId}/circulation/renew`, {
+    method: 'POST',
+    body: input,
+  });
+}
