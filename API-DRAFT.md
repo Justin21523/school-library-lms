@@ -31,8 +31,24 @@
 - `GET /orgs/{orgId}/users?query=...&role=...&status=...`：搜尋使用者（Librarian）
 - `POST /orgs/{orgId}/users`：新增使用者（Librarian）
 - `PATCH /orgs/{orgId}/users/{userId}`：更新/停用（Librarian）
-- `POST /orgs/{orgId}/users/import`：CSV 匯入（Librarian）
-  - 回傳：匯入預覽/錯誤清單（可先同步回傳；後續可改背景任務）
+- `POST /orgs/{orgId}/users/import`：CSV 匯入（US-010；Librarian）
+  - 目的：批次新增/更新名冊（以 `external_id` 為唯一鍵），並可批次停用畢業/離校使用者
+  - MVP 權限：需帶 `actor_user_id`（admin/librarian），後端驗證 role/status（避免名冊裸奔）
+  - Request（JSON）：
+    ```json
+    {
+      "actor_user_id": "u_admin_or_librarian",
+      "mode": "preview|apply",
+      "csv_text": "external_id,name,role,org_unit,status\\n...",
+      "default_role": "student|teacher",
+      "deactivate_missing": true,
+      "deactivate_missing_roles": ["student", "teacher"],
+      "source_filename": "roster.csv",
+      "source_note": "113-1 學期名冊"
+    }
+    ```
+  - Response（preview）：回傳 `summary + errors + rows`（不寫 DB）
+  - Response（apply）：回傳 `summary + audit_event_id`，並寫入 `audit_events`（action=`user.import_csv`）
 
 ## 4) Bibliographic Records（書目）
 - `GET /orgs/{orgId}/bibs?query=...&isbn=...&classification=...`：查詢書目（含可借/總冊數；query 會比對 title/creators/subjects 等）
