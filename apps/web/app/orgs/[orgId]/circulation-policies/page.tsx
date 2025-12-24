@@ -14,11 +14,17 @@
 
 import { useEffect, useState } from 'react';
 
+import Link from 'next/link';
+
 import type { CirculationPolicy } from '../../../lib/api';
 import { createPolicy, listPolicies } from '../../../lib/api';
 import { formatErrorMessage } from '../../../lib/error';
+import { useStaffSession } from '../../../lib/use-staff-session';
 
 export default function CirculationPoliciesPage({ params }: { params: { orgId: string } }) {
+  // staff session：circulation policies 屬於 staff 設定主檔，受 StaffAuthGuard 保護。
+  const { ready: sessionReady, session } = useStaffSession(params.orgId);
+
   // policies：目前載入到的政策列表（null 代表尚未載入）。
   const [policies, setPolicies] = useState<CirculationPolicy[] | null>(null);
 
@@ -52,9 +58,10 @@ export default function CirculationPoliciesPage({ params }: { params: { orgId: s
   }
 
   useEffect(() => {
+    if (!sessionReady || !session) return;
     void refresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [params.orgId]);
+  }, [params.orgId, sessionReady, session]);
 
   // 把數字欄位從字串轉成 int，並做最基本的檢查。
   function parseIntField(label: string, value: string) {
@@ -102,6 +109,32 @@ export default function CirculationPoliciesPage({ params }: { params: { orgId: s
     } finally {
       setCreating(false);
     }
+  }
+
+  // 登入門檻（放在所有 hooks 之後，避免違反 React hooks 規則）
+  if (!sessionReady) {
+    return (
+      <div className="stack">
+        <section className="panel">
+          <h1 style={{ marginTop: 0 }}>Circulation Policies</h1>
+          <p className="muted">載入登入狀態中…</p>
+        </section>
+      </div>
+    );
+  }
+
+  if (!session) {
+    return (
+      <div className="stack">
+        <section className="panel">
+          <h1 style={{ marginTop: 0 }}>Circulation Policies</h1>
+          <p className="error">
+            這頁需要 staff 登入才能管理借閱政策。請先前往{' '}
+            <Link href={`/orgs/${params.orgId}/login`}>/login</Link>。
+          </p>
+        </section>
+      </div>
+    );
   }
 
   return (

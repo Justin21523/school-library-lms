@@ -10,29 +10,27 @@
  * 對應 API：
  * - POST /api/v1/orgs/:orgId/loans/purge-history（mode=preview|apply）
  *
- * MVP 權限策略（沒有 auth）：
- * - 這是「高風險刪除」操作，因此必須提供 actor_user_id，且後端只允許 admin（active）
+ * Auth/權限（重要）：
+ * - 這是「高風險刪除」操作，因此：
+ *   - API 端點受 StaffAuthGuard 保護（需要 Bearer token）
+ *   - 後端 RBAC 只允許 admin（active）執行
+ * - actor_user_id 由登入者本人推導（session.user.id）
  * - apply 時會寫入 audit_events（action=loan.purge_history）
  */
 
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useState } from 'react';
 
 import Link from 'next/link';
 
 import type {
   PurgeLoanHistoryApplyResult,
   PurgeLoanHistoryPreviewResult,
-  User,
 } from '../../../../lib/api';
-import { applyPurgeLoanHistory, listUsers, previewPurgeLoanHistory } from '../../../../lib/api';
+import { applyPurgeLoanHistory, previewPurgeLoanHistory } from '../../../../lib/api';
 import { formatErrorMessage } from '../../../../lib/error';
-
-// actor 候選人：只允許 active admin（對齊後端 loans maintenance 的 RBAC）。
-function isActorCandidate(user: User) {
-  return user.status === 'active' && user.role === 'admin';
-}
+import { useStaffSession } from '../../../../lib/use-staff-session';
 
 function toDateTimeLocalValue(date: Date) {
   const pad2 = (n: number) => String(n).padStart(2, '0');
@@ -53,18 +51,14 @@ function fromDateTimeLocalToIso(value: string) {
 }
 
 export default function LoansMaintenancePage({ params }: { params: { orgId: string } }) {
-  // ----------------------------
-  // 1) actor（操作者：admin）
-  // ----------------------------
+  // Staff session：本頁受 StaffAuthGuard 保護，且 RBAC 只允許 admin。
+  const { ready: sessionReady, session } = useStaffSession(params.orgId);
 
-  const [users, setUsers] = useState<User[] | null>(null);
-  const [loadingUsers, setLoadingUsers] = useState(false);
-  const [actorUserId, setActorUserId] = useState('');
-
-  const actorCandidates = useMemo(() => (users ?? []).filter(isActorCandidate), [users]);
+  // actorUserId：由登入者本人推導（避免任意選 actor 冒用）。
+  const actorUserId = session?.user.id ?? '';
 
   // ----------------------------
-  // 2) 參數：retention_days / as_of / limit / include_audit_events / note
+  // 1) 參數：retention_days / as_of / limit / include_audit_events / note
   // ----------------------------
 
   // retentionDays：預設 365 天（學校常見：最多保留 1 年；實際政策依校內規範）
@@ -95,35 +89,55 @@ export default function LoansMaintenancePage({ params }: { params: { orgId: stri
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
-  // 初次載入：抓 users（讓你選 actor）
-  useEffect(() => {
-    async function run() {
-      setLoadingUsers(true);
-      setError(null);
+  // 登入門檻：未登入就不顯示操作 UI，避免一直撞 401/403。
+  if (!sessionReady) {
+    return (
+      <div className="stack">
+        <section className="panel">
+          <h1 style={{ marginTop: 0 }}>Loans Maintenance</h1>
+          <p className="muted">載入登入狀態中…</p>
+        </section>
+      </div>
+    );
+  }
 
-      try {
-        const result = await listUsers(params.orgId);
-        setUsers(result);
+  if (!session) {
+    return (
+      <div className="stack">
+        <section className="panel">
+          <h1 style={{ marginTop: 0 }}>Loans Maintenance</h1>
+          <p className="error">
+            這頁需要 staff 登入才能操作。請先前往 <Link href={`/orgs/${params.orgId}/login`}>/login</Link>。
+          </p>
+        </section>
+      </div>
+    );
+  }
 
-        // 若尚未選 actor，就預設第一個可用 admin（提升可用性）
-        if (!actorUserId) {
-          const first = result.find(isActorCandidate);
-          if (first) setActorUserId(first.id);
-        }
-      } catch (e) {
-        setUsers(null);
-        setError(formatErrorMessage(e));
-      } finally {
-        setLoadingUsers(false);
-      }
-    }
-
-    void run();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [params.orgId]);
+  // RBAC（前端提示）：後端仍會再檢查一次；這裡只是把錯誤提早變成「可讀」訊息。
+  if (session.user.role !== 'admin') {
+    return (
+      <div className="stack">
+        <section className="panel">
+          <h1 style={{ marginTop: 0 }}>Loans Maintenance</h1>
+          <p className="error">
+            這頁只允許 <code>admin</code> 使用（目前登入：{session.user.name} / {session.user.role}）。
+          </p>
+          <p className="muted">
+            若你需要執行借閱歷史保存期限清理，請改用 admin 帳號登入；或由管理者代為操作。
+          </p>
+          <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+            <Link href={`/orgs/${params.orgId}/login`}>前往 Login</Link>
+            <Link href={`/orgs/${params.orgId}/loans`}>回 Loans 查詢</Link>
+          </div>
+        </section>
+      </div>
+    );
+  }
 
   function buildRequestInput() {
-    if (!actorUserId) throw new Error('請先選擇 actor_user_id（admin）');
+    // 由於我們已先做登入門檻與 role 檢查，這裡的檢查是保險用。
+    if (!actorUserId) throw new Error('缺少 actor_user_id（請重新登入）');
 
     const trimmedRetention = retentionDays.trim();
     const retentionNumber = trimmedRetention ? Number.parseInt(trimmedRetention, 10) : NaN;
@@ -229,19 +243,10 @@ export default function LoansMaintenancePage({ params }: { params: { orgId: stri
 
         <hr style={{ border: 0, borderTop: '1px solid var(--border)', margin: '16px 0' }} />
 
-        <label>
-          actor_user_id（操作者：admin）
-          <select value={actorUserId} onChange={(e) => setActorUserId(e.target.value)} disabled={loadingUsers}>
-            <option value="">（請選擇）</option>
-            {actorCandidates.map((u) => (
-              <option key={u.id} value={u.id}>
-                {u.name} ({u.role}) · {u.external_id}
-              </option>
-            ))}
-          </select>
-        </label>
-
-        {loadingUsers ? <p className="muted">載入可用操作者中…</p> : null}
+        <p className="muted">
+          actor_user_id（操作者）已鎖定為：<code>{session.user.id}</code>（{session.user.name} /{' '}
+          {session.user.role}）
+        </p>
 
         <div style={{ display: 'grid', gap: 12, marginTop: 12 }}>
           <label>
@@ -392,4 +397,3 @@ export default function LoansMaintenancePage({ params }: { params: { orgId: stri
     </div>
   );
 }
-

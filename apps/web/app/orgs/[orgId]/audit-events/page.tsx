@@ -8,23 +8,22 @@
  * 對應 API：
  * - GET /api/v1/orgs/:orgId/audit-events?actor_user_id=...&from=...&to=...&action=...&actor_query=...
  *
- * MVP 權限策略（沒有 auth）：
- * - 需要由前端提供 actor_user_id（查詢者）
- * - 後端會驗證該 actor 必須是 admin/librarian（active）
+ * Auth/權限（重要）：
+ * - audit_events 屬於敏感資料（可追溯行為/個資線索），因此 API 端點受 StaffAuthGuard 保護
+ * - 查詢時仍保留 actor_user_id（查詢者）欄位，但由登入者本人推導（session.user.id）
+ * - StaffAuthGuard 會驗證：request 的 actor_user_id 必須等於 token.sub（避免冒用）
  */
 
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 
-import type { AuditEventRow, User } from '../../../lib/api';
-import { listAuditEvents, listUsers } from '../../../lib/api';
+import Link from 'next/link';
+
+import type { AuditEventRow } from '../../../lib/api';
+import { listAuditEvents } from '../../../lib/api';
 import { formatErrorMessage } from '../../../lib/error';
-
-// 查詢者（viewer）候選人：必須是 active 的 admin/librarian（對齊後端最小 RBAC）。
-function isViewerCandidate(user: User) {
-  return user.status === 'active' && (user.role === 'admin' || user.role === 'librarian');
-}
+import { useStaffSession } from '../../../lib/use-staff-session';
 
 /**
  * datetime-local（HTML input）需要的格式：
@@ -56,18 +55,14 @@ function fromDateTimeLocalToIso(value: string) {
 }
 
 export default function AuditEventsPage({ params }: { params: { orgId: string } }) {
-  // ----------------------------
-  // 1) viewer（查詢者）選擇
-  // ----------------------------
+  // Staff session：本頁受 StaffAuthGuard 保護，因此需先登入。
+  const { ready: sessionReady, session } = useStaffSession(params.orgId);
 
-  const [users, setUsers] = useState<User[] | null>(null);
-  const [loadingUsers, setLoadingUsers] = useState(false);
-  const [viewerUserId, setViewerUserId] = useState('');
-
-  const viewerCandidates = useMemo(() => (users ?? []).filter(isViewerCandidate), [users]);
+  // viewerUserId：查詢者（actor_user_id），由登入者本人推導。
+  const viewerUserId = session?.user.id ?? '';
 
   // ----------------------------
-  // 2) filters（時間/事件/操作者）
+  // 1) filters（時間/事件/操作者）
   // ----------------------------
 
   // 預設時間區間：最近 7 天（到現在）
@@ -100,41 +95,14 @@ export default function AuditEventsPage({ params }: { params: { orgId: string } 
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
-  // 初次載入：抓 users（讓你選 viewer）
-  useEffect(() => {
-    async function run() {
-      setLoadingUsers(true);
-      setError(null);
-      try {
-        const result = await listUsers(params.orgId);
-        setUsers(result);
-
-        // 若尚未選 viewer，就預設第一個可用館員（提升可用性）。
-        if (!viewerUserId) {
-          const first = result.find(isViewerCandidate);
-          if (first) setViewerUserId(first.id);
-        }
-      } catch (e) {
-        setUsers(null);
-        setError(formatErrorMessage(e));
-      } finally {
-        setLoadingUsers(false);
-      }
-    }
-
-    void run();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [params.orgId]);
-
   async function refresh() {
     setLoading(true);
     setError(null);
     setSuccess(null);
 
     try {
-      if (!viewerUserId) {
-        throw new Error('請先選擇 actor_user_id（查詢者：admin/librarian）');
-      }
+      // 由於我們已先做登入門檻（session 必存在），這裡的檢查是保險用。
+      if (!viewerUserId) throw new Error('缺少 actor_user_id（請重新登入）');
 
       // from/to：允許留空（不限制時間）
       const fromIso = fromLocal.trim() ? fromDateTimeLocalToIso(fromLocal) : null;
@@ -181,10 +149,36 @@ export default function AuditEventsPage({ params }: { params: { orgId: string } 
 
   // 初次進頁面：自動查最近 7 天（如果 viewer 已選到）
   useEffect(() => {
+    if (!sessionReady || !session) return;
     if (!viewerUserId) return;
     void refresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [viewerUserId]);
+  }, [viewerUserId, sessionReady, session]);
+
+  // 登入門檻（放在所有 hooks 之後，避免違反 React hooks 規則）
+  if (!sessionReady) {
+    return (
+      <div className="stack">
+        <section className="panel">
+          <h1 style={{ marginTop: 0 }}>Audit Events</h1>
+          <p className="muted">載入登入狀態中…</p>
+        </section>
+      </div>
+    );
+  }
+
+  if (!session) {
+    return (
+      <div className="stack">
+        <section className="panel">
+          <h1 style={{ marginTop: 0 }}>Audit Events</h1>
+          <p className="error">
+            這頁需要 staff 登入才能查詢。請先前往 <Link href={`/orgs/${params.orgId}/login`}>/login</Link>。
+          </p>
+        </section>
+      </div>
+    );
+  }
 
   async function onSearch(e: React.FormEvent) {
     e.preventDefault();
@@ -218,22 +212,10 @@ export default function AuditEventsPage({ params }: { params: { orgId: string } 
         </p>
 
         <p className="muted">
-          MVP 尚未實作登入，因此需要由前端提供 <code>actor_user_id</code> 作為查詢者（館員/管理者）。
+          actor_user_id（查詢者）已鎖定為：<code>{session.user.id}</code>（{session.user.name} /{' '}
+          {session.user.role}）
         </p>
 
-        <label>
-          actor_user_id（查詢者：admin/librarian）
-          <select value={viewerUserId} onChange={(e) => setViewerUserId(e.target.value)} disabled={loadingUsers}>
-            <option value="">（請選擇）</option>
-            {viewerCandidates.map((u) => (
-              <option key={u.id} value={u.id}>
-                {u.name} ({u.role}) · {u.external_id}
-              </option>
-            ))}
-          </select>
-        </label>
-
-        {loadingUsers ? <p className="muted">載入可用查詢者中…</p> : null}
         {error ? <p className="error">錯誤：{error}</p> : null}
         {success ? <p className="success">{success}</p> : null}
       </section>

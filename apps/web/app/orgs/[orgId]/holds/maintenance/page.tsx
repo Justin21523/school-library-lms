@@ -8,14 +8,15 @@
  * 對應 API：
  * - POST /api/v1/orgs/:orgId/holds/expire-ready（mode=preview|apply）
  *
- * 重要：MVP 尚未做登入（auth）
- * - 這類批次維運操作一定要有操作者，因此必須提供 actor_user_id（admin/librarian）
+ * Auth/權限（重要）：
+ * - 這頁屬於 staff 維運工具，因此需要先在 `/orgs/:orgId/login` 登入取得 Bearer token
+ * - actor_user_id 由「登入者本人」推導（session.user.id），不再提供下拉選擇（避免冒用）
  * - 後端會寫入 audit_events（action=hold.expire），讓你事後可追溯「誰處理了哪些到期」
  */
 
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useState } from 'react';
 
 import Link from 'next/link';
 
@@ -23,14 +24,10 @@ import type {
   ExpireReadyHoldsApplyResult,
   ExpireReadyHoldsPreviewResult,
   HoldWithDetails,
-  User,
 } from '../../../../lib/api';
-import { applyExpireReadyHolds, listUsers, previewExpireReadyHolds } from '../../../../lib/api';
+import { applyExpireReadyHolds, previewExpireReadyHolds } from '../../../../lib/api';
 import { formatErrorMessage } from '../../../../lib/error';
-
-function isActorCandidate(user: User) {
-  return user.status === 'active' && (user.role === 'admin' || user.role === 'librarian');
-}
+import { useStaffSession } from '../../../../lib/use-staff-session';
 
 function toDateTimeLocalValue(date: Date) {
   const pad2 = (n: number) => String(n).padStart(2, '0');
@@ -58,18 +55,14 @@ function formatHoldLabel(hold: HoldWithDetails) {
 }
 
 export default function HoldsMaintenancePage({ params }: { params: { orgId: string } }) {
-  // ----------------------------
-  // 1) actor（操作者）選擇
-  // ----------------------------
+  // Staff session：本頁所有 API 都被 StaffAuthGuard 保護，因此需先登入。
+  const { ready: sessionReady, session } = useStaffSession(params.orgId);
 
-  const [users, setUsers] = useState<User[] | null>(null);
-  const [loadingUsers, setLoadingUsers] = useState(false);
-  const [actorUserId, setActorUserId] = useState('');
-
-  const actorCandidates = useMemo(() => (users ?? []).filter(isActorCandidate), [users]);
+  // actorUserId：由登入者本人推導，並在 request 中送回 API（供 audit 與 RBAC）。
+  const actorUserId = session?.user.id ?? '';
 
   // ----------------------------
-  // 2) 參數：as_of / limit / note
+  // 1) 參數：as_of / limit / note
   // ----------------------------
 
   // asOfLocal：可留空；留空代表「由後端用 DB now() 判定」
@@ -92,34 +85,34 @@ export default function HoldsMaintenancePage({ params }: { params: { orgId: stri
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
-  // 初次載入：抓 users（讓館員選 actor）
-  useEffect(() => {
-    async function run() {
-      setLoadingUsers(true);
-      setError(null);
-      try {
-        const result = await listUsers(params.orgId);
-        setUsers(result);
+  // 登入門檻：未登入就不顯示操作 UI，避免一直撞 401/403。
+  if (!sessionReady) {
+    return (
+      <div className="stack">
+        <section className="panel">
+          <h1 style={{ marginTop: 0 }}>Holds Maintenance</h1>
+          <p className="muted">載入登入狀態中…</p>
+        </section>
+      </div>
+    );
+  }
 
-        // 若尚未選 actor，就預設第一個可用館員（提升可用性）
-        if (!actorUserId) {
-          const first = result.find(isActorCandidate);
-          if (first) setActorUserId(first.id);
-        }
-      } catch (e) {
-        setUsers(null);
-        setError(formatErrorMessage(e));
-      } finally {
-        setLoadingUsers(false);
-      }
-    }
-
-    void run();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [params.orgId]);
+  if (!session) {
+    return (
+      <div className="stack">
+        <section className="panel">
+          <h1 style={{ marginTop: 0 }}>Holds Maintenance</h1>
+          <p className="error">
+            這頁需要 staff 登入才能操作。請先前往 <Link href={`/orgs/${params.orgId}/login`}>/login</Link>。
+          </p>
+        </section>
+      </div>
+    );
+  }
 
   function buildRequestInput() {
-    if (!actorUserId) throw new Error('請先選擇 actor_user_id（館員/管理者）');
+    // 由於我們已先做登入門檻（session 必存在），這裡的檢查是保險用。
+    if (!actorUserId) throw new Error('缺少 actor_user_id（請重新登入）');
 
     const trimmedLimit = limit.trim();
     const limitNumber = trimmedLimit ? Number.parseInt(trimmedLimit, 10) : undefined;
@@ -218,19 +211,10 @@ export default function HoldsMaintenancePage({ params }: { params: { orgId: stri
 
         <hr style={{ border: 0, borderTop: '1px solid var(--border)', margin: '16px 0' }} />
 
-        <label>
-          actor_user_id（操作者：admin/librarian）
-          <select value={actorUserId} onChange={(e) => setActorUserId(e.target.value)} disabled={loadingUsers}>
-            <option value="">（請選擇）</option>
-            {actorCandidates.map((u) => (
-              <option key={u.id} value={u.id}>
-                {u.name} ({u.role}) · {u.external_id}
-              </option>
-            ))}
-          </select>
-        </label>
-
-        {loadingUsers ? <p className="muted">載入可用操作者中…</p> : null}
+        <p className="muted">
+          actor_user_id（操作者）已鎖定為：<code>{session.user.id}</code>（{session.user.name} /{' '}
+          {session.user.role}）
+        </p>
 
         <div style={{ display: 'grid', gap: 12, marginTop: 12 }}>
           <label>
@@ -382,4 +366,3 @@ export default function HoldsMaintenancePage({ params }: { params: { orgId: stri
     </div>
   );
 }
-

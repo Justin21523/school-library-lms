@@ -13,9 +13,10 @@
  * - POST /api/v1/orgs/:orgId/holds/:holdId/cancel
  * - POST /api/v1/orgs/:orgId/holds/:holdId/fulfill
  *
- * 重要：MVP 尚未做登入（auth）
- * - 我們用 actor_user_id 代表「誰在操作」（admin/librarian）
- * - 這樣 API 才能寫 audit_events，並在資料上保留最小可追溯性
+ * Auth/權限（重要）：
+ * - Web Console（館員後台）現在已導入 staff login（Bearer token）
+ * - actor_user_id 由登入者本人推導（session.user.id），不再提供下拉選擇（避免冒用）
+ * - API 端 StaffAuthGuard 會保護 staff 端點（例如 fulfill），並驗證 actor_user_id 必須等於 token.sub
  */
 
 'use client';
@@ -24,21 +25,16 @@ import { useEffect, useMemo, useState } from 'react';
 
 import Link from 'next/link';
 
-import type { FulfillHoldResult, HoldStatus, HoldWithDetails, Location, User } from '../../../lib/api';
+import type { FulfillHoldResult, HoldStatus, HoldWithDetails, Location } from '../../../lib/api';
 import {
   cancelHold,
   createHold,
   fulfillHold,
   listHolds,
   listLocations,
-  listUsers,
 } from '../../../lib/api';
 import { formatErrorMessage } from '../../../lib/error';
-
-// MVP 的「可操作 RBAC」：館員操作的 actor 只能是 admin/librarian，且必須是 active。
-function isActorCandidate(user: User) {
-  return user.status === 'active' && (user.role === 'admin' || user.role === 'librarian');
-}
+import { useStaffSession } from '../../../lib/use-staff-session';
 
 // location 也可能被停用；在「取書地點」下拉選單中，預設只顯示 active。
 function isActiveLocation(location: Location) {
@@ -47,18 +43,16 @@ function isActiveLocation(location: Location) {
 
 export default function HoldsPage({ params }: { params: { orgId: string } }) {
   // ----------------------------
-  // 1) actor（操作者）選擇
+  // 1) staff session（登入者 / 操作者）
   // ----------------------------
 
-  // users：抓 org 下所有 users，讓館員在 UI 選擇 actor_user_id。
-  const [users, setUsers] = useState<User[] | null>(null);
-  const [loadingUsers, setLoadingUsers] = useState(false);
+  // staff login 後的 session：用於
+  // - 自動帶 Authorization: Bearer token（由 api.ts 處理）
+  // - 把 actor_user_id 收斂成「登入者本人」（避免 UI 任意選 actor 冒用）
+  const { ready: sessionReady, session } = useStaffSession(params.orgId);
 
-  // actorUserId：目前選到的操作者（會送到 API，寫入 audit_events）。
-  const [actorUserId, setActorUserId] = useState('');
-
-  // actorCandidates：過濾出可用的館員/管理者。
-  const actorCandidates = useMemo(() => (users ?? []).filter(isActorCandidate), [users]);
+  // actorUserId：寫入 audit_events 的操作者（由登入者本人推導）
+  const actorUserId = session?.user.id ?? '';
 
   // ----------------------------
   // 2) locations（取書地點）資料
@@ -111,30 +105,20 @@ export default function HoldsPage({ params }: { params: { orgId: string } }) {
   const [lastFulfillResult, setLastFulfillResult] = useState<FulfillHoldResult | null>(null);
 
   // ----------------------------
-  // 7) 初次載入：users + locations
+  // 7) 初次載入：locations（取書地點）
   // ----------------------------
 
   useEffect(() => {
+    // 未登入時不抓資料：避免使用者還沒登入就開始做後台操作。
+    if (!sessionReady || !session) return;
+
     async function run() {
-      setLoadingUsers(true);
       setLoadingLocations(true);
       setError(null);
 
       try {
-        // 並行抓取：users（選 actor）+ locations（選取書地點）
-        const [usersResult, locationsResult] = await Promise.all([
-          listUsers(params.orgId),
-          listLocations(params.orgId),
-        ]);
-
-        setUsers(usersResult);
+        const locationsResult = await listLocations(params.orgId);
         setLocations(locationsResult);
-
-        // 若尚未選 actor，就預設選第一個可用館員（提升可用性）。
-        if (!actorUserId) {
-          const firstActor = usersResult.find(isActorCandidate);
-          if (firstActor) setActorUserId(firstActor.id);
-        }
 
         // 建立 hold 的取書地點：若尚未選，就預設第一個 active location。
         if (!createPickupLocationId) {
@@ -142,18 +126,16 @@ export default function HoldsPage({ params }: { params: { orgId: string } }) {
           if (firstLocation) setCreatePickupLocationId(firstLocation.id);
         }
       } catch (e) {
-        setUsers(null);
         setLocations(null);
         setError(formatErrorMessage(e));
       } finally {
-        setLoadingUsers(false);
         setLoadingLocations(false);
       }
     }
 
     void run();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [params.orgId]);
+  }, [params.orgId, sessionReady, session]);
 
   // ----------------------------
   // 8) 查詢：抽成 refreshHolds，讓「初次載入 / 搜尋 / 動作後刷新」重用
@@ -210,9 +192,10 @@ export default function HoldsPage({ params }: { params: { orgId: string } }) {
 
   // 初次載入：先列出 ready holds（最常需要處理的：取書借出）。
   useEffect(() => {
+    if (!sessionReady || !session) return;
     void refreshHolds();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [params.orgId]);
+  }, [params.orgId, sessionReady, session]);
 
   async function onSearch(e: React.FormEvent) {
     e.preventDefault();
@@ -250,9 +233,9 @@ export default function HoldsPage({ params }: { params: { orgId: string } }) {
     setSuccess(null);
     setLastFulfillResult(null);
 
-    // Web Console：建立 hold 需要 actor_user_id（館員/管理者）
+    // Web Console：建立 hold 時我們仍帶 actor_user_id（寫 audit 用），但它由登入者本人推導。
     if (!actorUserId) {
-      setError('請先選擇 actor_user_id（館員/管理者）');
+      setError('缺少 actor_user_id（請先登入）');
       return;
     }
 
@@ -305,7 +288,7 @@ export default function HoldsPage({ params }: { params: { orgId: string } }) {
     setLastFulfillResult(null);
 
     if (!actorUserId) {
-      setError('請先選擇 actor_user_id（館員/管理者）');
+      setError('缺少 actor_user_id（請先登入）');
       return;
     }
 
@@ -331,7 +314,7 @@ export default function HoldsPage({ params }: { params: { orgId: string } }) {
     setLastFulfillResult(null);
 
     if (!actorUserId) {
-      setError('請先選擇 actor_user_id（館員/管理者）');
+      setError('缺少 actor_user_id（請先登入）');
       return;
     }
 
@@ -348,6 +331,31 @@ export default function HoldsPage({ params }: { params: { orgId: string } }) {
     }
   }
 
+  // 登入門檻（放在所有 hooks 之後，避免違反 React hooks 規則）
+  if (!sessionReady) {
+    return (
+      <div className="stack">
+        <section className="panel">
+          <h1 style={{ marginTop: 0 }}>Holds</h1>
+          <p className="muted">載入登入狀態中…</p>
+        </section>
+      </div>
+    );
+  }
+
+  if (!session) {
+    return (
+      <div className="stack">
+        <section className="panel">
+          <h1 style={{ marginTop: 0 }}>Holds</h1>
+          <p className="error">
+            這頁需要 staff 登入才能操作。請先前往 <Link href={`/orgs/${params.orgId}/login`}>/login</Link>。
+          </p>
+        </section>
+      </div>
+    );
+  }
+
   return (
     <div className="stack">
       {/* ---------------------------- */}
@@ -361,7 +369,7 @@ export default function HoldsPage({ params }: { params: { orgId: string } }) {
         </p>
 
         <p className="muted">
-          MVP 尚未實作登入，因此需要由前端提供 <code>actor_user_id</code> 才能寫入 audit_events。
+          本頁屬於 staff 後台：需要先登入取得 Bearer token；actor_user_id 會自動鎖定為「登入者本人」，用於寫入 audit_events。
         </p>
 
         <p className="muted">
@@ -371,23 +379,11 @@ export default function HoldsPage({ params }: { params: { orgId: string } }) {
           追溯處理紀錄。
         </p>
 
-        <label>
-          actor_user_id（操作者：admin/librarian）
-          <select
-            value={actorUserId}
-            onChange={(e) => setActorUserId(e.target.value)}
-            disabled={loadingUsers}
-          >
-            <option value="">（請選擇）</option>
-            {actorCandidates.map((u) => (
-              <option key={u.id} value={u.id}>
-                {u.name} ({u.role}) · {u.external_id}
-              </option>
-            ))}
-          </select>
-        </label>
+        <p className="muted">
+          actor_user_id（操作者）已鎖定為：<code>{session.user.id}</code>（{session.user.name} /{' '}
+          {session.user.role}）
+        </p>
 
-        {loadingUsers ? <p className="muted">載入可用操作者中…</p> : null}
         {loadingLocations ? <p className="muted">載入 locations 中…</p> : null}
         {error ? <p className="error">錯誤：{error}</p> : null}
         {success ? <p className="success">{success}</p> : null}

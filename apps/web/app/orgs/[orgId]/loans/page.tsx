@@ -11,33 +11,31 @@
  *
  * 設計取捨（MVP 版）：
  * - 查詢預設 status=open（最常見）
- * - 續借需要 actor_user_id（目前沒有登入）
+ * - 續借需要 actor_user_id（寫 audit 用），但由登入者本人推導（session.user.id）
  * - renew 以 loan_id 作為目標（因為續借本質是改 loans.due_at）
+ *
+ * Auth/權限（重要）：
+ * - /loans 與 /circulation/renew 都是 staff 端點，受 StaffAuthGuard 保護（需要 Bearer token）
+ * - actor_user_id 不再由下拉選單選擇，避免冒用
  */
 
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 
 import Link from 'next/link';
 
-import type { LoanWithDetails, RenewResult, User } from '../../../lib/api';
-import { listLoans, listUsers, renewLoan } from '../../../lib/api';
+import type { LoanWithDetails, RenewResult } from '../../../lib/api';
+import { listLoans, renewLoan } from '../../../lib/api';
 import { formatErrorMessage } from '../../../lib/error';
-
-// MVP 的「可操作 RBAC」：actor 只能是 admin/librarian，且必須是 active。
-// - 之後若加上登入，可直接由 token 推導 actor，不需要這段選單
-function isActorCandidate(user: User) {
-  return user.status === 'active' && (user.role === 'admin' || user.role === 'librarian');
-}
+import { useStaffSession } from '../../../lib/use-staff-session';
 
 export default function LoansPage({ params }: { params: { orgId: string } }) {
-  // ---- actor 選擇（目前沒有 auth，所以要由使用者指定）----
-  const [users, setUsers] = useState<User[] | null>(null);
-  const [loadingUsers, setLoadingUsers] = useState(false);
-  const [actorUserId, setActorUserId] = useState('');
+  // staff session：/loans 與 /circulation/renew 都受 StaffAuthGuard 保護，因此需先登入。
+  const { ready: sessionReady, session } = useStaffSession(params.orgId);
 
-  const actorCandidates = useMemo(() => (users ?? []).filter(isActorCandidate), [users]);
+  // actorUserId：由登入者本人推導（避免 UI 任意選 actor 冒用）。
+  const actorUserId = session?.user.id ?? '';
 
   // ---- loans 查詢 ----
   const [loans, setLoans] = useState<LoanWithDetails[] | null>(null);
@@ -56,32 +54,6 @@ export default function LoansPage({ params }: { params: { orgId: string } }) {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [lastRenewResult, setLastRenewResult] = useState<RenewResult | null>(null);
-
-  // 讀取 users（供 actor 選擇）
-  useEffect(() => {
-    async function run() {
-      setLoadingUsers(true);
-      setError(null);
-      try {
-        const result = await listUsers(params.orgId);
-        setUsers(result);
-
-        // 若尚未選 actor，就自動選第一個可用館員（提升可用性）。
-        if (!actorUserId) {
-          const first = result.find(isActorCandidate);
-          if (first) setActorUserId(first.id);
-        }
-      } catch (e) {
-        setUsers(null);
-        setError(formatErrorMessage(e));
-      } finally {
-        setLoadingUsers(false);
-      }
-    }
-
-    void run();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [params.orgId]);
 
   async function refreshLoans(overrides?: Partial<{ status: 'open' | 'closed' | 'all' }>) {
     setLoadingLoans(true);
@@ -113,9 +85,10 @@ export default function LoansPage({ params }: { params: { orgId: string } }) {
 
   // 初次載入：列出 open loans（limit=200）
   useEffect(() => {
+    if (!sessionReady || !session) return;
     void refreshLoans();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [params.orgId]);
+  }, [params.orgId, sessionReady, session]);
 
   async function onSearch(e: React.FormEvent) {
     e.preventDefault();
@@ -128,7 +101,7 @@ export default function LoansPage({ params }: { params: { orgId: string } }) {
     setLastRenewResult(null);
 
     if (!actorUserId) {
-      setError('請先選擇 actor_user_id（館員/管理者）');
+      setError('缺少 actor_user_id（請先登入）');
       return;
     }
 
@@ -151,6 +124,31 @@ export default function LoansPage({ params }: { params: { orgId: string } }) {
     }
   }
 
+  // 登入門檻（放在所有 hooks 之後，避免違反 React hooks 規則）
+  if (!sessionReady) {
+    return (
+      <div className="stack">
+        <section className="panel">
+          <h1 style={{ marginTop: 0 }}>Loans</h1>
+          <p className="muted">載入登入狀態中…</p>
+        </section>
+      </div>
+    );
+  }
+
+  if (!session) {
+    return (
+      <div className="stack">
+        <section className="panel">
+          <h1 style={{ marginTop: 0 }}>Loans</h1>
+          <p className="error">
+            這頁需要 staff 登入才能查詢/續借。請先前往 <Link href={`/orgs/${params.orgId}/login`}>/login</Link>。
+          </p>
+        </section>
+      </div>
+    );
+  }
+
   return (
     <div className="stack">
       <section className="panel">
@@ -167,19 +165,11 @@ export default function LoansPage({ params }: { params: { orgId: string } }) {
           <code>loan.purge_history</code> 追溯清理紀錄。
         </p>
 
-        <label>
-          actor_user_id（操作者：admin/librarian）
-          <select value={actorUserId} onChange={(e) => setActorUserId(e.target.value)} disabled={loadingUsers}>
-            <option value="">（請選擇）</option>
-            {actorCandidates.map((u) => (
-              <option key={u.id} value={u.id}>
-                {u.name} ({u.role}) · {u.external_id}
-              </option>
-            ))}
-          </select>
-        </label>
+        <p className="muted">
+          actor_user_id（操作者）已鎖定為：<code>{session.user.id}</code>（{session.user.name} /{' '}
+          {session.user.role}）
+        </p>
 
-        {loadingUsers ? <p className="muted">載入可用操作者中…</p> : null}
         {error ? <p className="error">錯誤：{error}</p> : null}
         {success ? <p className="success">{success}</p> : null}
         {lastRenewResult ? (

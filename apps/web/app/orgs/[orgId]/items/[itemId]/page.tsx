@@ -12,6 +12,10 @@
  * - 查看冊資訊（條碼、索書號、狀態、位置）
  * - 更新冊（改 location、補 notes 等主檔欄位）
  * - 冊異常狀態（lost/repair/withdrawn）：走 action endpoints + 寫 audit_events（可追溯）
+ *
+ * Auth/權限（重要）：
+ * - items 相關端點屬於 staff 後台操作，受 StaffAuthGuard 保護（需要 Bearer token）
+ * - actor_user_id（寫 audit 用）由登入者本人推導（session.user.id），不再提供下拉選擇（避免冒用）
  */
 
 // 需要抓資料與更新表單，因此用 Client Component。
@@ -21,39 +25,35 @@ import { useEffect, useMemo, useState } from 'react';
 
 import Link from 'next/link';
 
-import type { ItemCopy, Location, User } from '../../../../lib/api';
+import type { ItemCopy, Location } from '../../../../lib/api';
 import {
   getItem,
   listLocations,
-  listUsers,
   markItemLost,
   markItemRepair,
   markItemWithdrawn,
   updateItem,
 } from '../../../../lib/api';
 import { formatErrorMessage } from '../../../../lib/error';
-
-// actor 候選人：必須是 active 的 admin/librarian（對齊後端的最小 RBAC）
-function isActorCandidate(user: User) {
-  return user.status === 'active' && (user.role === 'admin' || user.role === 'librarian');
-}
+import { useStaffSession } from '../../../../lib/use-staff-session';
 
 export default function ItemDetailPage({
   params,
 }: {
   params: { orgId: string; itemId: string };
 }) {
+  // staff session：items 端點受 StaffAuthGuard 保護，因此需先登入。
+  const { ready: sessionReady, session } = useStaffSession(params.orgId);
+
+  // actorUserId：由登入者本人推導（用於冊異常狀態動作，寫入 audit_events）
+  const actorUserId = session?.user.id ?? '';
+
   const [item, setItem] = useState<ItemCopy | null>(null);
   const [locations, setLocations] = useState<Location[] | null>(null);
-  const [users, setUsers] = useState<User[] | null>(null);
 
   const [loading, setLoading] = useState(false);
-  const [loadingUsers, setLoadingUsers] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
-
-  // actorUserId：館員/管理者（用於冊異常狀態動作，寫入 audit_events）
-  const [actorUserId, setActorUserId] = useState('');
 
   // ------ 更新表單（checkbox + payload）------
   const [updateBarcode, setUpdateBarcode] = useState(false);
@@ -81,43 +81,32 @@ export default function ItemDetailPage({
   const [marking, setMarking] = useState<'lost' | 'repair' | 'withdrawn' | null>(null);
 
   const locationOptions = useMemo(() => locations ?? [], [locations]);
-  const actorCandidates = useMemo(() => (users ?? []).filter(isActorCandidate), [users]);
 
   async function refreshAll() {
     setLoading(true);
-    setLoadingUsers(true);
     setError(null);
     try {
-      const [itemResult, locationsResult, usersResult] = await Promise.all([
+      const [itemResult, locationsResult] = await Promise.all([
         getItem(params.orgId, params.itemId),
         listLocations(params.orgId),
-        listUsers(params.orgId),
       ]);
 
       setItem(itemResult);
       setLocations(locationsResult);
-      setUsers(usersResult);
-
-      // 若尚未選 actor，就預設第一個可用館員（提升可用性）。
-      if (!actorUserId) {
-        const first = usersResult.find(isActorCandidate);
-        if (first) setActorUserId(first.id);
-      }
     } catch (e) {
       setItem(null);
       setLocations(null);
-      setUsers(null);
       setError(formatErrorMessage(e));
     } finally {
       setLoading(false);
-      setLoadingUsers(false);
     }
   }
 
   useEffect(() => {
+    if (!sessionReady || !session) return;
     void refreshAll();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [params.orgId, params.itemId]);
+  }, [params.orgId, params.itemId, sessionReady, session]);
 
   // item 載入後，把目前值塞進表單（但不自動勾選更新）。
   useEffect(() => {
@@ -215,7 +204,7 @@ export default function ItemDetailPage({
 
     // 這些動作必須帶 actor_user_id（館員/管理者），後端才允許並寫 audit
     if (!actorUserId) {
-      setError('請先選擇 actor_user_id（館員/管理者）');
+      setError('缺少 actor_user_id（請先登入）');
       return;
     }
 
@@ -238,6 +227,32 @@ export default function ItemDetailPage({
     }
   }
 
+  // 登入門檻（放在所有 hooks 之後，避免違反 React hooks 規則）
+  if (!sessionReady) {
+    return (
+      <div className="stack">
+        <section className="panel">
+          <h1 style={{ marginTop: 0 }}>Item Detail</h1>
+          <p className="muted">載入登入狀態中…</p>
+        </section>
+      </div>
+    );
+  }
+
+  if (!session) {
+    return (
+      <div className="stack">
+        <section className="panel">
+          <h1 style={{ marginTop: 0 }}>Item Detail</h1>
+          <p className="error">
+            這頁需要 staff 登入才能查看/操作 item。請先前往{' '}
+            <Link href={`/orgs/${params.orgId}/login`}>/login</Link>。
+          </p>
+        </section>
+      </div>
+    );
+  }
+
   return (
     <div className="stack">
       <section className="panel">
@@ -256,7 +271,6 @@ export default function ItemDetailPage({
         </div>
 
         {loading ? <p className="muted">載入中…</p> : null}
-        {loadingUsers ? <p className="muted">載入 users（actor）中…</p> : null}
         {error ? <p className="error">錯誤：{error}</p> : null}
         {success ? <p className="success">{success}</p> : null}
 
@@ -286,17 +300,10 @@ export default function ItemDetailPage({
           <code>/orgs/:orgId/audit-events</code> 追溯誰改的。
         </p>
 
-        <label>
-          actor_user_id（操作者：admin/librarian）
-          <select value={actorUserId} onChange={(e) => setActorUserId(e.target.value)} disabled={loadingUsers}>
-            <option value="">（請選擇）</option>
-            {actorCandidates.map((u) => (
-              <option key={u.id} value={u.id}>
-                {u.name} ({u.role}) · {u.external_id}
-              </option>
-            ))}
-          </select>
-        </label>
+        <p className="muted">
+          actor_user_id（操作者）已鎖定為：<code>{session.user.id}</code>（{session.user.name} /{' '}
+          {session.user.role}）
+        </p>
 
         <label>
           note（選填：寫入 audit metadata）

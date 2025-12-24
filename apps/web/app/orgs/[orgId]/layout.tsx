@@ -14,6 +14,8 @@ import type { ReactNode } from 'react';
 
 import Link from 'next/link';
 
+import StaffSessionNav from './staff-session-nav';
+
 export default function OrgLayout({
   children,
   params,
@@ -38,6 +40,11 @@ export default function OrgLayout({
             <Link href="/orgs">回到 org 列表</Link>
           </div>
         </div>
+
+        <hr style={{ border: 0, borderTop: '1px solid var(--border)', margin: '16px 0' }} />
+
+        {/* Staff session 區塊（登入狀態）：用 Client Component 讀 localStorage。 */}
+        <StaffSessionNav orgId={orgId} />
 
         <hr style={{ border: 0, borderTop: '1px solid var(--border)', margin: '16px 0' }} />
 

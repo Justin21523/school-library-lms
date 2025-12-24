@@ -9,6 +9,10 @@
  * - 基本搜尋（MVP：ILIKE + trigram index）
  * - 建立書目（title 必填，其餘選填）
  * - 進入單一書目頁（/orgs/:orgId/bibs/:bibId）以管理冊
+ *
+ * Auth/權限（重要）：
+ * - 本頁屬於 staff 後台；建立書目（POST /bibs）受 StaffAuthGuard 保護
+ * - 此處採「整頁需登入」的簡化策略，避免未登入時表單送出只得到 401
  */
 
 // 需要搜尋/建立表單與動態載入，因此用 Client Component。
@@ -21,6 +25,7 @@ import Link from 'next/link';
 import type { BibliographicRecord, BibliographicRecordWithCounts } from '../../../lib/api';
 import { createBib, listBibs } from '../../../lib/api';
 import { formatErrorMessage } from '../../../lib/error';
+import { useStaffSession } from '../../../lib/use-staff-session';
 
 // 把 textarea 的「一行一個值」轉成 string[]（空白行會被忽略）。
 function parseLines(value: string) {
@@ -32,6 +37,9 @@ function parseLines(value: string) {
 }
 
 export default function BibsPage({ params }: { params: { orgId: string } }) {
+  // staff session：建立書目需要 Bearer token；本頁直接要求先登入。
+  const { ready: sessionReady, session } = useStaffSession(params.orgId);
+
   const [bibs, setBibs] = useState<BibliographicRecordWithCounts[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -69,9 +77,10 @@ export default function BibsPage({ params }: { params: { orgId: string } }) {
 
   // 初次載入：列出最新 200 筆。
   useEffect(() => {
+    if (!sessionReady || !session) return;
     void refresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [params.orgId]);
+  }, [params.orgId, sessionReady, session]);
 
   async function onSearch(e: React.FormEvent) {
     e.preventDefault();
@@ -138,6 +147,32 @@ export default function BibsPage({ params }: { params: { orgId: string } }) {
     } finally {
       setCreating(false);
     }
+  }
+
+  // 登入門檻（放在所有 hooks 之後，避免違反 React hooks 規則）
+  if (!sessionReady) {
+    return (
+      <div className="stack">
+        <section className="panel">
+          <h1 style={{ marginTop: 0 }}>Bibs</h1>
+          <p className="muted">載入登入狀態中…</p>
+        </section>
+      </div>
+    );
+  }
+
+  if (!session) {
+    return (
+      <div className="stack">
+        <section className="panel">
+          <h1 style={{ marginTop: 0 }}>Bibs</h1>
+          <p className="error">
+            這頁需要 staff 登入才能查詢/建立書目。請先前往{' '}
+            <Link href={`/orgs/${params.orgId}/login`}>/login</Link>。
+          </p>
+        </section>
+      </div>
+    );
   }
 
   return (

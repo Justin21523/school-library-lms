@@ -11,8 +11,9 @@
  * 對應 API：
  * - GET /api/v1/orgs/:orgId/reports/ready-holds?actor_user_id=...&as_of=...&pickup_location_id=...&limit=...&format=json|csv
  *
- * MVP 權限策略（沒有 auth）：
- * - 報表可能包含敏感資訊（讀者名單、借閱行為線索），因此要求 actor_user_id（admin/librarian）
+ * Auth/權限（重要）：
+ * - 報表可能包含敏感資訊（讀者名單、借閱行為線索），因此 API 端點受 StaffAuthGuard 保護
+ * - actor_user_id（查詢者）由登入者本人推導（session.user.id），不再提供下拉選擇（避免冒用）
  */
 
 'use client';
@@ -21,14 +22,10 @@ import { useEffect, useMemo, useState } from 'react';
 
 import Link from 'next/link';
 
-import type { Location, ReadyHoldsReportRow, User } from '../../../../lib/api';
-import { downloadReadyHoldsReportCsv, listLocations, listReadyHoldsReport, listUsers } from '../../../../lib/api';
+import type { Location, ReadyHoldsReportRow } from '../../../../lib/api';
+import { downloadReadyHoldsReportCsv, listLocations, listReadyHoldsReport } from '../../../../lib/api';
 import { formatErrorMessage } from '../../../../lib/error';
-
-// actor 候選人：必須是 active 的 admin/librarian（對齊後端 reports 的最小 RBAC）。
-function isActorCandidate(user: User) {
-  return user.status === 'active' && (user.role === 'admin' || user.role === 'librarian');
-}
+import { useStaffSession } from '../../../../lib/use-staff-session';
 
 // location 也可能被停用；報表通常只看 active 即可，但仍提供「全部」選項。
 function isActiveLocation(location: Location) {
@@ -173,14 +170,14 @@ function buildSlipHtml(options: {
 
 export default function ReadyHoldsReportPage({ params }: { params: { orgId: string } }) {
   // ----------------------------
-  // 1) actor（操作者）選擇
+  // 1) staff session（登入者 / 查詢者）
   // ----------------------------
 
-  const [users, setUsers] = useState<User[] | null>(null);
-  const [loadingUsers, setLoadingUsers] = useState(false);
-  const [actorUserId, setActorUserId] = useState('');
+  // reports 端點受 StaffAuthGuard 保護，因此需要先登入。
+  const { ready: sessionReady, session } = useStaffSession(params.orgId);
 
-  const actorCandidates = useMemo(() => (users ?? []).filter(isActorCandidate), [users]);
+  // actorUserId：報表查詢者（actor_user_id），由登入者本人推導。
+  const actorUserId = session?.user.id ?? '';
 
   // ----------------------------
   // 2) locations（取書地點）資料
@@ -217,27 +214,18 @@ export default function ReadyHoldsReportPage({ params }: { params: { orgId: stri
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
-  // 初次載入：抓 users + locations（讓你選 actor 與取書地點）
+  // 初次載入：抓 locations（讓你選取書地點）
   useEffect(() => {
+    // 未登入時不抓資料；避免一進頁面就撞 401/403 造成困惑。
+    if (!sessionReady || !session) return;
+
     async function run() {
-      setLoadingUsers(true);
       setLoadingLocations(true);
       setError(null);
 
       try {
-        const [usersResult, locationsResult] = await Promise.all([
-          listUsers(params.orgId),
-          listLocations(params.orgId),
-        ]);
-
-        setUsers(usersResult);
+        const locationsResult = await listLocations(params.orgId);
         setLocations(locationsResult);
-
-        // 若尚未選 actor，就預設選第一個可用館員（提升可用性）。
-        if (!actorUserId) {
-          const first = usersResult.find(isActorCandidate);
-          if (first) setActorUserId(first.id);
-        }
 
         // 若尚未選取書地點：
         // - 有 active location → 預設第一個（常見情境：學校只有一個取書櫃台/圖書館）
@@ -247,21 +235,20 @@ export default function ReadyHoldsReportPage({ params }: { params: { orgId: stri
           if (firstActive) setPickupLocationId(firstActive.id);
         }
       } catch (e) {
-        setUsers(null);
         setLocations(null);
         setError(formatErrorMessage(e));
       } finally {
-        setLoadingUsers(false);
         setLoadingLocations(false);
       }
     }
 
     void run();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [params.orgId]);
+  }, [params.orgId, sessionReady, session]);
 
   function buildRequestFilters() {
-    if (!actorUserId) throw new Error('請先選擇 actor_user_id（館員/管理者）');
+    // 由於本頁端點受 StaffAuthGuard 保護，未登入不應走到這裡；此檢查是保險用。
+    if (!actorUserId) throw new Error('缺少 actor_user_id（請重新登入）');
 
     // as_of：把本地 datetime-local 轉成 ISO（UTC）
     const asOfIso = fromDateTimeLocalToIso(asOfLocal);
@@ -407,6 +394,32 @@ export default function ReadyHoldsReportPage({ params }: { params: { orgId: stri
     return rows.filter((r) => r.is_expired).length;
   }, [rows]);
 
+  // 登入門檻（放在所有 hooks 之後，避免違反 React hooks 規則）
+  if (!sessionReady) {
+    return (
+      <div className="stack">
+        <section className="panel">
+          <h1 style={{ marginTop: 0 }}>Ready Holds</h1>
+          <p className="muted">載入登入狀態中…</p>
+        </section>
+      </div>
+    );
+  }
+
+  if (!session) {
+    return (
+      <div className="stack">
+        <section className="panel">
+          <h1 style={{ marginTop: 0 }}>Ready Holds</h1>
+          <p className="error">
+            這頁需要 staff 登入才能查詢/下載/列印。請先前往{' '}
+            <Link href={`/orgs/${params.orgId}/login`}>/login</Link>。
+          </p>
+        </section>
+      </div>
+    );
+  }
+
   return (
     <div className="stack">
       <section className="panel">
@@ -428,19 +441,11 @@ export default function ReadyHoldsReportPage({ params }: { params: { orgId: stri
 
         <hr style={{ border: 0, borderTop: '1px solid var(--border)', margin: '16px 0' }} />
 
-        <label>
-          actor_user_id（操作者：admin/librarian）
-          <select value={actorUserId} onChange={(e) => setActorUserId(e.target.value)} disabled={loadingUsers}>
-            <option value="">（請選擇）</option>
-            {actorCandidates.map((u) => (
-              <option key={u.id} value={u.id}>
-                {u.name} ({u.role}) · {u.external_id}
-              </option>
-            ))}
-          </select>
-        </label>
+        <p className="muted">
+          actor_user_id（查詢者）已鎖定為：<code>{session.user.id}</code>（{session.user.name} /{' '}
+          {session.user.role}）
+        </p>
 
-        {loadingUsers ? <p className="muted">載入可用操作者中…</p> : null}
         {loadingLocations ? <p className="muted">載入 locations 中…</p> : null}
         {error ? <p className="error">錯誤：{error}</p> : null}
         {success ? <p className="success">{success}</p> : null}

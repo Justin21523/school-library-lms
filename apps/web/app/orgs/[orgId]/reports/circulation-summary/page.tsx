@@ -8,27 +8,24 @@
  * 對應 API：
  * - GET /api/v1/orgs/:orgId/reports/circulation-summary?actor_user_id=...&from=...&to=...&group_by=day|week|month&format=json|csv
  *
- * MVP 權限策略：
- * - 目前沒有 auth（登入），因此仍要求 actor_user_id（admin/librarian）
+ * Auth/權限（重要）：
+ * - 報表通常含敏感資料，因此 API 端點受 StaffAuthGuard 保護（需要 Bearer token）
+ * - actor_user_id（查詢者）由登入者本人推導（session.user.id），不再提供下拉選擇（避免冒用）
  */
 
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 
 import Link from 'next/link';
 
-import type { CirculationSummaryRow, User } from '../../../../lib/api';
+import type { CirculationSummaryRow } from '../../../../lib/api';
 import {
   downloadCirculationSummaryReportCsv,
   listCirculationSummaryReport,
-  listUsers,
 } from '../../../../lib/api';
 import { formatErrorMessage } from '../../../../lib/error';
-
-function isActorCandidate(user: User) {
-  return user.status === 'active' && (user.role === 'admin' || user.role === 'librarian');
-}
+import { useStaffSession } from '../../../../lib/use-staff-session';
 
 function toDateTimeLocalValue(date: Date) {
   const pad2 = (n: number) => String(n).padStart(2, '0');
@@ -54,14 +51,11 @@ function isoDateForFilename(iso: string) {
 
 export default function CirculationSummaryPage({ params }: { params: { orgId: string } }) {
   // ----------------------------
-  // 1) actor（操作者）選擇
+  // 1) staff session（登入者 / 查詢者）
   // ----------------------------
 
-  const [users, setUsers] = useState<User[] | null>(null);
-  const [loadingUsers, setLoadingUsers] = useState(false);
-  const [actorUserId, setActorUserId] = useState('');
-
-  const actorCandidates = useMemo(() => (users ?? []).filter(isActorCandidate), [users]);
+  const { ready: sessionReady, session } = useStaffSession(params.orgId);
+  const actorUserId = session?.user.id ?? '';
 
   // ----------------------------
   // 2) filters（from/to/group_by）
@@ -87,37 +81,13 @@ export default function CirculationSummaryPage({ params }: { params: { orgId: st
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
-  useEffect(() => {
-    async function run() {
-      setLoadingUsers(true);
-      setError(null);
-      try {
-        const result = await listUsers(params.orgId);
-        setUsers(result);
-
-        if (!actorUserId) {
-          const first = result.find(isActorCandidate);
-          if (first) setActorUserId(first.id);
-        }
-      } catch (e) {
-        setUsers(null);
-        setError(formatErrorMessage(e));
-      } finally {
-        setLoadingUsers(false);
-      }
-    }
-
-    void run();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [params.orgId]);
-
   async function refresh() {
     setLoading(true);
     setError(null);
     setSuccess(null);
 
     try {
-      if (!actorUserId) throw new Error('請先選擇 actor_user_id（館員/管理者）');
+      if (!actorUserId) throw new Error('缺少 actor_user_id（請重新登入）');
 
       const fromIso = fromDateTimeLocalToIso(fromLocal);
       const toIso = fromDateTimeLocalToIso(toLocal);
@@ -153,7 +123,7 @@ export default function CirculationSummaryPage({ params }: { params: { orgId: st
     setSuccess(null);
 
     try {
-      if (!actorUserId) throw new Error('請先選擇 actor_user_id（館員/管理者）');
+      if (!actorUserId) throw new Error('缺少 actor_user_id（請重新登入）');
 
       const fromIso = fromDateTimeLocalToIso(fromLocal);
       const toIso = fromDateTimeLocalToIso(toLocal);
@@ -191,6 +161,32 @@ export default function CirculationSummaryPage({ params }: { params: { orgId: st
     return rows.reduce((sum, r) => sum + r.loan_count, 0);
   }, [rows]);
 
+  // 登入門檻（放在所有 hooks 之後，避免違反 React hooks 規則）
+  if (!sessionReady) {
+    return (
+      <div className="stack">
+        <section className="panel">
+          <h1 style={{ marginTop: 0 }}>Circulation Summary</h1>
+          <p className="muted">載入登入狀態中…</p>
+        </section>
+      </div>
+    );
+  }
+
+  if (!session) {
+    return (
+      <div className="stack">
+        <section className="panel">
+          <h1 style={{ marginTop: 0 }}>Circulation Summary</h1>
+          <p className="error">
+            這頁需要 staff 登入才能查詢/下載。請先前往{' '}
+            <Link href={`/orgs/${params.orgId}/login`}>/login</Link>。
+          </p>
+        </section>
+      </div>
+    );
+  }
+
   function setPresetDays(days: number) {
     const now = new Date();
     const d = new Date();
@@ -218,19 +214,11 @@ export default function CirculationSummaryPage({ params }: { params: { orgId: st
 
         <hr style={{ border: 0, borderTop: '1px solid var(--border)', margin: '16px 0' }} />
 
-        <label>
-          actor_user_id（操作者：admin/librarian）
-          <select value={actorUserId} onChange={(e) => setActorUserId(e.target.value)} disabled={loadingUsers}>
-            <option value="">（請選擇）</option>
-            {actorCandidates.map((u) => (
-              <option key={u.id} value={u.id}>
-                {u.name} ({u.role}) · {u.external_id}
-              </option>
-            ))}
-          </select>
-        </label>
+        <p className="muted">
+          actor_user_id（查詢者）已鎖定為：<code>{session.user.id}</code>（{session.user.name} /{' '}
+          {session.user.role}）
+        </p>
 
-        {loadingUsers ? <p className="muted">載入可用操作者中…</p> : null}
         {error ? <p className="error">錯誤：{error}</p> : null}
         {success ? <p className="success">{success}</p> : null}
       </section>

@@ -13,25 +13,31 @@
  * - 停用/啟用（US-011；寫入 audit_events）
  *
  * 注意：circulation 目前需要 actor_user_id，因此建立 librarian/admin 後才能借還。
+ *
+ * Auth/權限（重要）：
+ * - /users 端點屬於 staff 後台，受 StaffAuthGuard 保護（需要 Bearer token）
+ * - actor_user_id（寫 audit 用）由登入者本人推導（session.user.id），不再提供下拉選擇（避免冒用）
  */
 
 // 需要動態載入、搜尋與建立表單，因此用 Client Component。
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 
 import Link from 'next/link';
 
 import type { User } from '../../../lib/api';
 import { createUser, listUsers, updateUser } from '../../../lib/api';
 import { formatErrorMessage } from '../../../lib/error';
-
-// actor 候選人：必須是 active 的 admin/librarian（對齊後端最小 RBAC）
-function isActorCandidate(user: User) {
-  return user.status === 'active' && (user.role === 'admin' || user.role === 'librarian');
-}
+import { useStaffSession } from '../../../lib/use-staff-session';
 
 export default function UsersPage({ params }: { params: { orgId: string } }) {
+  // staff session：/users 端點受 StaffAuthGuard 保護，因此需先登入。
+  const { ready: sessionReady, session } = useStaffSession(params.orgId);
+
+  // actorUserId：用於停用/啟用（寫 audit），由登入者本人推導。
+  const actorUserId = session?.user.id ?? '';
+
   // users：目前載入到的 user 列表（null 代表尚未載入）。
   const [users, setUsers] = useState<User[] | null>(null);
 
@@ -55,15 +61,8 @@ export default function UsersPage({ params }: { params: { orgId: string } }) {
   const [limit, setLimit] = useState('200');
 
   // ----------------------------
-  // 2) actor（操作者，用於停用/啟用）
+  // 2) 停用/啟用備註（寫入 audit metadata；選填）
   // ----------------------------
-
-  // 這頁「查詢 users」本身不需要 actor（MVP 尚未做 auth）；
-  // 但「停用/啟用」是敏感操作，因此 PATCH 必須帶 actor_user_id（admin/librarian）。
-  const [actorUsers, setActorUsers] = useState<User[] | null>(null);
-  const [loadingActors, setLoadingActors] = useState(false);
-  const [actorUserId, setActorUserId] = useState('');
-  const actorCandidates = useMemo(() => (actorUsers ?? []).filter(isActorCandidate), [actorUsers]);
 
   // 停用/啟用備註（寫入 audit metadata；選填）
   const [actionNote, setActionNote] = useState('');
@@ -74,40 +73,6 @@ export default function UsersPage({ params }: { params: { orgId: string } }) {
   const [role, setRole] = useState<User['role']>('student');
   const [orgUnit, setOrgUnit] = useState('');
   const [creating, setCreating] = useState(false);
-
-  // 初次載入/切換 org：抓 actor 候選人（admin/librarian）
-  // - 這份清單不應該被「role/status filter」影響，否則使用者會卡住無法操作停用/啟用
-  useEffect(() => {
-    async function loadActors() {
-      setLoadingActors(true);
-      setError(null);
-
-      try {
-        // API 的 role filter 一次只能選一個，因此這裡用兩次呼叫取回 admin + librarian
-        const [admins, librarians] = await Promise.all([
-          listUsers(params.orgId, { role: 'admin', status: 'active', limit: 200 }),
-          listUsers(params.orgId, { role: 'librarian', status: 'active', limit: 200 }),
-        ]);
-
-        const merged = [...admins, ...librarians];
-        setActorUsers(merged);
-
-        // 若尚未選 actor，就預設第一個可用館員（提升可用性）
-        if (!actorUserId) {
-          const first = merged.find(isActorCandidate);
-          if (first) setActorUserId(first.id);
-        }
-      } catch (e) {
-        setActorUsers(null);
-        setError(formatErrorMessage(e));
-      } finally {
-        setLoadingActors(false);
-      }
-    }
-
-    void loadActors();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [params.orgId]);
 
   async function refresh() {
     setLoading(true);
@@ -138,9 +103,10 @@ export default function UsersPage({ params }: { params: { orgId: string } }) {
 
   // 初次載入：列出最新 200 筆。
   useEffect(() => {
+    if (!sessionReady || !session) return;
     void refresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [params.orgId]);
+  }, [params.orgId, sessionReady, session]);
 
   async function onSearch(e: React.FormEvent) {
     e.preventDefault();
@@ -200,7 +166,7 @@ export default function UsersPage({ params }: { params: { orgId: string } }) {
     setSuccess(null);
 
     if (!actorUserId) {
-      setError('請先選擇 actor_user_id（館員/管理者）');
+      setError('缺少 actor_user_id（請先登入）');
       return;
     }
 
@@ -226,6 +192,31 @@ export default function UsersPage({ params }: { params: { orgId: string } }) {
     }
   }
 
+  // 登入門檻（放在所有 hooks 之後，避免違反 React hooks 規則）
+  if (!sessionReady) {
+    return (
+      <div className="stack">
+        <section className="panel">
+          <h1 style={{ marginTop: 0 }}>Users</h1>
+          <p className="muted">載入登入狀態中…</p>
+        </section>
+      </div>
+    );
+  }
+
+  if (!session) {
+    return (
+      <div className="stack">
+        <section className="panel">
+          <h1 style={{ marginTop: 0 }}>Users</h1>
+          <p className="error">
+            這頁需要 staff 登入才能管理 users。請先前往 <Link href={`/orgs/${params.orgId}/login`}>/login</Link>。
+          </p>
+        </section>
+      </div>
+    );
+  }
+
   return (
     <div className="stack">
       <section className="panel">
@@ -238,23 +229,10 @@ export default function UsersPage({ params }: { params: { orgId: string } }) {
           批次名冊匯入（US-010）：<Link href={`/orgs/${params.orgId}/users/import`}>Users CSV Import</Link>
         </p>
 
-        {/* actor（用於停用/啟用） */}
-        <label>
-          actor_user_id（停用/啟用用；admin/librarian）
-          <select
-            value={actorUserId}
-            onChange={(e) => setActorUserId(e.target.value)}
-            disabled={loading || loadingActors}
-          >
-            <option value="">（請選擇）</option>
-            {actorCandidates.map((u) => (
-              <option key={u.id} value={u.id}>
-                {u.name} ({u.role}) · {u.external_id}
-              </option>
-            ))}
-          </select>
-        </label>
-        {loadingActors ? <p className="muted">載入可用 actor 中…</p> : null}
+        <p className="muted">
+          actor_user_id（操作者）已鎖定為：<code>{session.user.id}</code>（{session.user.name} /{' '}
+          {session.user.role}）
+        </p>
 
         <label>
           note（選填；寫入 audit metadata）
@@ -395,7 +373,7 @@ export default function UsersPage({ params }: { params: { orgId: string } }) {
                       type="button"
                       onClick={() => void toggleUserStatus(u)}
                       disabled={!actorUserId || loading}
-                      title={!actorUserId ? '請先選擇 actor_user_id（館員/管理者）' : undefined}
+                      title={!actorUserId ? '缺少 actor_user_id（請先登入）' : undefined}
                     >
                       {u.status === 'active' ? '停用' : '啟用'}
                     </button>

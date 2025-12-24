@@ -9,7 +9,14 @@
  * - API 路由以 `/api/v1/...` 為前綴
  * - 錯誤回應多為 `{ error: { code, message, details? } }`
  * - MVP 階段沒有 auth，因此 circulation 需要在 body 傳 `actor_user_id`
+ *
+ * 本專案已開始導入「Staff Auth（Web Console 登入）」：
+ * - Web 端會把 access_token 存在 localStorage（依 orgId 分開）
+ * - API client 會自動帶上 `Authorization: Bearer <token>`
+ * - 後端的 StaffAuthGuard 會要求：actor_user_id 必須等於登入者（避免冒用）
  */
+
+import { getStaffAccessToken } from './staff-session';
 
 // 這些型別是「Web 端看到的 API 回傳形狀」；
 // 目前 API 直接回傳 SQL row，因此欄位是 snake_case（例如 created_at）。
@@ -473,6 +480,20 @@ export type ApiErrorBody = {
   };
 };
 
+// auth：Staff login（最小可用）
+export type StaffLoginResult = {
+  access_token: string;
+  expires_at: string;
+  user: {
+    id: string;
+    organization_id: string;
+    external_id: string;
+    name: string;
+    role: User['role'];
+    status: User['status'];
+  };
+};
+
 /**
  * ApiError：把 HTTP status 與 API 的 error body 綁在一起，方便 UI 顯示。
  */
@@ -553,6 +574,11 @@ async function requestJson<T>(
     headers: { 'content-type': 'application/json' },
   };
 
+  // 2.1) Staff Auth：若該 path 是 org scoped，嘗試自動帶上 Bearer token
+  const orgIdForAuth = extractOrgIdFromApiPath(path);
+  const token = orgIdForAuth ? getStaffAccessToken(orgIdForAuth) : null;
+  if (token) (init.headers as Record<string, string>)['authorization'] = `Bearer ${token}`;
+
   // body 只有在需要時才帶（GET/HEAD 不應帶 body）。
   if (options.body !== undefined) {
     init.body = JSON.stringify(options.body);
@@ -615,6 +641,11 @@ async function requestText(
   // accept：讓後端知道我們想要的格式（例如 text/csv）
   if (options.accept) headers['accept'] = options.accept;
 
+  // Staff Auth：若該 path 是 org scoped，嘗試自動帶上 Bearer token
+  const orgIdForAuth = extractOrgIdFromApiPath(path);
+  const token = orgIdForAuth ? getStaffAccessToken(orgIdForAuth) : null;
+  if (token) headers['authorization'] = `Bearer ${token}`;
+
   // body：若有 body（通常是 POST），才宣告 content-type 並送 JSON
   const init: RequestInit = { method: options.method, headers };
   if (options.body !== undefined) {
@@ -669,6 +700,25 @@ function isApiErrorBody(value: unknown): value is ApiErrorBody {
 }
 
 /**
+ * extractOrgIdFromApiPath：從 `/api/v1/orgs/:orgId/...` 中取出 orgId
+ *
+ * 目的：
+ * - Web Console 的 staff session 是「依 orgId」保存的
+ * - API client 需要知道「這次請求屬於哪個 org」，才能選對 token
+ *
+ * 注意：
+ * - 這裡只做最小解析；若 path 不是 org scoped，就回傳 null
+ */
+function extractOrgIdFromApiPath(path: string) {
+  const prefix = '/api/v1/orgs/';
+  if (!path.startsWith(prefix)) return null;
+
+  const rest = path.slice(prefix.length);
+  const orgId = rest.split('/')[0]?.trim() ?? '';
+  return orgId || null;
+}
+
+/**
  * 對外的 domain functions：讓頁面用「語意化函式」呼叫 API。
  * 這比在每個 page 裡硬寫 URL 更容易維護與重構。
  */
@@ -679,6 +729,40 @@ export async function listOrganizations() {
 
 export async function createOrganization(input: { name: string; code?: string }) {
   return await requestJson<Organization>('/api/v1/orgs', {
+    method: 'POST',
+    body: input,
+  });
+}
+
+// ----------------------------
+// Auth（Staff）
+// ----------------------------
+
+export async function staffLogin(
+  orgId: string,
+  input: { external_id: string; password: string },
+) {
+  return await requestJson<StaffLoginResult>(`/api/v1/orgs/${orgId}/auth/login`, {
+    method: 'POST',
+    body: input,
+  });
+}
+
+export async function setStaffPassword(
+  orgId: string,
+  input: { actor_user_id: string; target_user_id: string; new_password: string; note?: string },
+) {
+  return await requestJson<{ ok: true }>(`/api/v1/orgs/${orgId}/auth/set-password`, {
+    method: 'POST',
+    body: input,
+  });
+}
+
+export async function bootstrapSetStaffPassword(
+  orgId: string,
+  input: { bootstrap_secret: string; target_external_id: string; new_password: string; note?: string },
+) {
+  return await requestJson<{ ok: true }>(`/api/v1/orgs/${orgId}/auth/bootstrap-set-password`, {
     method: 'POST',
     body: input,
   });

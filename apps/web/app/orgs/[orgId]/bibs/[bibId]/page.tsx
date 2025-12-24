@@ -11,6 +11,10 @@
  * - 檢視/更新書目（例如改書名、補 ISBN）
  * - 列出該書目的冊（items）
  * - 在書目底下新增冊（以條碼/索書號/位置）
+ *
+ * Auth/權限（重要）：
+ * - 本頁會讀取 items（/items?bibliographic_id=...），而 items 端點受 StaffAuthGuard 保護
+ * - 因此需要先 staff login（Bearer token）才能正常使用
  */
 
 // 需要抓資料 + 編輯表單 + 新增冊，因此用 Client Component。
@@ -29,6 +33,7 @@ import {
   updateBib,
 } from '../../../../lib/api';
 import { formatErrorMessage } from '../../../../lib/error';
+import { useStaffSession } from '../../../../lib/use-staff-session';
 
 // textarea（每行一個）→ string[]，空白行忽略；回 undefined 代表「沒有值」。
 function parseLines(value: string) {
@@ -40,6 +45,9 @@ function parseLines(value: string) {
 }
 
 export default function BibDetailPage({ params }: { params: { orgId: string; bibId: string } }) {
+  // staff session：本頁需要讀取 items（受 guard 保護），因此需先登入。
+  const { ready: sessionReady, session } = useStaffSession(params.orgId);
+
   // 主要資料：書目 + 該書目的冊 + location 清單（用於新增冊的下拉選單）。
   const [bib, setBib] = useState<BibliographicRecordWithCounts | null>(null);
   const [items, setItems] = useState<ItemCopy[] | null>(null);
@@ -115,9 +123,10 @@ export default function BibDetailPage({ params }: { params: { orgId: string; bib
 
   // 初次載入與路由參數改變時，重新抓資料。
   useEffect(() => {
+    if (!sessionReady || !session) return;
     void refreshAll();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [params.orgId, params.bibId]);
+  }, [params.orgId, params.bibId, sessionReady, session]);
 
   // 當 bib 載入後，把現值填進表單（讓使用者能「從現況出發」編輯）。
   useEffect(() => {
@@ -269,6 +278,32 @@ export default function BibDetailPage({ params }: { params: { orgId: string; bib
     } finally {
       setCreatingItem(false);
     }
+  }
+
+  // 登入門檻（放在所有 hooks 之後，避免違反 React hooks 規則）
+  if (!sessionReady) {
+    return (
+      <div className="stack">
+        <section className="panel">
+          <h1 style={{ marginTop: 0 }}>Bib Detail</h1>
+          <p className="muted">載入登入狀態中…</p>
+        </section>
+      </div>
+    );
+  }
+
+  if (!session) {
+    return (
+      <div className="stack">
+        <section className="panel">
+          <h1 style={{ marginTop: 0 }}>Bib Detail</h1>
+          <p className="error">
+            這頁需要 staff 登入才能查看/管理書目與冊。請先前往{' '}
+            <Link href={`/orgs/${params.orgId}/login`}>/login</Link>。
+          </p>
+        </section>
+      </div>
+    );
   }
 
   return (
