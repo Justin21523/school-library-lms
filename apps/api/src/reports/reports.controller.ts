@@ -24,6 +24,7 @@ import { ZodValidationPipe } from '../common/zod-validation.pipe';
 import { ReportsService } from './reports.service';
 import {
   circulationSummaryReportQuerySchema,
+  inventoryDiffReportQuerySchema,
   overdueReportQuerySchema,
   readyHoldsReportQuerySchema,
   topCirculationReportQuerySchema,
@@ -207,6 +208,48 @@ export class ReportsController {
     }
 
     return rows;
+  }
+
+  /**
+   * Inventory Diff（盤點差異清單）
+   *
+   * GET /api/v1/orgs/:orgId/reports/inventory-diff
+   *
+   * - 以 inventory_session_id 作為「本次盤點」邊界
+   * - 同一端點支援 JSON + CSV（?format=csv）
+   *
+   * 注意：
+   * - JSON 回傳是 { session, summary, missing, unexpected }（方便前端分區顯示）
+   * - CSV 則是把 missing/unexpected 合併成同一張表，並以 diff_type 欄位區分
+   */
+  @Get('inventory-diff')
+  async inventoryDiff(
+    @Param('orgId', new ParseUUIDPipe()) orgId: string,
+    @Query(new ZodValidationPipe(inventoryDiffReportQuerySchema)) query: any,
+    @Res({ passthrough: true }) res: any,
+  ) {
+    const result = await this.reports.getInventoryDiff(orgId, query);
+
+    const format = (query.format ?? 'json') as 'json' | 'csv';
+    if (format === 'csv') {
+      const csv = this.reports.buildInventoryDiffCsv(result);
+
+      const safeDate = new Date().toISOString().slice(0, 10);
+      const sessionSuffix =
+        typeof query.inventory_session_id === 'string' && query.inventory_session_id.trim()
+          ? `-${query.inventory_session_id.slice(0, 8)}`
+          : '';
+
+      res.setHeader('content-type', 'text/csv; charset=utf-8');
+      res.setHeader(
+        'content-disposition',
+        `attachment; filename="inventory-diff-${safeDate}${sessionSuffix}.csv"`,
+      );
+      res.setHeader('cache-control', 'no-store');
+      return csv;
+    }
+
+    return result;
   }
 }
 

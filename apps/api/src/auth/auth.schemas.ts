@@ -35,6 +35,25 @@ export const staffLoginSchema = z.object({
 export type StaffLoginInput = z.infer<typeof staffLoginSchema>;
 
 /**
+ * Patron login（讀者登入）
+ *
+ * MVP 先採與 staff 相同的「external_id + password」：
+ * - external_id：學號/員編
+ * - password：由館員/管理者設定（或未來接 SSO/LDAP）
+ *
+ * 注意：
+ * - 這個 schema 與 staffLoginSchema 形狀相同，但我們仍拆開命名：
+ *   - 方便文件與 API 路由清楚表達「這是讀者端登入」
+ *   - 也方便未來若要導入不同的登入策略（例如 PIN/生日驗證）時能獨立調整
+ */
+export const patronLoginSchema = z.object({
+  external_id: z.string().trim().min(1).max(64),
+  password: nonEmptyStringSchema,
+});
+
+export type PatronLoginInput = z.infer<typeof patronLoginSchema>;
+
+/**
  * 設定/重設密碼（admin 操作）
  *
  * - actor_user_id：操作者（必須是 admin/librarian；實際上 guard 會要求它等於 token user）
@@ -67,4 +86,3 @@ export const bootstrapSetStaffPasswordSchema = z.object({
 });
 
 export type BootstrapSetStaffPasswordInput = z.infer<typeof bootstrapSetStaffPasswordSchema>;
-

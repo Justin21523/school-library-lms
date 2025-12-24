@@ -31,6 +31,7 @@ import type { PoolClient } from 'pg';
 import { DbService } from '../db/db.service';
 import type {
   CirculationSummaryReportQuery,
+  InventoryDiffReportQuery,
   OverdueReportQuery,
   ReadyHoldsReportQuery,
   TopCirculationReportQuery,
@@ -178,6 +179,80 @@ export type ZeroCirculationReportRow = {
 
   // 最後一次借出時間（全期間；NULL 代表從未被借過）
   last_checked_out_at: string | null;
+};
+
+/**
+ * Inventory Diff（盤點差異清單）
+ *
+ * 這份報表的輸出格式刻意分成兩塊：
+ * - missing：在架（available）但未掃到
+ * - unexpected：掃到但系統顯示非在架（status != available 或 location 不一致）
+ *
+ * 原因：
+ * - 現場工作流通常是先找 missing（找不到的書）→ 再處理 unexpected（狀態/位置資料不一致）
+ * - JSON 回傳拆成兩個陣列，前端顯示更直覺
+ * - CSV 下載則會合併成一張表（用 diff_type 欄位區分）
+ */
+export type InventoryDiffSession = {
+  inventory_session_id: string;
+  location_id: string;
+  location_code: string;
+  location_name: string;
+
+  actor_user_id: string;
+  actor_external_id: string;
+  actor_name: string;
+
+  note: string | null;
+  started_at: string;
+  closed_at: string | null;
+};
+
+export type InventoryDiffSummary = {
+  expected_available_count: number;
+  scanned_count: number;
+  missing_count: number;
+  unexpected_count: number;
+};
+
+export type InventoryMissingRow = {
+  item_id: string;
+  item_barcode: string;
+  item_call_number: string;
+  item_status: ItemStatus;
+  item_location_code: string;
+  item_location_name: string;
+  last_inventory_at: string | null;
+  bibliographic_id: string;
+  bibliographic_title: string;
+};
+
+export type InventoryUnexpectedRow = {
+  scan_id: string;
+  scanned_at: string;
+
+  item_id: string;
+  item_barcode: string;
+  item_call_number: string;
+  item_status: ItemStatus;
+  item_location_id: string;
+  item_location_code: string;
+  item_location_name: string;
+  last_inventory_at: string | null;
+
+  bibliographic_id: string;
+  bibliographic_title: string;
+
+  // derived flags：方便前端顯示與 CSV 匯出
+  location_mismatch: boolean;
+  status_unexpected: boolean;
+};
+
+export type InventoryDiffResult = {
+  session: InventoryDiffSession;
+  summary: InventoryDiffSummary;
+  missing: InventoryMissingRow[];
+  unexpected: InventoryUnexpectedRow[];
 };
 
 @Injectable()
@@ -658,6 +733,38 @@ export class ReportsService {
   }
 
   /**
+   * getInventoryDiff：盤點差異清單（JSON/CSV 共同使用的資料來源）
+   *
+   * GET /api/v1/orgs/:orgId/reports/inventory-diff
+   *
+   * 為什麼放在 reports 而不是 inventory module？
+   * - inventory module 管「操作」（開始/掃描/結束）
+   * - reports module 管「輸出」（差異清單/CSV 匯出）
+   * - 這樣能沿用既有的 `?format=csv`、BOM、header 設定等基礎架構
+   */
+  async getInventoryDiff(orgId: string, query: InventoryDiffReportQuery): Promise<InventoryDiffResult> {
+    return await this.db.transaction(async (client) => {
+      // 1) 驗證 actor（館員/管理者）
+      await this.requireStaffActor(client, orgId, query.actor_user_id);
+
+      // 2) 取得盤點 session（作為差異清單的邊界）
+      const session = await this.requireInventorySession(client, orgId, query.inventory_session_id);
+
+      // 3) limit：避免一次拉回過大（預設 5000）
+      const limit = query.limit ?? 5000;
+
+      // 4) summary：提供「掃了多少/缺多少/異常多少」的概覽
+      const summary = await this.computeInventorySessionSummary(client, orgId, session.inventory_session_id);
+
+      // 5) missing / unexpected：差異清單本體
+      const missing = await this.listInventoryMissing(client, orgId, session.inventory_session_id, limit);
+      const unexpected = await this.listInventoryUnexpected(client, orgId, session.inventory_session_id, limit);
+
+      return { session, summary, missing, unexpected };
+    });
+  }
+
+  /**
    * buildOverdueCsv：把逾期清單 rows 轉成 CSV 字串（給 controller 回傳）
    *
    * CSV 欄位順序（建議）：
@@ -848,6 +955,112 @@ export class ReportsService {
     return `\ufeff${[headerLine, ...dataLines].join('\r\n')}\r\n`;
   }
 
+  /**
+   * buildInventoryDiffCsv：把盤點差異清單轉成 CSV
+   *
+   * CSV 的目標是「現場可用」：
+   * - 一張表同時包含 missing 與 unexpected（用 diff_type 區分）
+   * - 帶上 session/盤點地點資訊，方便印出或寄給同事時不會失去上下文
+   */
+  buildInventoryDiffCsv(result: InventoryDiffResult) {
+    // 1) 把兩種差異合併成「同一形狀」的列
+    type DiffCsvRow = {
+      diff_type: 'missing' | 'unexpected';
+
+      item_barcode: string;
+      call_number: string;
+      title: string;
+      item_status: string;
+      item_location_code: string;
+      item_location_name: string;
+      scanned_at: string;
+      last_inventory_at: string;
+
+      // flags（missing 會是空白）
+      location_mismatch: string;
+      status_unexpected: string;
+
+      // session context
+      inventory_session_id: string;
+      inventory_location_code: string;
+      inventory_location_name: string;
+      inventory_started_at: string;
+      inventory_closed_at: string;
+    };
+
+    const baseSession = {
+      inventory_session_id: result.session.inventory_session_id,
+      inventory_location_code: result.session.location_code,
+      inventory_location_name: result.session.location_name,
+      inventory_started_at: result.session.started_at,
+      inventory_closed_at: result.session.closed_at ?? '',
+    };
+
+    const rows: DiffCsvRow[] = [
+      ...result.missing.map((r) => ({
+        diff_type: 'missing' as const,
+        item_barcode: r.item_barcode,
+        call_number: r.item_call_number,
+        title: r.bibliographic_title,
+        item_status: r.item_status,
+        item_location_code: r.item_location_code,
+        item_location_name: r.item_location_name,
+        scanned_at: '',
+        last_inventory_at: r.last_inventory_at ?? '',
+        location_mismatch: '',
+        status_unexpected: '',
+        ...baseSession,
+      })),
+      ...result.unexpected.map((r) => ({
+        diff_type: 'unexpected' as const,
+        item_barcode: r.item_barcode,
+        call_number: r.item_call_number,
+        title: r.bibliographic_title,
+        item_status: r.item_status,
+        item_location_code: r.item_location_code,
+        item_location_name: r.item_location_name,
+        scanned_at: r.scanned_at,
+        last_inventory_at: r.last_inventory_at ?? '',
+        location_mismatch: String(r.location_mismatch),
+        status_unexpected: String(r.status_unexpected),
+        ...baseSession,
+      })),
+    ];
+
+    // 2) header（固定順序，方便 Excel 使用）
+    const headers: Array<{ key: keyof DiffCsvRow; label: string }> = [
+      { key: 'diff_type', label: 'diff_type' },
+      { key: 'item_barcode', label: 'item_barcode' },
+      { key: 'call_number', label: 'call_number' },
+      { key: 'title', label: 'title' },
+      { key: 'item_status', label: 'item_status' },
+      { key: 'item_location_code', label: 'item_location_code' },
+      { key: 'item_location_name', label: 'item_location_name' },
+      { key: 'scanned_at', label: 'scanned_at' },
+      { key: 'last_inventory_at', label: 'last_inventory_at' },
+      { key: 'location_mismatch', label: 'location_mismatch' },
+      { key: 'status_unexpected', label: 'status_unexpected' },
+      { key: 'inventory_session_id', label: 'inventory_session_id' },
+      { key: 'inventory_location_code', label: 'inventory_location_code' },
+      { key: 'inventory_location_name', label: 'inventory_location_name' },
+      { key: 'inventory_started_at', label: 'inventory_started_at' },
+      { key: 'inventory_closed_at', label: 'inventory_closed_at' },
+    ];
+
+    const headerLine = headers.map((h) => escapeCsvCell(h.label)).join(',');
+    const dataLines = rows.map((row) =>
+      headers
+        .map((h) => {
+          const value = row[h.key];
+          return escapeCsvCell(value);
+        })
+        .join(','),
+    );
+
+    // 3) BOM + CRLF：Excel 友善
+    return `\ufeff${[headerLine, ...dataLines].join('\r\n')}\r\n`;
+  }
+
   // ----------------------------
   // helpers
   // ----------------------------
@@ -895,6 +1108,243 @@ export class ReportsService {
     }
 
     return actor;
+  }
+
+  /**
+   * requireInventorySession：取得盤點 session（含 location/actor）
+   *
+   * - 報表以 session_id 作為邊界，因此「session 是否存在」是必要前置條件
+   * - 這裡不做 FOR UPDATE：報表屬於讀取，避免不必要的鎖
+   */
+  private async requireInventorySession(
+    client: PoolClient,
+    orgId: string,
+    sessionId: string,
+  ): Promise<InventoryDiffSession> {
+    const result = await client.query<InventoryDiffSession>(
+      `
+      SELECT
+        s.id AS inventory_session_id,
+        s.location_id,
+        l.code AS location_code,
+        l.name AS location_name,
+        s.actor_user_id,
+        u.external_id AS actor_external_id,
+        u.name AS actor_name,
+        s.note,
+        s.started_at::text,
+        s.closed_at::text
+      FROM inventory_sessions s
+      JOIN locations l
+        ON l.id = s.location_id
+       AND l.organization_id = s.organization_id
+      JOIN users u
+        ON u.id = s.actor_user_id
+       AND u.organization_id = s.organization_id
+      WHERE s.organization_id = $1
+        AND s.id = $2
+      `,
+      [orgId, sessionId],
+    );
+
+    if (result.rowCount === 0) {
+      throw new NotFoundException({
+        error: { code: 'NOT_FOUND', message: 'Inventory session not found' },
+      });
+    }
+
+    return result.rows[0]!;
+  }
+
+  /**
+   * computeInventorySessionSummary：盤點差異摘要
+   *
+   * 這裡的定義需要和 inventory module 的 closeSession 保持一致：
+   * - expected_available_count：session.location 內 status=available 的冊
+   * - scanned_count：該 session 內掃描到的冊數（inventory_scans）
+   * - missing_count：expected 中沒有被掃到的冊數
+   * - unexpected_count：掃到了，但狀態/位置不符合在架期待
+   */
+  private async computeInventorySessionSummary(
+    client: PoolClient,
+    orgId: string,
+    sessionId: string,
+  ): Promise<InventoryDiffSummary> {
+    const result = await client.query<InventoryDiffSummary>(
+      `
+      WITH sess AS (
+        SELECT id, organization_id, location_id
+        FROM inventory_sessions
+        WHERE organization_id = $1
+          AND id = $2
+      ),
+      expected AS (
+        SELECT COUNT(*)::int AS expected_available_count
+        FROM item_copies i
+        JOIN sess s
+          ON s.organization_id = i.organization_id
+         AND s.location_id = i.location_id
+        WHERE i.organization_id = $1
+          AND i.status = 'available'::item_status
+      ),
+      scanned AS (
+        SELECT COUNT(*)::int AS scanned_count
+        FROM inventory_scans sc
+        WHERE sc.organization_id = $1
+          AND sc.session_id = $2
+      ),
+      missing AS (
+        SELECT COUNT(*)::int AS missing_count
+        FROM item_copies i
+        JOIN sess s
+          ON s.organization_id = i.organization_id
+         AND s.location_id = i.location_id
+        WHERE i.organization_id = $1
+          AND i.status = 'available'::item_status
+          AND NOT EXISTS (
+            SELECT 1
+            FROM inventory_scans sc
+            WHERE sc.organization_id = i.organization_id
+              AND sc.session_id = s.id
+              AND sc.item_id = i.id
+          )
+      ),
+      unexpected AS (
+        SELECT COUNT(*)::int AS unexpected_count
+        FROM inventory_scans sc
+        JOIN inventory_sessions s
+          ON s.id = sc.session_id
+         AND s.organization_id = sc.organization_id
+        JOIN item_copies i
+          ON i.id = sc.item_id
+         AND i.organization_id = sc.organization_id
+        WHERE sc.organization_id = $1
+          AND sc.session_id = $2
+          AND (
+            i.status <> 'available'::item_status
+            OR i.location_id <> s.location_id
+          )
+      )
+      SELECT
+        (SELECT expected_available_count FROM expected) AS expected_available_count,
+        (SELECT scanned_count FROM scanned) AS scanned_count,
+        (SELECT missing_count FROM missing) AS missing_count,
+        (SELECT unexpected_count FROM unexpected) AS unexpected_count
+      `,
+      [orgId, sessionId],
+    );
+
+    // 這個 query 理論上永遠會回傳 1 列；若 session 不存在，數值會變成 NULL
+    // - 但 getInventoryDiff 會先 requireInventorySession，因此這裡只做保險檢查
+    const row = result.rows[0];
+    if (!row) {
+      throw new NotFoundException({
+        error: { code: 'NOT_FOUND', message: 'Inventory session not found' },
+      });
+    }
+
+    return row;
+  }
+
+  private async listInventoryMissing(
+    client: PoolClient,
+    orgId: string,
+    sessionId: string,
+    limit: number,
+  ): Promise<InventoryMissingRow[]> {
+    const result = await client.query<InventoryMissingRow>(
+      `
+      SELECT
+        i.id AS item_id,
+        i.barcode AS item_barcode,
+        i.call_number AS item_call_number,
+        i.status AS item_status,
+        loc.code AS item_location_code,
+        loc.name AS item_location_name,
+        i.last_inventory_at::text AS last_inventory_at,
+        b.id AS bibliographic_id,
+        b.title AS bibliographic_title
+      FROM inventory_sessions s
+      JOIN item_copies i
+        ON i.organization_id = s.organization_id
+       AND i.location_id = s.location_id
+      JOIN locations loc
+        ON loc.id = i.location_id
+       AND loc.organization_id = i.organization_id
+      JOIN bibliographic_records b
+        ON b.id = i.bibliographic_id
+       AND b.organization_id = i.organization_id
+      WHERE s.organization_id = $1
+        AND s.id = $2
+        AND i.status = 'available'::item_status
+        AND NOT EXISTS (
+          SELECT 1
+          FROM inventory_scans sc
+          WHERE sc.organization_id = i.organization_id
+            AND sc.session_id = s.id
+            AND sc.item_id = i.id
+        )
+      ORDER BY i.call_number ASC, i.barcode ASC
+      LIMIT $3
+      `,
+      [orgId, sessionId, limit],
+    );
+
+    return result.rows;
+  }
+
+  private async listInventoryUnexpected(
+    client: PoolClient,
+    orgId: string,
+    sessionId: string,
+    limit: number,
+  ): Promise<InventoryUnexpectedRow[]> {
+    const result = await client.query<InventoryUnexpectedRow>(
+      `
+      SELECT
+        sc.id AS scan_id,
+        sc.scanned_at::text AS scanned_at,
+
+        i.id AS item_id,
+        i.barcode AS item_barcode,
+        i.call_number AS item_call_number,
+        i.status AS item_status,
+        i.location_id AS item_location_id,
+        loc.code AS item_location_code,
+        loc.name AS item_location_name,
+        i.last_inventory_at::text AS last_inventory_at,
+
+        b.id AS bibliographic_id,
+        b.title AS bibliographic_title,
+
+        (i.location_id <> s.location_id) AS location_mismatch,
+        (i.status <> 'available'::item_status) AS status_unexpected
+      FROM inventory_scans sc
+      JOIN inventory_sessions s
+        ON s.id = sc.session_id
+       AND s.organization_id = sc.organization_id
+      JOIN item_copies i
+        ON i.id = sc.item_id
+       AND i.organization_id = sc.organization_id
+      JOIN locations loc
+        ON loc.id = i.location_id
+       AND loc.organization_id = i.organization_id
+      JOIN bibliographic_records b
+        ON b.id = i.bibliographic_id
+       AND b.organization_id = i.organization_id
+      WHERE sc.organization_id = $1
+        AND sc.session_id = $2
+        AND (
+          i.status <> 'available'::item_status
+          OR i.location_id <> s.location_id
+        )
+      ORDER BY sc.scanned_at DESC
+      LIMIT $3
+      `,
+      [orgId, sessionId, limit],
+    );
+
+    return result.rows;
   }
 
   /**

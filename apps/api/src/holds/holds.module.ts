@@ -17,6 +17,6 @@ import { HoldsService } from './holds.service';
 @Module({
   controllers: [HoldsController],
   providers: [HoldsService],
+  exports: [HoldsService],
 })
 export class HoldsModule {}
-

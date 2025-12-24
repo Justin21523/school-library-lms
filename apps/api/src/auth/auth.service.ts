@@ -22,12 +22,18 @@ import {
 import * as crypto from 'crypto';
 import type { PoolClient } from 'pg';
 import { DbService } from '../db/db.service';
-import type { BootstrapSetStaffPasswordInput, SetStaffPasswordInput, StaffLoginInput } from './auth.schemas';
+import type {
+  BootstrapSetStaffPasswordInput,
+  PatronLoginInput,
+  SetStaffPasswordInput,
+  StaffLoginInput,
+} from './auth.schemas';
 
 type UserRole = 'admin' | 'librarian' | 'teacher' | 'student' | 'guest';
 type UserStatus = 'active' | 'inactive';
 
 const STAFF_ROLES: UserRole[] = ['admin', 'librarian'];
+const PATRON_ROLES: UserRole[] = ['student', 'teacher'];
 
 type UserRow = {
   id: string;
@@ -68,17 +74,45 @@ export class AuthService {
    * staffLogin：external_id + password → access token
    *
    * 重要：
-   * - 目前只做「Staff（admin/librarian）」登入，因為 Web Console 是 staff 端
-   * - 讀者（student/teacher）登入/SSO 屬於後續擴充
+   * - staff 登入用於 Web Console（後台）
    */
   async staffLogin(orgId: string, input: StaffLoginInput): Promise<StaffLoginResult> {
+    return await this.loginWithRoleAllowlist(orgId, input, STAFF_ROLES, 'staff');
+  }
+
+  /**
+   * patronLogin：external_id + password → access token
+   *
+   * 目的：
+   * - 讓 OPAC（讀者端）可以真正登入，避免「知道 external_id 就能查/取消」的風險
+   * - 目前只允許 student/teacher（對齊 circulation_policies.audience_role）
+   */
+  async patronLogin(orgId: string, input: PatronLoginInput): Promise<StaffLoginResult> {
+    return await this.loginWithRoleAllowlist(orgId, input, PATRON_ROLES, 'patron');
+  }
+
+  /**
+   * loginWithRoleAllowlist：共用登入流程（staff/patron 共用）
+   *
+   * - 這裡刻意回傳與 staffLogin 相同的 shape（access_token + expires_at + user）
+   * - 前端可用不同的 localStorage key 保存（staff session / opac session）
+   */
+  private async loginWithRoleAllowlist(
+    orgId: string,
+    input: { external_id: string; password: string },
+    allowedRoles: UserRole[],
+    purpose: 'staff' | 'patron',
+  ): Promise<StaffLoginResult> {
     return await this.db.transaction(async (client) => {
       const user = await this.requireUserByExternalId(client, orgId, input.external_id);
 
-      // 只有 staff 能登入 Web Console
-      if (!STAFF_ROLES.includes(user.role)) {
+      // 依用途限制可登入的角色（避免 guest 等不該登入者取得 token）
+      if (!allowedRoles.includes(user.role)) {
         throw new ForbiddenException({
-          error: { code: 'FORBIDDEN', message: 'User is not allowed to login as staff' },
+          error: {
+            code: 'FORBIDDEN',
+            message: purpose === 'staff' ? 'User is not allowed to login as staff' : 'User is not allowed to login as patron',
+          },
         });
       }
 
@@ -133,7 +167,7 @@ export class AuthService {
   }
 
   /**
-   * setStaffPassword：由 staff（通常是 admin）替目標 staff 設定/重設密碼
+   * setStaffPassword：由 staff（admin/librarian）替目標使用者設定/重設密碼
    *
    * 設計：
    * - 這是一個「館員/管理者動作」：會寫入 audit_events（action=auth.set_password）
@@ -154,9 +188,14 @@ export class AuthService {
       }
 
       const target = await this.requireUserById(client, orgId, input.target_user_id);
-      if (!STAFF_ROLES.includes(target.role)) {
+      // 允許重設的目標角色（MVP）：
+      // - staff：admin/librarian（後台登入）
+      // - patron：student/teacher（OPAC 登入）
+      // - 不包含 guest：避免給訪客帳號建立密碼（多半沒有必要）
+      const allowedTargets: UserRole[] = [...STAFF_ROLES, ...PATRON_ROLES];
+      if (!allowedTargets.includes(target.role)) {
         throw new ForbiddenException({
-          error: { code: 'FORBIDDEN', message: 'Target user is not staff' },
+          error: { code: 'FORBIDDEN', message: 'Target user role is not allowed to set password' },
         });
       }
 

@@ -16,7 +16,12 @@
 import { Body, Controller, Param, ParseUUIDPipe, Post, UseGuards } from '@nestjs/common';
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
 import { AuthService } from './auth.service';
-import { bootstrapSetStaffPasswordSchema, setStaffPasswordSchema, staffLoginSchema } from './auth.schemas';
+import {
+  bootstrapSetStaffPasswordSchema,
+  patronLoginSchema,
+  setStaffPasswordSchema,
+  staffLoginSchema,
+} from './auth.schemas';
 import { StaffAuthGuard } from './staff-auth.guard';
 
 @Controller('api/v1/orgs/:orgId/auth')
@@ -34,6 +39,19 @@ export class AuthController {
     @Body(new ZodValidationPipe(staffLoginSchema)) body: any,
   ) {
     return await this.auth.staffLogin(orgId, body);
+  }
+
+  /**
+   * Patron login（OPAC / 讀者端登入）
+   *
+   * POST /api/v1/orgs/:orgId/auth/patron-login
+   */
+  @Post('patron-login')
+  async patronLogin(
+    @Param('orgId', new ParseUUIDPipe()) orgId: string,
+    @Body(new ZodValidationPipe(patronLoginSchema)) body: any,
+  ) {
+    return await this.auth.patronLogin(orgId, body);
   }
 
   /**
@@ -69,4 +87,3 @@ export class AuthController {
     return await this.auth.bootstrapSetStaffPassword(orgId, body);
   }
 }
-

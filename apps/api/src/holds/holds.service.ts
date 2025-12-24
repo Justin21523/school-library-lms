@@ -26,6 +26,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import type { PoolClient } from 'pg';
+import { assertBorrowingAllowedByOverdue } from '../common/borrowing-block';
 import { DbService } from '../db/db.service';
 import type {
   CancelHoldInput,
@@ -62,6 +63,7 @@ type PolicyRow = {
   max_holds: number;
   max_renewals: number;
   hold_pickup_days: number;
+  overdue_block_days: number;
 };
 
 type BibRow = { id: string; title: string };
@@ -320,7 +322,10 @@ export class HoldsService {
           });
         }
 
-        // 6) 檢查同時 holds 上限（只計 queued/ready）。
+        // 6) 逾期停權（政策）：若逾期達 X 天，禁止新增預約（避免堆積、也避免繞過 checkout 限制）。
+        await assertBorrowingAllowedByOverdue(client, orgId, borrower.id, policy.overdue_block_days);
+
+        // 7) 檢查同時 holds 上限（只計 queued/ready）。
         const activeHoldCount = await this.countActiveHoldsForUser(client, orgId, borrower.id);
         if (activeHoldCount >= policy.max_holds) {
           throw new ConflictException({
@@ -328,7 +333,7 @@ export class HoldsService {
           });
         }
 
-        // 7) 避免同一書目重複排隊（同 user + bib 的 active hold 只能有一筆）。
+        // 8) 避免同一書目重複排隊（同 user + bib 的 active hold 只能有一筆）。
         const alreadyActive = await this.hasActiveHoldForUserAndBib(
           client,
           orgId,
@@ -341,7 +346,7 @@ export class HoldsService {
           });
         }
 
-        // 8) 建立 hold（預設 queued）。
+        // 9) 建立 hold（預設 queued）。
         const insert = await client.query<HoldRow>(
           `
           INSERT INTO holds (
@@ -370,7 +375,7 @@ export class HoldsService {
 
         const hold = insert.rows[0]!;
 
-        // 9) 盡量把可借冊「立即指派」給隊首 queued hold（公平性）：
+        // 10) 盡量把可借冊「立即指派」給隊首 queued hold（公平性）：
         // - 若這個 bib 已經有更早的 queued holds，那應該先讓更早的拿到冊
         // - 所以我們不是「直接把冊給新建立的 hold」，而是嘗試把冊給「placed_at 最早的 queued」
         await this.tryAssignAvailableItemToNextQueuedHold(
@@ -638,7 +643,10 @@ export class HoldsService {
           });
         }
 
-        // 6) 借閱上限：在建立 loan 前先檢查。
+        // 6) 逾期停權（政策）：若逾期達 X 天，禁止取書借出（因為會建立 loan，屬於新增借閱）。
+        await assertBorrowingAllowedByOverdue(client, orgId, borrower.id, policy.overdue_block_days);
+
+        // 7) 借閱上限：在建立 loan 前先檢查。
         const openLoanCount = await this.countOpenLoansForUser(client, orgId, borrower.id);
         if (openLoanCount >= policy.max_loans) {
           throw new ConflictException({
@@ -646,7 +654,7 @@ export class HoldsService {
           });
         }
 
-        // 7) 建立 loan
+        // 8) 建立 loan
         const loanResult = await client.query<LoanRow>(
           `
           INSERT INTO loans (organization_id, item_id, user_id, due_at)
@@ -657,7 +665,7 @@ export class HoldsService {
         );
         const loan = loanResult.rows[0]!;
 
-        // 8) 更新 item：on_hold → checked_out
+        // 9) 更新 item：on_hold → checked_out
         await client.query(
           `
           UPDATE item_copies
@@ -668,7 +676,7 @@ export class HoldsService {
           [orgId, item.id],
         );
 
-        // 9) 更新 hold：ready → fulfilled
+        // 10) 更新 hold：ready → fulfilled
         await client.query(
           `
           UPDATE holds
@@ -680,7 +688,7 @@ export class HoldsService {
           [orgId, hold.id],
         );
 
-        // 10) 寫 audit：同時記錄 hold.fulfill 與 loan.checkout（方便之後查稽核）
+        // 11) 寫 audit：同時記錄 hold.fulfill 與 loan.checkout（方便之後查稽核）
         await client.query(
           `
           INSERT INTO audit_events (organization_id, actor_user_id, action, entity_type, entity_id, metadata)
@@ -712,7 +720,7 @@ export class HoldsService {
           ],
         );
 
-        // 11) 回傳結果（給 UI 顯示）
+        // 12) 回傳結果（給 UI 顯示）
         return {
           hold_id: hold.id,
           loan_id: loan.id,
@@ -1117,7 +1125,8 @@ export class HoldsService {
         max_loans,
         max_holds,
         max_renewals,
-        hold_pickup_days
+        hold_pickup_days,
+        overdue_block_days
       FROM circulation_policies
       WHERE organization_id = $1
         AND audience_role = $2::user_role

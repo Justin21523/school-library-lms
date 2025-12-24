@@ -29,6 +29,7 @@ type PolicyRow = {
   max_renewals: number;
   max_holds: number;
   hold_pickup_days: number;
+  overdue_block_days: number;
   created_at: string;
   updated_at: string;
 };
@@ -43,7 +44,7 @@ export class PoliciesService {
       `
       SELECT
         id, organization_id, code, name, audience_role,
-        loan_days, max_loans, max_renewals, max_holds, hold_pickup_days,
+        loan_days, max_loans, max_renewals, max_holds, hold_pickup_days, overdue_block_days,
         created_at, updated_at
       FROM circulation_policies
       WHERE organization_id = $1
@@ -61,12 +62,12 @@ export class PoliciesService {
         `
         INSERT INTO circulation_policies (
           organization_id, code, name, audience_role,
-          loan_days, max_loans, max_renewals, max_holds, hold_pickup_days
+          loan_days, max_loans, max_renewals, max_holds, hold_pickup_days, overdue_block_days
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
         RETURNING
           id, organization_id, code, name, audience_role,
-          loan_days, max_loans, max_renewals, max_holds, hold_pickup_days,
+          loan_days, max_loans, max_renewals, max_holds, hold_pickup_days, overdue_block_days,
           created_at, updated_at
         `,
         [
@@ -79,6 +80,7 @@ export class PoliciesService {
           input.max_renewals,
           input.max_holds,
           input.hold_pickup_days,
+          input.overdue_block_days,
         ],
       );
       return result.rows[0]!;

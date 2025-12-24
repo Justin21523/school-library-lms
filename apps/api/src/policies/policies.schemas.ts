@@ -40,6 +40,11 @@ export const createPolicySchema = z.object({
   max_renewals: z.number().int().min(0).max(99),
   max_holds: z.number().int().min(0).max(99),
   hold_pickup_days: z.number().int().min(0).max(99),
+
+  // overdue_block_days：逾期達 X 天後，禁止新增借閱（checkout/renew/hold/fulfill）
+  // - 0 代表不啟用
+  // - 實際判定由後端以「整天數」推導（見 circulation/holds service）
+  overdue_block_days: z.number().int().min(0).max(365),
 });
 
 export type CreatePolicyInput = z.infer<typeof createPolicySchema>;

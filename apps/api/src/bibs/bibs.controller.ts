@@ -24,7 +24,11 @@ import {
 import { StaffAuthGuard } from '../auth/staff-auth.guard';
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
 import { BibsService } from './bibs.service';
-import { createBibliographicSchema, updateBibliographicSchema } from './bibs.schemas';
+import {
+  createBibliographicSchema,
+  importCatalogCsvSchema,
+  updateBibliographicSchema,
+} from './bibs.schemas';
 
 @Controller('api/v1/orgs/:orgId/bibs')
 export class BibsController {
@@ -48,6 +52,23 @@ export class BibsController {
     @Body(new ZodValidationPipe(createBibliographicSchema)) body: any,
   ) {
     return await this.bibs.create(orgId, body);
+  }
+
+  /**
+   * US-022：書目/冊 CSV 匯入（preview/apply）
+   *
+   * POST /api/v1/orgs/:orgId/bibs/import
+   *
+   * - preview：不寫 DB，只回傳 plan/錯誤
+   * - apply：寫 DB + 寫 audit_events
+   */
+  @UseGuards(StaffAuthGuard)
+  @Post('import')
+  async importCatalogCsv(
+    @Param('orgId', new ParseUUIDPipe()) orgId: string,
+    @Body(new ZodValidationPipe(importCatalogCsvSchema)) body: any,
+  ) {
+    return await this.bibs.importCatalogCsv(orgId, body);
   }
 
   @Get(':bibId')

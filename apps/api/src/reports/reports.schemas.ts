@@ -157,3 +157,25 @@ export const zeroCirculationReportQuerySchema = z.object({
 });
 
 export type ZeroCirculationReportQuery = z.infer<typeof zeroCirculationReportQuerySchema>;
+
+/**
+ * Inventory Diff（盤點差異清單）
+ *
+ * 需求（對齊 MVP-SPEC.md 的「盤點」段落）：
+ * - 在某次盤點 session 結束後，產出差異清單：
+ *   1) missing：在架（available）但未掃到
+ *   2) unexpected：掃到但系統顯示非在架（status != available 或 location 不一致）
+ *
+ * 設計：
+ * - inventory_session_id：用 session 作為「本次盤點」的唯一識別（比時間區間更可靠）
+ * - format=csv：沿用 reports 的 JSON + CSV 基礎架構（含 Excel 友善 BOM）
+ * - limit：避免一次回傳過大（預設 5000；若校內館藏更大可再調整/做分頁）
+ */
+export const inventoryDiffReportQuerySchema = z.object({
+  actor_user_id: uuidSchema,
+  inventory_session_id: uuidSchema,
+  limit: intFromStringSchema.optional(),
+  format: reportFormatSchema.optional(),
+});
+
+export type InventoryDiffReportQuery = z.infer<typeof inventoryDiffReportQuerySchema>;

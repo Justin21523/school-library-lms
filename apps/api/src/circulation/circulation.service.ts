@@ -14,6 +14,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import type { PoolClient } from 'pg';
+import { assertBorrowingAllowedByOverdue } from '../common/borrowing-block';
 import { DbService } from '../db/db.service';
 import type { CheckinInput, CheckoutInput, RenewInput } from './circulation.schemas';
 
@@ -50,6 +51,7 @@ type PolicyRow = {
   max_loans: number;
   max_renewals: number;
   hold_pickup_days: number;
+  overdue_block_days: number;
 };
 
 type LoanRow = {
@@ -126,7 +128,11 @@ export class CirculationService {
           });
         }
 
-        // 6) 檢查借閱上限（同時可借 max_loans）。
+        // 6) 逾期停權（政策）：若逾期達 X 天，禁止新增借閱。
+        // - 規則由 loans 推導（不額外存 suspended 狀態），避免資料不一致
+        await assertBorrowingAllowedByOverdue(client, orgId, borrower.id, policy.overdue_block_days);
+
+        // 7) 檢查借閱上限（同時可借 max_loans）。
         const openLoanCount = await this.countOpenLoansForUser(client, orgId, borrower.id);
         if (openLoanCount >= policy.max_loans) {
           throw new ConflictException({
@@ -134,7 +140,7 @@ export class CirculationService {
           });
         }
 
-        // 7) 建立 loan（due_at 使用 DB 的 now() + loan_days）。
+        // 8) 建立 loan（due_at 使用 DB 的 now() + loan_days）。
         const loanResult = await client.query<LoanRow>(
           `
           INSERT INTO loans (organization_id, item_id, user_id, due_at)
@@ -145,7 +151,7 @@ export class CirculationService {
         );
         const loan = loanResult.rows[0]!;
 
-        // 8) 更新冊狀態為 checked_out。
+        // 9) 更新冊狀態為 checked_out。
         await client.query(
           `
           UPDATE item_copies
@@ -155,7 +161,7 @@ export class CirculationService {
           [item.id],
         );
 
-        // 9) 寫入稽核事件（actor_user_id 來自 request）。
+        // 10) 寫入稽核事件（actor_user_id 來自 request）。
         await client.query(
           `
           INSERT INTO audit_events (
@@ -182,7 +188,7 @@ export class CirculationService {
           ],
         );
 
-        // 10) 回傳 checkout 結果（前端用來顯示到期日）。
+        // 11) 回傳 checkout 結果（前端用來顯示到期日）。
         return {
           loan_id: loan.id,
           item_id: loan.item_id,
@@ -404,14 +410,17 @@ export class CirculationService {
           });
         }
 
-        // 7) 檢查續借次數上限：renewed_count < max_renewals 才能續借。
+        // 7) 逾期停權（政策）：若逾期達 X 天，禁止續借（視為延長借閱）。
+        await assertBorrowingAllowedByOverdue(client, orgId, borrower.id, policy.overdue_block_days);
+
+        // 8) 檢查續借次數上限：renewed_count < max_renewals 才能續借。
         if (loan.renewed_count >= policy.max_renewals) {
           throw new ConflictException({
             error: { code: 'RENEW_LIMIT_REACHED', message: 'Loan has reached max renewals' },
           });
         }
 
-        // 8) 若有人排隊（queued hold），通常不允許續借（公平性）。
+        // 9) 若有人排隊（queued hold），通常不允許續借（公平性）。
         //    這裡先做最小規則：只要同書目有 queued hold，就拒絕 renew。
         const hasQueuedHold = await this.hasQueuedHold(
           client,
@@ -428,7 +437,7 @@ export class CirculationService {
           });
         }
 
-        // 9) 更新 loan：延長 due_at + renewed_count +1
+        // 10) 更新 loan：延長 due_at + renewed_count +1
         //    延長策略：從「現在與原 due_at 的較大者」開始加天數（避免提早續借反而縮短期限）。
         const oldDueAt = loan.due_at;
 
@@ -456,7 +465,7 @@ export class CirculationService {
         const newDueAt = updated.rows[0]!.due_at;
         const renewedCount = updated.rows[0]!.renewed_count;
 
-        // 10) 寫入 audit_events：記錄誰把哪一筆 loan 續借、期限如何變動。
+        // 11) 寫入 audit_events：記錄誰把哪一筆 loan 續借、期限如何變動。
         await client.query(
           `
           INSERT INTO audit_events (
@@ -485,7 +494,7 @@ export class CirculationService {
           ],
         );
 
-        // 11) 回傳 renew 結果（前端可用於更新列表與顯示到期日）。
+        // 12) 回傳 renew 結果（前端可用於更新列表與顯示到期日）。
         return {
           loan_id: loan.id,
           item_id: loan.item_id,
@@ -765,7 +774,7 @@ export class CirculationService {
   private async getPolicyForRole(client: PoolClient, orgId: string, role: UserRole) {
     const result = await client.query<PolicyRow>(
       `
-      SELECT id, loan_days, max_loans, max_renewals, hold_pickup_days
+      SELECT id, loan_days, max_loans, max_renewals, hold_pickup_days, overdue_block_days
       FROM circulation_policies
       WHERE organization_id = $1
         AND audience_role = $2::user_role

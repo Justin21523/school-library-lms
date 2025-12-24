@@ -64,3 +64,46 @@ export const updateBibliographicSchema = z.object({
 });
 
 export type UpdateBibliographicInput = z.infer<typeof updateBibliographicSchema>;
+
+// ----------------------------
+// US-022：Catalog CSV Import（書目/冊 批次匯入）
+// ----------------------------
+
+/**
+ * 這個匯入端點的設計沿用 US-010（users/import）的 preview/apply 模式：
+ * - preview：不寫 DB，只回傳「會新增/更新什麼」與錯誤（列號/原因）
+ * - apply：只有在無錯誤時才允許寫入，並寫 audit_events 方便追溯
+ *
+ * 注意：
+ * - 這是「高風險批次寫入」：可能一次改上千筆 item/bib
+ * - 因此必須要求 actor_user_id（staff）並在 service 做 RBAC + audit
+ */
+
+const uuidSchema = z.string().uuid();
+
+// import mode：preview/apply
+export const catalogImportModeSchema = z.enum(['preview', 'apply']);
+
+export const importCatalogCsvSchema = z.object({
+  actor_user_id: uuidSchema,
+  mode: catalogImportModeSchema,
+
+  // csv_text：限制 5MB（避免誤貼巨大檔）
+  csv_text: z.string().min(1).max(5_000_000),
+
+  // default_location_id：當 CSV 沒有 location 欄位時，可用這個作為預設（選填）
+  default_location_id: uuidSchema.optional(),
+
+  // update_existing_items：若 barcode 已存在，是否允許更新（預設 true）
+  update_existing_items: z.boolean().optional(),
+
+  // allow_relink_bibliographic：是否允許「同 barcode 重新指到不同書目」（風險較高，預設 false）
+  allow_relink_bibliographic: z.boolean().optional(),
+
+  // source info：寫入 audit metadata（選填）
+  source_filename: z.string().trim().min(1).max(200).optional(),
+  source_note: z.string().trim().min(1).max(200).optional(),
+});
+
+export type CatalogCsvImportMode = z.infer<typeof catalogImportModeSchema>;
+export type ImportCatalogCsvInput = z.infer<typeof importCatalogCsvSchema>;
