@@ -390,6 +390,19 @@ export type CirculationSummaryRow = {
   loan_count: number;
 };
 
+// reports：US-051 零借閱清單（Zero Circulation）
+export type ZeroCirculationReportRow = {
+  bibliographic_id: string;
+  bibliographic_title: string;
+  isbn: string | null;
+  classification: string | null;
+  published_year: number | null;
+  total_items: number;
+  available_items: number;
+  loan_count_in_range: number;
+  last_checked_out_at: string | null;
+};
+
 // audit：稽核事件查詢
 export type AuditEventRow = {
   // audit_event
@@ -1115,6 +1128,32 @@ export async function downloadOverdueReportCsv(
   },
 ) {
   const result = await requestText(`/api/v1/orgs/${orgId}/reports/overdue`, {
+    method: 'GET',
+    query: { ...filters, format: 'csv' },
+    accept: 'text/csv',
+  });
+
+  return result.text;
+}
+
+export async function listZeroCirculationReport(
+  orgId: string,
+  filters: { actor_user_id: string; from: string; to: string; limit?: number },
+) {
+  return await requestJson<ZeroCirculationReportRow[]>(
+    `/api/v1/orgs/${orgId}/reports/zero-circulation`,
+    {
+      method: 'GET',
+      query: { ...filters, format: 'json' },
+    },
+  );
+}
+
+export async function downloadZeroCirculationReportCsv(
+  orgId: string,
+  filters: { actor_user_id: string; from: string; to: string; limit?: number },
+) {
+  const result = await requestText(`/api/v1/orgs/${orgId}/reports/zero-circulation`, {
     method: 'GET',
     query: { ...filters, format: 'csv' },
     accept: 'text/csv',

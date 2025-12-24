@@ -71,6 +71,9 @@ export default function OrgLayout({
               <Link href={`/orgs/${orgId}/reports/ready-holds`}>Ready Holds</Link>
             </li>
             <li>
+              <Link href={`/orgs/${orgId}/reports/zero-circulation`}>Zero Circulation</Link>
+            </li>
+            <li>
               <Link href={`/orgs/${orgId}/loans`}>Loans</Link>
             </li>
             <li>
