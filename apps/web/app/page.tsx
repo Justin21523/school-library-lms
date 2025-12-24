@@ -45,6 +45,15 @@ export default function HomePage() {
           </p>
           <Link href="/orgs">前往 Organizations</Link>
         </section>
+
+        <section className="panel">
+          <h2 style={{ marginTop: 0 }}>讀者端（OPAC）</h2>
+          <p className="muted">
+            OPAC 提供讀者自助的查詢與預約流程（MVP 目前尚未做登入，因此會以{' '}
+            <code>user_external_id</code> 作為臨時識別）。
+          </p>
+          <Link href="/opac">前往 OPAC</Link>
+        </section>
       </div>
     </main>
   );

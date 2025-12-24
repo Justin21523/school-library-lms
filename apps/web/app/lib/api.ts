@@ -160,6 +160,54 @@ export type RenewResult = {
   renewed_count: number;
 };
 
+// holds（預約/保留）
+// - status 與 db/schema.sql 的 hold_status enum 對齊
+export type HoldStatus = 'queued' | 'ready' | 'cancelled' | 'fulfilled' | 'expired';
+
+// list/create/cancel 會回傳「hold + borrower + bib title + pickup location + assigned item」的組合資料
+// - 這是 API 端直接 join 出來的 row（snake_case）
+export type HoldWithDetails = {
+  // hold
+  id: string;
+  organization_id: string;
+  bibliographic_id: string;
+  user_id: string;
+  pickup_location_id: string;
+  placed_at: string;
+  status: HoldStatus;
+  assigned_item_id: string | null;
+  ready_at: string | null;
+  ready_until: string | null;
+  cancelled_at: string | null;
+  fulfilled_at: string | null;
+
+  // borrower
+  user_external_id: string;
+  user_name: string;
+  user_role: User['role'];
+
+  // bib
+  bibliographic_title: string;
+
+  // pickup location
+  pickup_location_code: string;
+  pickup_location_name: string;
+
+  // assigned item（可能為 NULL）
+  assigned_item_barcode: string | null;
+  assigned_item_status: ItemStatus | null;
+};
+
+// fulfill 的回傳是「動作結果」：成功建立 loan 後，回傳 loan 與 item 的關鍵欄位
+export type FulfillHoldResult = {
+  hold_id: string;
+  loan_id: string;
+  item_id: string;
+  item_barcode: string;
+  user_id: string;
+  due_at: string;
+};
+
 // API 錯誤格式（MVP 版本：以 error 物件包起來）
 export type ApiErrorBody = {
   error: {
@@ -531,6 +579,68 @@ export async function renewLoan(
   input: { loan_id: string; actor_user_id: string },
 ) {
   return await requestJson<RenewResult>(`/api/v1/orgs/${orgId}/circulation/renew`, {
+    method: 'POST',
+    body: input,
+  });
+}
+
+/**
+ * Holds（預約/保留）
+ *
+ * 這組 API 同時支援：
+ * - Web Console（館員）：會傳 actor_user_id（admin/librarian），便於 audit
+ * - OPAC 自助：不傳 actor_user_id（MVP 無登入，後端視為 borrower 本人）
+ */
+
+export async function listHolds(
+  orgId: string,
+  filters: {
+    status?: HoldStatus | 'all';
+    user_external_id?: string;
+    item_barcode?: string;
+    bibliographic_id?: string;
+    pickup_location_id?: string;
+    limit?: number;
+  },
+) {
+  return await requestJson<HoldWithDetails[]>(`/api/v1/orgs/${orgId}/holds`, {
+    method: 'GET',
+    query: filters,
+  });
+}
+
+export async function createHold(
+  orgId: string,
+  input: {
+    bibliographic_id: string;
+    user_external_id: string;
+    pickup_location_id: string;
+    actor_user_id?: string;
+  },
+) {
+  return await requestJson<HoldWithDetails>(`/api/v1/orgs/${orgId}/holds`, {
+    method: 'POST',
+    body: input,
+  });
+}
+
+export async function cancelHold(
+  orgId: string,
+  holdId: string,
+  input: { actor_user_id?: string },
+) {
+  return await requestJson<HoldWithDetails>(`/api/v1/orgs/${orgId}/holds/${holdId}/cancel`, {
+    method: 'POST',
+    body: input,
+  });
+}
+
+export async function fulfillHold(
+  orgId: string,
+  holdId: string,
+  input: { actor_user_id: string },
+) {
+  return await requestJson<FulfillHoldResult>(`/api/v1/orgs/${orgId}/holds/${holdId}/fulfill`, {
     method: 'POST',
     body: input,
   });
