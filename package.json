@@ -15,6 +15,9 @@
     "dev": "concurrently -n web,api \"npm run dev:web\" \"npm run dev:api\"",
     "dev:web": "npm run dev -w @library-system/web",
     "dev:api": "npm run dev -w @library-system/api",
+    "demo:db:seed": "node scripts/demo-db.mjs seed",
+    "demo:db:reset": "node scripts/demo-db.mjs reset",
+    "demo:smoke": "node scripts/demo-smoke.mjs",
     "build": "npm run build --workspaces --if-present",
     "test": "npm run test --workspaces --if-present",
     "lint": "npm run lint --workspaces --if-present"
