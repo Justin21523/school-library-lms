@@ -1,0 +1,47 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck (API)
+        run: npx tsc -p apps/api/tsconfig.json --noEmit --incremental false
+
+      - name: Typecheck (Web)
+        run: npx tsc -p apps/web/tsconfig.json --noEmit --incremental false
+
+      # Demo smoke（E2E-ish）：
+      # - 透過 docker compose 啟動 postgres/redis
+      # - 匯入 schema + demo seed
+      # - 啟動 API（dev mode）
+      # - 跑一輪報表/登入/核心查詢（含 CSV BOM）
+      #
+      # 注意：
+      # - 我們在 CI 不啟動 Web（Next dev）以節省時間，且 smoke 的「資料正確性」主要靠 API 驗證。
+      - name: Demo smoke (API + DB)
+        env:
+          DATABASE_URL: postgresql://library:library@localhost:5432/library_system
+          REDIS_URL: redis://localhost:6379
+        run: node scripts/demo-smoke.mjs --web=skip
+
+      - name: Tear down DB
+        if: always()
+        run: docker compose down -v
+
