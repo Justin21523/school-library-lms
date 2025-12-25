@@ -38,6 +38,7 @@
 - `docs/implementation/0021-us-022-catalog-csv-import.md`
 - `docs/implementation/0022-opac-account.md`
 - `docs/implementation/0023-demo-seed-and-navigation.md`
+- `docs/implementation/0024-demo-smoke-and-ci.md`
 
 ## 註解規範
 - `docs/commenting-guidelines.md`

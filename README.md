@@ -81,6 +81,7 @@ MVP 預設政策已定案（可調）：請見 `MVP-SPEC.md`。
 - US-022 書目/冊 CSV 匯入實作說明：`docs/implementation/0021-us-022-catalog-csv-import.md`
 - OPAC Account（讀者登入 + 我的借閱/我的預約）實作說明：`docs/implementation/0022-opac-account.md`
 - Demo organization + 假資料（seed）+ 導覽入口：`docs/implementation/0023-demo-seed-and-navigation.md`
+- Demo smoke（E2E-ish）+ 一鍵 reset/seed + 最小 CI：`docs/implementation/0024-demo-smoke-and-ci.md`
 - 註解與教學文件規範：`docs/commenting-guidelines.md`
 
 ## 本機開發（從 0 到跑起來）
@@ -107,6 +108,11 @@ Get-Content db\\schema.sql | docker compose exec -T postgres psql -U library -d 
 ### 3.5) （可選）匯入 demo 假資料（讓你立刻測所有面板）
 ```bash
 docker compose exec -T postgres psql -U library -d library_system -f db/seed-demo.sql
+```
+
+你也可以用一鍵腳本（會自動 up DB + 匯入 schema + 匯入 seed）：
+```bash
+npm run demo:db:seed
 ```
 
 ### 4) 啟動開發伺服器（同時跑 web + api）
