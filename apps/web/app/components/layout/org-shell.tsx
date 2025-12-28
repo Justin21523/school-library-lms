@@ -73,6 +73,9 @@ export function OrgShell({ orgId, children }: { orgId: string; children: ReactNo
   // sidebar width：可拖拉調整（resizable）
   const [sidebarWidth, setSidebarWidth] = useState(280);
 
+  // resizing：避免拖拉時出現「動畫延遲感」，也能讓 cursor/user-select 更一致
+  const [resizing, setResizing] = useState(false);
+
   // groups open state：每個 group 可以展開/收合（taxonomy）
   const [groupOpen, setGroupOpen] = useState<GroupOpenState>({});
 
@@ -122,7 +125,11 @@ export function OrgShell({ orgId, children }: { orgId: string; children: ReactNo
   const dragRef = useRef<{ startX: number; startW: number } | null>(null);
   function onResizeStart(e: ReactMouseEvent) {
     if (collapsed) return;
+    e.preventDefault();
     dragRef.current = { startX: e.clientX, startW: sidebarWidth };
+    setResizing(true);
+    document.body.style.userSelect = 'none';
+    document.body.style.cursor = 'col-resize';
     window.addEventListener('mousemove', onResizeMove);
     window.addEventListener('mouseup', onResizeEnd);
   }
@@ -134,6 +141,9 @@ export function OrgShell({ orgId, children }: { orgId: string; children: ReactNo
   }
   function onResizeEnd() {
     dragRef.current = null;
+    setResizing(false);
+    document.body.style.userSelect = '';
+    document.body.style.cursor = '';
     window.removeEventListener('mousemove', onResizeMove);
     window.removeEventListener('mouseup', onResizeEnd);
   }
@@ -143,7 +153,7 @@ export function OrgShell({ orgId, children }: { orgId: string; children: ReactNo
   return (
     <div className="orgShell">
       <aside
-        className={collapsed ? 'sidebar collapsed' : 'sidebar'}
+        className={collapsed ? 'sidebar collapsed' : resizing ? 'sidebar resizing' : 'sidebar'}
         style={
           collapsed
             ? undefined

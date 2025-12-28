@@ -32,6 +32,7 @@
   --danger: #d92d20;
   --success: #039855;
   --overlay: rgba(16, 24, 40, 0.55);
+  --placeholder: rgba(71, 84, 103, 0.78);
 
   /* 互動/狀態色（Light） */
   --focus: rgba(23, 92, 211, 0.35);
@@ -53,12 +54,32 @@
   --shadow-sm: 0 4px 16px rgba(16, 24, 40, 0.08);
   --shadow-md: 0 10px 30px rgba(16, 24, 40, 0.14);
 
+  /* Typography（字體 / 字級 / 行距） */
+  --font-sans: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Noto Sans TC',
+    'PingFang TC', 'Microsoft JhengHei', Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
+  --text-xs: 12px;
+  --text-sm: 13px;
+  --text-md: 15px;
+  --text-lg: 17px;
+  --leading: 1.55;
+
+  /* Motion（動畫/轉場） */
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
+  --t-fast: 140ms;
+  --t-med: 220ms;
+
   color-scheme: light;
+}
+
+html {
+  scroll-behavior: smooth;
 }
 
 /* 跟隨系統：dark mode（當使用者沒有手動指定 data-theme 時） */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme]) {
     --bg: #0b1020;
     --panel: #111a33;
     --panelMuted: rgba(255, 255, 255, 0.05);
@@ -70,6 +91,7 @@
     --danger: #ff6b6b;
     --success: #4cd964;
     --overlay: rgba(0, 0, 0, 0.55);
+    --placeholder: rgba(169, 182, 214, 0.78);
 
     --focus: rgba(123, 177, 255, 0.35);
     --hover: rgba(255, 255, 255, 0.08);
@@ -102,6 +124,7 @@
   --danger: #ff6b6b;
   --success: #4cd964;
   --overlay: rgba(0, 0, 0, 0.55);
+  --placeholder: rgba(169, 182, 214, 0.78);
 
   --focus: rgba(123, 177, 255, 0.35);
   --hover: rgba(255, 255, 255, 0.08);
@@ -123,18 +146,60 @@
  */
 body {
   margin: 0;
-  font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+  font-family: var(--font-sans);
+  font-size: var(--text-md);
+  line-height: var(--leading);
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
   background: var(--bg);
   color: var(--text);
+  transition: background-color var(--t-med) var(--ease-out), color var(--t-med) var(--ease-out);
+}
+
+code,
+pre {
+  font-family: var(--font-mono);
+}
+
+code {
+  font-size: 0.95em;
+  padding: 2px 6px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--panelMuted);
+}
+
+pre {
+  margin: 0;
+  padding: 12px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: var(--panelMuted);
+  overflow: auto;
+  font-size: var(--text-sm);
+  line-height: 1.45;
+}
+
+pre code {
+  padding: 0;
+  border: 0;
+  background: transparent;
 }
 
 /* 讓連結在深色背景下仍清楚可辨。 */
 a {
   color: var(--link);
   text-decoration: none;
+  transition: color var(--t-fast) var(--ease-in-out);
 }
 a:hover {
   text-decoration: underline;
+}
+a:focus-visible {
+  outline: 0;
+  border-radius: 8px;
+  box-shadow: 0 0 0 4px var(--focus);
 }
 
 /* 常用的版面容器：集中內容、留白。 */
@@ -149,8 +214,10 @@ a:hover {
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 16px;
+  padding: 18px;
   box-shadow: var(--shadow-sm);
+  transition: background-color var(--t-med) var(--ease-out), border-color var(--t-med) var(--ease-out),
+    box-shadow var(--t-med) var(--ease-out);
 }
 
 /* 讓 panel 之間有穩定間距。 */
@@ -208,11 +275,14 @@ a:hover {
   box-shadow: var(--shadow-sm);
   display: grid;
   gap: 10px;
+  transition: transform var(--t-med) var(--ease-out), box-shadow var(--t-med) var(--ease-out),
+    border-color var(--t-med) var(--ease-out);
 }
 
 .card:hover {
   border-color: var(--borderStrong);
   box-shadow: var(--shadow-md);
+  transform: translateY(-1px);
 }
 
 .cardTitle {
@@ -247,6 +317,7 @@ a:hover {
   border-radius: 12px;
   overflow: hidden;
   background: var(--panel);
+  transition: border-color var(--t-fast) var(--ease-in-out), background-color var(--t-fast) var(--ease-in-out);
 }
 
 .details > summary {
@@ -259,6 +330,11 @@ a:hover {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+  transition: background-color var(--t-fast) var(--ease-in-out);
+}
+
+.details > summary:hover {
+  background: var(--hover);
 }
 
 .details > summary::-webkit-details-marker {
@@ -283,6 +359,7 @@ a:hover {
   position: sticky;
   top: 0;
   z-index: 50;
+  transition: background-color var(--t-med) var(--ease-out), border-color var(--t-med) var(--ease-out);
 }
 
 .topbarInner {
@@ -371,12 +448,20 @@ a:hover {
   height: calc(100vh - var(--topbar-h) - 32px);
   display: flex;
   flex-direction: column;
+  transition: background-color var(--t-med) var(--ease-out), border-color var(--t-med) var(--ease-out),
+    box-shadow var(--t-med) var(--ease-out), width var(--t-med) var(--ease-out), flex-basis var(--t-med) var(--ease-out);
 }
 
 .sidebar.collapsed {
   flex-basis: 64px;
   width: 64px;
   overflow: visible; /* 讓 tooltip 能顯示在 sidebar 外側 */
+}
+
+.sidebar.resizing {
+  /* 拖拉時關閉 width transition，避免拖曳延遲感 */
+  transition: background-color var(--t-med) var(--ease-out), border-color var(--t-med) var(--ease-out),
+    box-shadow var(--t-med) var(--ease-out);
 }
 
 .sidebarHeader {
@@ -411,6 +496,7 @@ a:hover {
   border-radius: 999px;
   border: 1px solid var(--border);
   background: rgba(255, 255, 255, 0.04);
+  transition: background-color var(--t-fast) var(--ease-in-out), border-color var(--t-fast) var(--ease-in-out);
 }
 
 .navTree {
@@ -436,6 +522,7 @@ a:hover {
   background: transparent;
   color: var(--text);
   text-align: left;
+  font-size: var(--text-sm);
 }
 
 .navGroupHeader:hover {
@@ -454,6 +541,7 @@ a:hover {
   border-left: 1px solid var(--border);
   display: grid;
   gap: 6px;
+  animation: navSlideDown var(--t-med) var(--ease-out);
 }
 
 .navItem {
@@ -465,12 +553,16 @@ a:hover {
   border: 1px solid transparent;
   color: var(--text);
   background: transparent;
+  font-size: var(--text-sm);
+  transition: background-color var(--t-fast) var(--ease-in-out), border-color var(--t-fast) var(--ease-in-out),
+    transform var(--t-fast) var(--ease-in-out);
 }
 
 .navItem:hover {
   background: var(--hover);
   border-color: var(--border);
   text-decoration: none;
+  transform: translateX(1px);
 }
 
 .navItem.active {
@@ -543,6 +635,7 @@ a:hover {
   padding: 8px 10px;
   box-shadow: var(--shadow-md);
   z-index: 200;
+  animation: tooltipIn var(--t-fast) var(--ease-out);
 }
 
 .sidebar.collapsed [data-tooltip]:hover::before {
@@ -603,7 +696,7 @@ a:hover {
 label {
   display: grid;
   gap: 6px;
-  font-size: 14px;
+  font-size: var(--text-sm);
 }
 
 input,
@@ -612,25 +705,56 @@ textarea {
   padding: 10px 12px;
   border-radius: 10px;
   border: 1px solid var(--border);
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--panelMuted);
   color: var(--text);
+  transition: background-color var(--t-fast) var(--ease-in-out), border-color var(--t-fast) var(--ease-in-out),
+    box-shadow var(--t-fast) var(--ease-in-out);
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: var(--placeholder);
 }
 
 button {
   padding: 10px 12px;
   border-radius: 10px;
   border: 1px solid var(--border);
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--panelMuted);
   color: var(--text);
   cursor: pointer;
+  transition: background-color var(--t-fast) var(--ease-in-out), border-color var(--t-fast) var(--ease-in-out),
+    transform var(--t-fast) var(--ease-in-out);
 }
 
 button:hover {
   background: var(--hover);
+  transform: translateY(-1px);
 }
 
 button:active {
   background: var(--active);
+  transform: translateY(0);
+}
+
+/* 避免「功能性按鈕」位移造成 jitter：這些元件的 hover 已有足夠 cue */
+.navGroupHeader:hover,
+.navGroupHeader:active,
+.listRow:hover,
+.listRow:active,
+.menuItem:hover,
+.menuItem:active,
+.btnLink:hover,
+.btnLink:active {
+  transform: none;
+}
+
+button:disabled,
+input:disabled,
+select:disabled,
+textarea:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
 button:focus-visible,
@@ -676,6 +800,7 @@ textarea:focus-visible {
   z-index: 120;
   display: grid;
   gap: 6px;
+  animation: popIn var(--t-med) var(--ease-out);
 }
 
 .menuItem {
@@ -713,6 +838,7 @@ textarea:focus-visible {
   place-items: center;
   z-index: 200;
   padding: 16px;
+  animation: overlayIn var(--t-fast) var(--ease-out);
 }
 
 .modal {
@@ -722,6 +848,7 @@ textarea:focus-visible {
   background: var(--panel);
   box-shadow: var(--shadow-md);
   overflow: hidden;
+  animation: popIn var(--t-med) var(--ease-out);
 }
 
 .modalHeader {
@@ -766,6 +893,57 @@ textarea:focus-visible {
 
 .listRow.active {
   background: var(--sidebar-active);
+}
+
+/* 動畫：小而快、提供 cue，但不干擾操作 */
+@keyframes overlayIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes popIn {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes navSlideDown {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes tooltipIn {
+  from {
+    opacity: 0;
+    transform: translateY(-50%) translateX(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(-50%) translateX(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation: none !important;
+    transition: none !important;
+    scroll-behavior: auto !important;
+  }
 }
 
 @media (max-width: 920px) {
