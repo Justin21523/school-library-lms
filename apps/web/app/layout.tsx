@@ -14,6 +14,8 @@ import type { ReactNode } from 'react';
 // Next.js 的 Metadata 型別：讓你在 TS 下寫 title/description 時有提示與檢查。
 import type { Metadata } from 'next';
 
+import Script from 'next/script';
+
 // 全站共用 CSS（App Router 規則：只能在 layout.tsx 這種「根」層級 import global CSS）。
 import './globals.css';
 
@@ -26,7 +28,28 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     // `lang="zh-Hant"`：標示主要語言為繁體中文（對 SEO/螢幕閱讀器有幫助）。
-    <html lang="zh-Hant">
+    <html lang="zh-Hant" suppressHydrationWarning>
+      <head>
+        {/* theme init：避免 Light/Dark 切換時出現「閃一下」的 FOUC（Flash of Unstyled Content） */}
+        <Script id="theme-init" strategy="beforeInteractive">
+          {`
+(() => {
+  try {
+    const raw = window.localStorage.getItem('ui.theme');
+    const mode = (raw || '').trim();
+    const root = document.documentElement;
+    if (mode === 'light' || mode === 'dark') {
+      root.setAttribute('data-theme', mode);
+    } else {
+      root.removeAttribute('data-theme');
+    }
+  } catch {
+    // localStorage 可能被禁用；忽略即可（會回退到 CSS 的 system theme）
+  }
+})();
+          `}
+        </Script>
+      </head>
       {/* body 的全站樣式在 globals.css，這裡只放 children。 */}
       <body>{children}</body>
     </html>

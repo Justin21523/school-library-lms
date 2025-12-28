@@ -13,26 +13,16 @@
 
 import type { ReactNode } from 'react';
 
-// Link：Next.js 的 client-side navigation（避免整頁 reload）。
-import Link from 'next/link';
+import { ConsoleTopbar } from '../components/layout/console-topbar';
 
 export default function ConsoleLayout({ children }: { children: ReactNode }) {
   return (
     <div>
-      {/* Top bar：提供全站一致的「回到 org 列表」入口。 */}
-      <header className="topbar">
-        <div className="topbarInner">
-          <div className="topbarTitle">Library System Console</div>
-
-          <nav className="topbarNav" aria-label="Console">
-            <Link href="/">首頁</Link>
-            <Link href="/orgs">Organizations</Link>
-          </nav>
-        </div>
-      </header>
+      {/* Top bar：全域導覽 + 查詢 + 快捷跳轉 + theme */}
+      <ConsoleTopbar />
 
       {/* children：路由頁面內容會被插進這裡。 */}
-      <main className="container">{children}</main>
+      <main className="consoleMain">{children}</main>
     </div>
   );
 }
