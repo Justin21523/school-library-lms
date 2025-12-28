@@ -8,6 +8,14 @@ out/
 coverage/
 *.tsbuildinfo
 
+# Playwright（E2E）
+test-results/
+playwright-report/
+
+# Python（seed scripts）
+__pycache__/
+*.pyc
+
 # Logs
 *.log
 npm-debug.log*

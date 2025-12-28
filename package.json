@@ -9,16 +9,34 @@
     "node": ">=20"
   },
   "devDependencies": {
+    "@playwright/test": "1.57.0",
     "concurrently": "^9.2.0"
   },
   "scripts": {
-    "dev": "concurrently -n web,api \"npm run dev:web\" \"npm run dev:api\"",
+    "dev": "npm run build -w @library-system/shared && concurrently -n shared,web,api \"npm run dev:shared\" \"npm run dev:web\" \"npm run dev:api\"",
+    "dev:shared": "npm run dev -w @library-system/shared",
     "dev:web": "npm run dev -w @library-system/web",
     "dev:api": "npm run dev -w @library-system/api",
     "demo:db:seed": "node scripts/demo-db.mjs seed",
     "demo:db:reset": "node scripts/demo-db.mjs reset",
     "demo:smoke": "node scripts/demo-smoke.mjs",
-    "build": "npm run build --workspaces --if-present",
+    "qa:e2e": "node scripts/qa-e2e.mjs",
+    "qa:marc": "npm run build -w @library-system/api && node scripts/qa-marc-roundtrip.cjs",
+    "e2e": "playwright test",
+    "e2e:report": "playwright show-report",
+    "docker:up": "docker compose up -d --build postgres redis api web",
+    "docker:seed": "docker compose --profile demo run --rm seed",
+    "docker:seed:scale": "docker compose --profile scale run --rm seed-scale",
+    "docker:smoke": "docker compose --profile test run --rm smoke",
+    "docker:e2e": "docker compose --profile e2e run --rm e2e",
+    "docker:maintenance": "docker compose --profile maintenance run --rm maintenance",
+    "docker:demo": "npm run docker:up && npm run docker:seed",
+    "docker:scale": "npm run docker:up && npm run docker:seed:scale",
+    "docker:reset": "npm run docker:down:volumes && npm run docker:demo",
+    "docker:test": "npm run docker:reset && npm run docker:smoke",
+    "docker:down": "docker compose down",
+    "docker:down:volumes": "docker compose down -v",
+    "build": "npm run build -w @library-system/shared && npm run build -w @library-system/api && npm run build -w @library-system/web",
     "test": "npm run test --workspaces --if-present",
     "lint": "npm run lint --workspaces --if-present"
   }

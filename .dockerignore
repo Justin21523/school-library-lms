@@ -1,0 +1,24 @@
+.git
+.github
+
+# node / monorepo：避免把 host 的 node_modules 帶進 build context（會拖慢、也可能污染 build）
+node_modules
+**/node_modules
+
+# build outputs
+dist
+**/dist
+.next
+**/.next
+
+# logs / temp
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.DS_Store
+
+# docs / reference exports：Docker 只需要跑 app；文件量大且常變動，排除可加速 build
+docs
+reference-docs
+

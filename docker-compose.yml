@@ -2,19 +2,293 @@ services:
   postgres:
     image: postgres:16
     environment:
-      POSTGRES_USER: library
-      POSTGRES_PASSWORD: library
-      POSTGRES_DB: library_system
+      # 允許用 `.env` 覆蓋（docker compose 會自動讀取 repo root 的 `.env`）
+      POSTGRES_USER: "${POSTGRES_USER:-library}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-library}"
+      POSTGRES_DB: "${POSTGRES_DB:-library_system}"
+    # 若你的機器上 5432 已被其他 PostgreSQL 佔用，可用環境變數改：
+    # - 例如：`POSTGRES_PORT=55432 docker compose up -d postgres`
     ports:
-      - "5432:5432"
+      - "${POSTGRES_PORT:-5432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    # 健康檢查：讓其他服務能用 `depends_on: condition: service_healthy` 等待 DB 真的 ready
+    healthcheck:
+      # 注意：這是在 container 內跑的 shell，所以要用 `$$VAR` 取環境變數（避免被 compose 在外層先展開）
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
 
   redis:
     image: redis:7
+    # 若你的機器上 6379 已被其他 Redis 佔用，可用環境變數改：
+    # - 例如：`REDIS_PORT=6380 docker compose up -d redis`
     ports:
-      - "6379:6379"
+      - "${REDIS_PORT:-6379}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  # API（NestJS）
+  #
+  # - 會在 container 內 build（見 docker/api.Dockerfile）
+  # - 連到同一個 compose network 裡的 postgres/redis（用 service name 當 host）
+  api:
+    build:
+      context: .
+      dockerfile: docker/api.Dockerfile
+    environment:
+      # API 內部 listen 的 port（通常固定 3001；要改 host port 請用 API_HOST_PORT）
+      API_PORT: "${API_PORT:-3001}"
+
+      # 走 compose network：host 用 service name（postgres/redis）
+      DATABASE_URL: "${DOCKER_DATABASE_URL:-postgresql://library:library@postgres:5432/library_system}"
+      # 目前 API 尚未用到 Redis，但先對齊 .env.example（未來 background jobs 會用）
+      REDIS_URL: "${DOCKER_REDIS_URL:-redis://redis:6379}"
+
+      # Auth（開發用，避免每次重啟 token 都失效；正式環境請用強隨機值）
+      AUTH_TOKEN_SECRET: "${AUTH_TOKEN_SECRET:-dev-insecure-secret}"
+      AUTH_BOOTSTRAP_SECRET: "${AUTH_BOOTSTRAP_SECRET:-}"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      # 若你的機器上 3001 已被佔用，可用環境變數改：
+      # - 例如：`API_HOST_PORT=3002 docker compose up -d api`
+      - "${API_HOST_PORT:-3001}:3001"
+    restart: unless-stopped
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://localhost:3001/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  # Web（Next.js）
+  #
+  # 注意：目前前端預設會呼叫 `http://localhost:3001`（見 apps/web/app/lib/api.ts）
+  # - 因此 docker compose 也會把 api:3001 映射到 host 的 3001
+  web:
+    build:
+      context: .
+      dockerfile: docker/web.Dockerfile
+      args:
+        # 重要：NEXT_PUBLIC_* 會在 build 時被打包進前端；要改請重新 build
+        NEXT_PUBLIC_API_BASE_URL: "${NEXT_PUBLIC_API_BASE_URL:-http://localhost:3001}"
+    environment:
+      # NEXT_PUBLIC 會打包進前端；這裡只放「可公開」資訊
+      NEXT_PUBLIC_API_BASE_URL: "${NEXT_PUBLIC_API_BASE_URL:-http://localhost:3001}"
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      # 若你的機器上 3000 已被佔用，可用環境變數改：
+      # - 例如：`WEB_HOST_PORT=3003 docker compose up -d web`
+      - "${WEB_HOST_PORT:-3000}:3000"
+    restart: unless-stopped
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://localhost:3000').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  # Seed（一次性）：把 schema + demo 假資料灌進 DB
+  #
+  # 使用情境：
+  # - 本機 demo：`docker compose --profile demo run --rm seed`
+  # - 端到端驗證：搭配 `smoke` profile 使用（見下方）
+  seed:
+    image: postgres:16
+    profiles: ["demo"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      # 讓 psql 非互動式登入（並允許 `.env` 覆蓋）
+      PGHOST: postgres
+      PGPORT: "5432"
+      PGUSER: "${POSTGRES_USER:-library}"
+      PGDATABASE: "${POSTGRES_DB:-library_system}"
+      PGPASSWORD: "${POSTGRES_PASSWORD:-library}"
+    volumes:
+      - ./db:/db:ro
+    command:
+      - sh
+      - -c
+      - |
+          psql -f /db/schema.sql &&
+          psql -f /db/seed-demo.sql
+    restart: "no"
+
+  # Seed（一次性）：產生「大量假資料」並用 COPY 匯入
+  #
+  # 使用情境：
+  # - UI 完整性驗證：要有大量 users/bibs/items/loans/holds/inventory/audit 才能把頁面跑滿
+  # - 可重複：用固定 seed + 固定 org_code，可隨時重建同一套資料
+  #
+  # 使用方式：
+  # - `docker compose --profile scale run --rm seed-scale`
+  seed-scale:
+    build:
+      context: .
+      dockerfile: docker/seed-scale.Dockerfile
+    profiles: ["scale"]
+    working_dir: /workspace
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      # 讓 psql 非互動式登入（並允許 `.env` 覆蓋）
+      PGHOST: postgres
+      PGPORT: "5432"
+      PGUSER: "${POSTGRES_USER:-library}"
+      PGDATABASE: "${POSTGRES_DB:-library_system}"
+      PGPASSWORD: "${POSTGRES_PASSWORD:-library}"
+
+      # Scale seed（可全部用 `.env` 覆蓋）
+      SCALE_ORG_CODE: "${SCALE_ORG_CODE:-demo-lms-scale}"
+      SCALE_ORG_NAME: "${SCALE_ORG_NAME:-示範國小（大型資料集）}"
+      SCALE_SEED: "${SCALE_SEED:-42}"
+      SCALE_PASSWORD: "${SCALE_PASSWORD:-demo1234}"
+      SCALE_TEXT_PROVIDER: "${SCALE_TEXT_PROVIDER:-rules}"
+      SCALE_STUDENTS: "${SCALE_STUDENTS:-5000}"
+      SCALE_TEACHERS: "${SCALE_TEACHERS:-200}"
+      SCALE_BIBS: "${SCALE_BIBS:-4000}"
+      SCALE_MAX_COPIES_PER_BIB: "${SCALE_MAX_COPIES_PER_BIB:-3}"
+      SCALE_OPEN_LOANS: "${SCALE_OPEN_LOANS:-1500}"
+      SCALE_CLOSED_LOANS: "${SCALE_CLOSED_LOANS:-12000}"
+      SCALE_READY_HOLDS: "${SCALE_READY_HOLDS:-300}"
+      SCALE_QUEUED_HOLDS: "${SCALE_QUEUED_HOLDS:-800}"
+      SCALE_INVENTORY_SESSIONS: "${SCALE_INVENTORY_SESSIONS:-2}"
+      SCALE_SCANS_PER_SESSION: "${SCALE_SCANS_PER_SESSION:-300}"
+      SCALE_AUDIT_EVENTS: "${SCALE_AUDIT_EVENTS:-5000}"
+      SCALE_WORKDIR: "${SCALE_WORKDIR:-/tmp/seed-scale}"
+    volumes:
+      # read-only：seed-scale 只需要讀 schema.sql，輸出寫到 /tmp（容器內）
+      - .:/workspace:ro
+    restart: "no"
+
+  # Smoke（E2E-ish）：在 docker network 內跑一輪 HTTP 層驗證（不啟動 dev server、不重 seed）
+  #
+  # 使用方式：
+  # - 建議：先啟動 api/web → 執行 seed → 再跑 smoke（見 README 的 docker 指令）
+  smoke:
+    image: node:20-bookworm-slim
+    profiles: ["test"]
+    working_dir: /workspace
+    volumes:
+      - .:/workspace:ro
+    depends_on:
+      api:
+        condition: service_healthy
+      web:
+        condition: service_healthy
+    command:
+      - node
+      - scripts/demo-smoke.mjs
+      - --db=skip
+      - --api=skip
+      - --web=skip
+      - --apiBase=http://api:3001
+      - --webBase=http://web:3000
+    restart: "no"
+
+  # E2E（真瀏覽器）：Playwright
+  #
+  # 目標：
+  # - 驗證 Web Console / OPAC 的主要 routes 在「Docker + 大量資料（Scale seed）」下可正常顯示
+  # - 產出 HTML report / JSON report / failure trace（方便追 bug 與改善 UX）
+  #
+  # 使用方式（建議用 npm script 封裝）：
+  # - `npm run qa:e2e`（up + scale seed + e2e + summary）
+  # - 或手動：`docker compose --profile e2e run --rm e2e`
+  e2e:
+    build:
+      context: .
+      dockerfile: docker/e2e.Dockerfile
+    profiles: ["e2e"]
+    working_dir: /workspace
+    depends_on:
+      api:
+        condition: service_healthy
+      web:
+        condition: service_healthy
+    # Playwright/Chromium 在 docker 內常需要較大的 shm；避免頁面多時 crash
+    shm_size: "1gb"
+    # 讓 report/test-results 的檔案不要變成 root-owned（Linux 常見痛點）
+    user: "${E2E_UID:-1000}:${E2E_GID:-1000}"
+    environment:
+      # 讓 Playwright 指向 docker network 內的 web（瀏覽器打到 web container）
+      E2E_WEB_BASE_URL: "http://web:3000"
+
+      # Node 端輔助查 orgId 用（global-setup 會先打 API 找 orgId）
+      E2E_API_BASE_URL: "http://api:3001"
+
+      # 關鍵：把瀏覽器端的 `http://localhost:3001/*` 重寫到 docker network 的 api
+      # - 因為 Web bundle 的 NEXT_PUBLIC_API_BASE_URL 預設是 http://localhost:3001（對 host browser 正確）
+      # - Playwright 在 docker network 內跑時，localhost 會變成 Playwright 容器自己
+      E2E_API_PROXY_TARGET: "http://api:3001"
+
+      # 測試目標（可用 `.env` 覆蓋）
+      E2E_ORG_CODE: "${E2E_ORG_CODE:-demo-lms-scale}"
+      E2E_STAFF_EXTERNAL_ID: "${E2E_STAFF_EXTERNAL_ID:-A0001}"
+      E2E_STAFF_PASSWORD: "${E2E_STAFF_PASSWORD:-demo1234}"
+      E2E_PATRON_EXTERNAL_ID: "${E2E_PATRON_EXTERNAL_ID:-S1130123}"
+      E2E_PATRON_PASSWORD: "${E2E_PATRON_PASSWORD:-demo1234}"
+    volumes:
+      # 只掛載輸出資料夾：
+      # - 避免整個 repo bind mount 蓋掉 image 內的 node_modules（會讓 Playwright runner 找不到依賴）
+      - ./test-results:/workspace/test-results
+      - ./playwright-report:/workspace/playwright-report
+    command: ["npx", "playwright", "test", "--config=playwright.config.ts"]
+    restart: "no"
+
+  # Maintenance（例行作業 runner）
+  #
+  # 目標：
+  # - 把「每日例行」做成可自動化的腳本（目前包含：expire-ready / purge-history）
+  # - 可用 host cron 觸發：`docker compose --profile maintenance run --rm maintenance`
+  #
+  # 注意：
+  # - 這個 runner 會打 API，因此依賴 api container ready
+  # - purge-history 是不可逆刪除，預設只跑 preview（要 apply 請明確設定 env）
+  maintenance:
+    image: node:20-bookworm-slim
+    profiles: ["maintenance"]
+    working_dir: /workspace
+    volumes:
+      - .:/workspace:ro
+    depends_on:
+      api:
+        condition: service_healthy
+    environment:
+      # 在 docker network 內，用 service name 當 host
+      MAINTENANCE_API_BASE_URL: "http://api:3001"
+      MAINTENANCE_ORG_CODE: "${MAINTENANCE_ORG_CODE:-demo-lms-scale}"
+      MAINTENANCE_ADMIN_EXTERNAL_ID: "${MAINTENANCE_ADMIN_EXTERNAL_ID:-A0001}"
+      MAINTENANCE_ADMIN_PASSWORD: "${MAINTENANCE_ADMIN_PASSWORD:-demo1234}"
+
+      MAINTENANCE_EXPIRE_READY_MODE: "${MAINTENANCE_EXPIRE_READY_MODE:-apply}"
+      MAINTENANCE_EXPIRE_READY_LIMIT: "${MAINTENANCE_EXPIRE_READY_LIMIT:-200}"
+
+      MAINTENANCE_PURGE_HISTORY_MODE: "${MAINTENANCE_PURGE_HISTORY_MODE:-preview}"
+      MAINTENANCE_PURGE_HISTORY_RETENTION_DAYS: "${MAINTENANCE_PURGE_HISTORY_RETENTION_DAYS:-365}"
+      MAINTENANCE_PURGE_HISTORY_LIMIT: "${MAINTENANCE_PURGE_HISTORY_LIMIT:-500}"
+      MAINTENANCE_PURGE_HISTORY_INCLUDE_AUDIT_EVENTS: "${MAINTENANCE_PURGE_HISTORY_INCLUDE_AUDIT_EVENTS:-false}"
+    command: ["node", "scripts/maintenance-daily.mjs"]
+    restart: "no"
 
 volumes:
   postgres_data:
-

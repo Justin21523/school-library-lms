@@ -177,10 +177,13 @@ try {
   console.log(`[demo-smoke] ✅ patron login：${patronLogin.user.external_id} (${patronLogin.user.role})`);
 
   // 4.5 loans（open loans 必須有：逾期 + 可續借）
-  const loans = await fetchJson(`${apiBase}/api/v1/orgs/${orgId}/loans?status=open&limit=200`, {
+  const loansPage = await fetchJson(`${apiBase}/api/v1/orgs/${orgId}/loans?status=open&limit=200`, {
     headers: { authorization: `Bearer ${staffToken}` },
   });
-  assert(Array.isArray(loans), 'loans list must be an array');
+  assert(loansPage && typeof loansPage === 'object', 'loans list must be an object (cursor page)');
+  assert(Array.isArray(loansPage.items), 'loans list must include items[]');
+
+  const loans = loansPage.items;
   assert(loans.length >= 2, 'seed should include at least 2 open loans');
 
   const overdueLoan = loans.find((l) => l?.item_barcode === 'DEMO-HP-0002') ?? null;
@@ -190,14 +193,32 @@ try {
   assert(renewLoan, 'seed must include renewable loan for DEMO-REN-0001');
 
   // 4.6 renew：用 staff token + actor_user_id（必須等於 token.sub）
-  const renewResult = await fetchJson(`${apiBase}/api/v1/orgs/${orgId}/circulation/renew`, {
+  //
+  // 注意：renew 會「改變資料狀態」（renewed_count +1）。
+  // - 若你重複跑 smoke 而不 reset DB，可能會遇到 409 RENEW_LIMIT_REACHED。
+  // - 這裡把它視為「合理且可接受」的狀態，讓 smoke 可重複執行（idempotent-ish）。
+  const renewUrl = `${apiBase}/api/v1/orgs/${orgId}/circulation/renew`;
+  const renewRes = await fetch(renewUrl, {
     method: 'POST',
-    headers: { authorization: `Bearer ${staffToken}` },
-    body: { loan_id: renewLoan.id, actor_user_id: staffUserId },
+    headers: {
+      authorization: `Bearer ${staffToken}`,
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({ loan_id: renewLoan.id, actor_user_id: staffUserId }),
   });
-  assert(renewResult?.loan_id === renewLoan.id, 'renew result must echo loan_id');
-  assert(typeof renewResult?.due_at === 'string', 'renew result must include due_at');
-  console.log('[demo-smoke] ✅ renew OK（loan.renew）');
+
+  const renewText = await renewRes.text();
+  const renewJson = safeJsonParse(renewText);
+
+  if (renewRes.ok) {
+    assert(renewJson?.loan_id === renewLoan.id, 'renew result must echo loan_id');
+    assert(typeof renewJson?.due_at === 'string', 'renew result must include due_at');
+    console.log('[demo-smoke] ✅ renew OK（loan.renew）');
+  } else if (renewRes.status === 409 && renewJson?.error?.code === 'RENEW_LIMIT_REACHED') {
+    console.log('[demo-smoke] ℹ️ renew skipped：RENEW_LIMIT_REACHED（已達續借上限；視為可接受，避免重跑 smoke 失敗）');
+  } else {
+    throw new Error(`HTTP ${renewRes.status} ${renewUrl}\n${renewText}`);
+  }
 
   // 4.7 reports：Overdue / Ready Holds / Top / Summary / Zero / Inventory-diff
   // - reports 全部受 StaffAuthGuard 保護
@@ -304,9 +325,12 @@ try {
   assert(hasUtf8Bom(invCsv), 'inventory-diff CSV must include UTF-8 BOM');
 
   // 4.8 audit-events（seed 讓一進去就看得到）
-  const auditEvents = await fetchJson(`${apiBase}/api/v1/orgs/${orgId}/audit-events?limit=50`, {
+  const auditEvents = await fetchJson(
+    `${apiBase}/api/v1/orgs/${orgId}/audit-events?actor_user_id=${staffUserId}&limit=50`,
+    {
     headers: { authorization: `Bearer ${staffToken}` },
-  });
+    },
+  );
   assert(Array.isArray(auditEvents), 'audit-events must be an array');
   assert(auditEvents.length >= 1, 'seed should include at least 1 audit event');
 
@@ -316,19 +340,177 @@ try {
   });
   assert(me?.external_id === patronExternalId, 'GET /me must return the authenticated patron');
 
-  const myLoans = await fetchJson(`${apiBase}/api/v1/orgs/${orgId}/me/loans?status=open&limit=50`, {
+  const myLoansPage = await fetchJson(`${apiBase}/api/v1/orgs/${orgId}/me/loans?status=open&limit=50`, {
     headers: { authorization: `Bearer ${patronToken}` },
   });
-  assert(Array.isArray(myLoans), 'GET /me/loans must return an array');
-  assert(myLoans.some((l) => l?.item_barcode === 'DEMO-REN-0001'), 'my loans should include DEMO-REN-0001');
+  assert(myLoansPage && typeof myLoansPage === 'object', 'GET /me/loans must return an object (cursor page)');
+  assert(Array.isArray(myLoansPage.items), 'GET /me/loans must include items[]');
+  assert(
+    myLoansPage.items.some((l) => l?.item_barcode === 'DEMO-REN-0001'),
+    'my loans should include DEMO-REN-0001',
+  );
 
-  const myHolds = await fetchJson(`${apiBase}/api/v1/orgs/${orgId}/me/holds?status=ready&limit=50`, {
+  const myHoldsPage = await fetchJson(`${apiBase}/api/v1/orgs/${orgId}/me/holds?status=ready&limit=50`, {
     headers: { authorization: `Bearer ${patronToken}` },
   });
-  assert(Array.isArray(myHolds), 'GET /me/holds must return an array');
-  assert(myHolds.some((h) => h?.assigned_item_barcode === 'DEMO-LP-0001'), 'my holds should include DEMO-LP-0001');
+  assert(myHoldsPage && typeof myHoldsPage === 'object', 'GET /me/holds must return an object (cursor page)');
+  assert(Array.isArray(myHoldsPage.items), 'GET /me/holds must include items[]');
+  assert(
+    myHoldsPage.items.some((h) => h?.assigned_item_barcode === 'DEMO-LP-0001'),
+    'my holds should include DEMO-LP-0001',
+  );
 
-  // 4.10 Web routes（可選）：至少確認「路徑存在」與「基本標題可渲染」
+  // 4.10 Thesaurus（Authority）最小驗證：
+  // - 這一段主要確認：
+  //   1) term detail（BT/NT/RT）shape 正確
+  //   2) related canonical pair：A↔B 只存一筆，反向新增會 conflict
+  //   3) broader cycle prevention 生效（會回 THESAURUS_CYCLE）
+  //   4) expand depth clamp + labels 展開包含預期詞彙
+  //
+  // 注意：
+  // - 這是 smoke-level assertions（不引入測試框架）
+  // - 為避免污染 demo 資料，我們把 vocabulary_code 固定成 qa（便於辨識/清理）
+  const qaVocab = 'qa';
+  const qaKind = 'subject';
+
+  const qaA = await ensureAuthorityTerm({
+    apiBase,
+    orgId,
+    token: staffToken,
+    kind: qaKind,
+    vocabularyCode: qaVocab,
+    preferredLabel: 'QA-THESAURUS-A',
+    variantLabels: ['QA-Alias-A1'],
+  });
+  const qaB = await ensureAuthorityTerm({
+    apiBase,
+    orgId,
+    token: staffToken,
+    kind: qaKind,
+    vocabularyCode: qaVocab,
+    preferredLabel: 'QA-THESAURUS-B',
+  });
+  const qaC = await ensureAuthorityTerm({
+    apiBase,
+    orgId,
+    token: staffToken,
+    kind: qaKind,
+    vocabularyCode: qaVocab,
+    preferredLabel: 'QA-THESAURUS-C',
+  });
+  const qaD = await ensureAuthorityTerm({
+    apiBase,
+    orgId,
+    token: staffToken,
+    kind: qaKind,
+    vocabularyCode: qaVocab,
+    preferredLabel: 'QA-THESAURUS-D',
+  });
+
+  // 4.10.1 建立上下位（混合使用 broader/narrower 兩種視角，確認 mapping 正確）
+  await ensureThesaurusRelation({
+    apiBase,
+    orgId,
+    token: staffToken,
+    termId: qaB.id,
+    kind: 'narrower',
+    targetTermId: qaA.id,
+  }); // A -> B（存成 broader）
+
+  await ensureThesaurusRelation({
+    apiBase,
+    orgId,
+    token: staffToken,
+    termId: qaB.id,
+    kind: 'broader',
+    targetTermId: qaC.id,
+  }); // B -> C（存成 broader）
+
+  // 4.10.2 cycle prevention：嘗試 C -> A 應被拒絕（因為 A 的 broader chain 已含 C）
+  const cycleRes = await fetch(`${apiBase}/api/v1/orgs/${orgId}/authority-terms/${qaC.id}/relations`, {
+    method: 'POST',
+    headers: {
+      authorization: `Bearer ${staffToken}`,
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({ kind: 'broader', target_term_id: qaA.id }),
+  });
+  const cycleText = await cycleRes.text();
+  const cycleJson = safeJsonParse(cycleText);
+  assert(cycleRes.status === 400, `thesaurus cycle must be rejected with 400, got ${cycleRes.status}`);
+  assert(cycleJson?.error?.code === 'THESAURUS_CYCLE', `thesaurus cycle must return THESAURUS_CYCLE, got ${cycleText}`);
+
+  // 4.10.3 term detail：B 的 BT/NT 必須能看見 A/C
+  const detailB = await fetchJson(`${apiBase}/api/v1/orgs/${orgId}/authority-terms/${qaB.id}`, {
+    headers: { authorization: `Bearer ${staffToken}` },
+  });
+  assert(detailB?.term?.preferred_label === qaB.preferred_label, 'authority term detail must echo term');
+  assert(
+    (detailB?.relations?.narrower ?? []).some((x) => x?.term?.preferred_label === qaA.preferred_label),
+    'B should include narrower=A',
+  );
+  assert(
+    (detailB?.relations?.broader ?? []).some((x) => x?.term?.preferred_label === qaC.preferred_label),
+    'B should include broader=C',
+  );
+
+  // 4.10.4 related canonical pair：先加 A RT D，再用 D RT A 反向新增（應 conflict）
+  const detailA1 = await ensureThesaurusRelation({
+    apiBase,
+    orgId,
+    token: staffToken,
+    termId: qaA.id,
+    kind: 'related',
+    targetTermId: qaD.id,
+  });
+  assert(
+    (detailA1?.relations?.related ?? []).some((x) => x?.term?.preferred_label === qaD.preferred_label),
+    'A should include related=D after add',
+  );
+
+  const relatedReverseRes = await fetch(`${apiBase}/api/v1/orgs/${orgId}/authority-terms/${qaD.id}/relations`, {
+    method: 'POST',
+    headers: {
+      authorization: `Bearer ${staffToken}`,
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({ kind: 'related', target_term_id: qaA.id }),
+  });
+  const relatedReverseText = await relatedReverseRes.text();
+  const relatedReverseJson = safeJsonParse(relatedReverseText);
+  assert(relatedReverseRes.status === 409, `related reverse insert must conflict with 409, got ${relatedReverseRes.status}`);
+  assert(
+    relatedReverseJson?.error?.code === 'CONFLICT',
+    `related reverse insert must return CONFLICT, got ${relatedReverseText}`,
+  );
+
+  // 4.10.5 expand：depth clamp（999 → 5）+ labels 需包含 UF/BT/RT
+  const expand = await fetchJson(
+    `${apiBase}/api/v1/orgs/${orgId}/authority-terms/${qaA.id}/expand?include=self,variants,broader,narrower,related&depth=999`,
+    { headers: { authorization: `Bearer ${staffToken}` } },
+  );
+  assert(expand?.depth === 5, `expand depth must be clamped to 5, got ${expand?.depth ?? 'null'}`);
+  const labels = Array.isArray(expand?.labels) ? expand.labels : [];
+  assert(labels.includes(qaA.preferred_label), 'expand labels must include self preferred_label');
+  assert(labels.includes('QA-Alias-A1'), 'expand labels must include variant label');
+  assert(labels.includes(qaB.preferred_label), 'expand labels must include broader term B');
+  assert(labels.includes(qaC.preferred_label), 'expand labels must include broader term C');
+  assert(labels.includes(qaD.preferred_label), 'expand labels must include related term D');
+
+  // 4.10.6 cleanup（可選）：刪掉 A RT D（避免 demo 資料被 QA 關係干擾）
+  const rel = (detailA1?.relations?.related ?? []).find((x) => x?.term?.id === qaD.id) ?? null;
+  if (rel?.relation_id) {
+    const afterDelete = await fetchJson(
+      `${apiBase}/api/v1/orgs/${orgId}/authority-terms/${qaA.id}/relations/${rel.relation_id}`,
+      { method: 'DELETE', headers: { authorization: `Bearer ${staffToken}` } },
+    );
+    assert(
+      !(afterDelete?.relations?.related ?? []).some((x) => x?.term?.id === qaD.id),
+      'related relation should be removed after delete',
+    );
+  }
+
+  // 4.11 Web routes（可選）：至少確認「路徑存在」與「基本標題可渲染」
   if (webMode !== 'skip') {
     const orgsHtml = await fetchText(`${webBase}/orgs`);
     assert(orgsHtml.includes('Organizations'), 'web /orgs should contain page title');
@@ -414,6 +596,87 @@ async function fetchBytes(url, options = {}) {
 function hasUtf8Bom(bytes) {
   // UTF-8 BOM：EF BB BF
   return bytes.length >= 3 && bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf;
+}
+
+function safeJsonParse(text) {
+  if (typeof text !== 'string' || !text.trim()) return null;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
+
+// ----------------------------
+// Thesaurus QA helpers
+// ----------------------------
+
+async function ensureAuthorityTerm(params) {
+  const { apiBase, orgId, token, kind, vocabularyCode, preferredLabel, variantLabels } = params;
+
+  // 1) 先嘗試建立（最直覺、也可確保 status/source/variants）
+  const createRes = await fetch(`${apiBase}/api/v1/orgs/${orgId}/authority-terms`, {
+    method: 'POST',
+    headers: {
+      authorization: `Bearer ${token}`,
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({
+      kind,
+      vocabulary_code: vocabularyCode,
+      preferred_label: preferredLabel,
+      variant_labels: variantLabels && variantLabels.length > 0 ? variantLabels : undefined,
+      source: 'qa-thesaurus',
+      status: 'active',
+    }),
+  });
+
+  const createText = await createRes.text();
+  if (createRes.ok) return JSON.parse(createText);
+
+  // 2) 409 CONFLICT：代表已存在 → 用 list/query 取回 id（避免把錯誤當成失敗）
+  const createJson = safeJsonParse(createText);
+  if (createRes.status === 409 && createJson?.error?.code === 'CONFLICT') {
+    const list = await fetchJson(
+      `${apiBase}/api/v1/orgs/${orgId}/authority-terms?kind=${encodeURIComponent(kind)}&status=all&vocabulary_code=${encodeURIComponent(
+        vocabularyCode,
+      )}&query=${encodeURIComponent(preferredLabel)}&limit=50`,
+      { headers: { authorization: `Bearer ${token}` } },
+    );
+
+    const items = Array.isArray(list?.items) ? list.items : [];
+    const found = items.find((t) => t?.preferred_label === preferredLabel && t?.vocabulary_code === vocabularyCode) ?? null;
+    assert(found && typeof found.id === 'string', `cannot find existing authority term by label=${preferredLabel}`);
+    return found;
+  }
+
+  throw new Error(`HTTP ${createRes.status} POST /authority-terms\n${createText}`);
+}
+
+async function ensureThesaurusRelation(params) {
+  const { apiBase, orgId, token, termId, kind, targetTermId } = params;
+
+  const res = await fetch(`${apiBase}/api/v1/orgs/${orgId}/authority-terms/${termId}/relations`, {
+    method: 'POST',
+    headers: {
+      authorization: `Bearer ${token}`,
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({ kind, target_term_id: targetTermId }),
+  });
+
+  const text = await res.text();
+  if (res.ok) return JSON.parse(text);
+
+  // 409：relation already exists → 回傳目前 detail（讓 caller 可以繼續驗證）
+  const json = safeJsonParse(text);
+  if (res.status === 409 && json?.error?.code === 'CONFLICT') {
+    return await fetchJson(`${apiBase}/api/v1/orgs/${orgId}/authority-terms/${termId}`, {
+      headers: { authorization: `Bearer ${token}` },
+    });
+  }
+
+  throw new Error(`HTTP ${res.status} POST /authority-terms/${termId}/relations\n${text}`);
 }
 
 // ----------------------------
