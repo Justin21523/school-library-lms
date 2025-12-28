@@ -55,6 +55,9 @@ export default function OpacOrgPage({ params }: { params: { orgId: string } }) {
   const [query, setQuery] = useState('');
   const [bibs, setBibs] = useState<BibliographicRecordWithCounts[] | null>(null);
   const [loadingBibs, setLoadingBibs] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [appliedFilters, setAppliedFilters] = useState<{ query?: string; limit?: number } | null>(null);
 
   // ----------------------------
   // 4) Place hold 動作狀態
@@ -106,13 +109,36 @@ export default function OpacOrgPage({ params }: { params: { orgId: string } }) {
 
     try {
       // OPAC MVP 先做關鍵字查詢（query 會比對 title/creators/subjects 等）
-      const result = await listBibs(params.orgId, { query: query.trim() || undefined });
-      setBibs(result);
+      const filters = { query: query.trim() || undefined };
+      const result = await listBibs(params.orgId, filters);
+      setBibs(result.items);
+      setNextCursor(result.next_cursor);
+      setAppliedFilters(filters);
     } catch (e) {
       setBibs(null);
+      setNextCursor(null);
+      setAppliedFilters(null);
       setError(formatErrorMessage(e));
     } finally {
       setLoadingBibs(false);
+    }
+  }
+
+  async function loadMoreBibs() {
+    if (!nextCursor || !appliedFilters) return;
+
+    setLoadingMore(true);
+    setError(null);
+    setSuccess(null);
+
+    try {
+      const page = await listBibs(params.orgId, { ...appliedFilters, cursor: nextCursor });
+      setBibs((prev) => [...(prev ?? []), ...page.items]);
+      setNextCursor(page.next_cursor);
+    } catch (e) {
+      setError(formatErrorMessage(e));
+    } finally {
+      setLoadingMore(false);
     }
   }
 
@@ -259,33 +285,44 @@ export default function OpacOrgPage({ params }: { params: { orgId: string } }) {
         {!loadingBibs && bibs && bibs.length === 0 ? <p className="muted">沒有符合條件的書目。</p> : null}
 
         {!loadingBibs && bibs && bibs.length > 0 ? (
-          <ul>
-            {bibs.map((b) => (
-              <li key={b.id} style={{ marginBottom: 14 }}>
-                <div style={{ display: 'grid', gap: 6 }}>
-                  <div style={{ fontWeight: 700 }}>{b.title}</div>
+          <div className="stack">
+            <ul>
+              {bibs.map((b) => (
+                <li key={b.id} style={{ marginBottom: 14 }}>
+                  <div style={{ display: 'grid', gap: 6 }}>
+                    <div style={{ fontWeight: 700 }}>{b.title}</div>
 
-                  <div className="muted">
-                    可借冊數：{b.available_items} / 總冊數：{b.total_items}
-                  </div>
+                    <div className="muted">
+                      可借冊數：{b.available_items} / 總冊數：{b.total_items}
+                    </div>
 
-                  <div className="muted" style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>
-                    bibliographic_id={b.id}
-                  </div>
-
-                  <div>
-                    <button
-                      type="button"
-                      onClick={() => void onPlaceHold(b.id)}
-                      disabled={creatingBibId === b.id}
+                    <div
+                      className="muted"
+                      style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}
                     >
-                      {creatingBibId === b.id ? '預約中…' : '預約（Place hold）'}
-                    </button>
+                      bibliographic_id={b.id}
+                    </div>
+
+                    <div>
+                      <button
+                        type="button"
+                        onClick={() => void onPlaceHold(b.id)}
+                        disabled={creatingBibId === b.id}
+                      >
+                        {creatingBibId === b.id ? '預約中…' : '預約（Place hold）'}
+                      </button>
+                    </div>
                   </div>
-                </div>
-              </li>
-            ))}
-          </ul>
+                </li>
+              ))}
+            </ul>
+
+            {nextCursor ? (
+              <button type="button" onClick={() => void loadMoreBibs()} disabled={loadingMore || loadingBibs}>
+                {loadingMore ? '載入中…' : '載入更多'}
+              </button>
+            ) : null}
+          </div>
         ) : null}
       </section>
     </div>

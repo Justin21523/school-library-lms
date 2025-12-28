@@ -57,6 +57,179 @@ export type User = {
   updated_at: string;
 };
 
+/**
+ * CursorPage（前端看到的 cursor pagination envelope）
+ *
+ * 後端 list endpoints（users/bibs/items/loans/holds）在大量資料（scale seed）下會回傳：
+ * - items：本頁資料（最多 limit 筆）
+ * - next_cursor：下一頁游標（沒有下一頁則為 null）
+ *
+ * 前端不需要理解 cursor 的內容，只要在「載入更多」時把 next_cursor 帶回 API 即可。
+ */
+export type CursorPage<T> = {
+  items: T[];
+  next_cursor: string | null;
+};
+
+// ----------------------------
+// Authority / Vocabulary（權威控制檔 / controlled vocab）
+// ----------------------------
+
+export type AuthorityTerm = {
+  id: string;
+  organization_id: string;
+  kind: 'name' | 'subject' | 'geographic' | 'genre' | 'language' | 'relator';
+  vocabulary_code: string;
+  preferred_label: string;
+  variant_labels: string[] | null;
+  note: string | null;
+  source: string;
+  status: 'active' | 'inactive';
+  created_at: string;
+  updated_at: string;
+};
+
+export type AuthorityTermSummary = {
+  id: string;
+  kind: AuthorityTerm['kind'];
+  vocabulary_code: string;
+  preferred_label: string;
+  status: AuthorityTerm['status'];
+  source: string;
+};
+
+export type AuthorityTermDetail = {
+  term: AuthorityTerm;
+  relations: {
+    broader: Array<{ relation_id: string; term: AuthorityTermSummary }>;
+    narrower: Array<{ relation_id: string; term: AuthorityTermSummary }>;
+    related: Array<{ relation_id: string; term: AuthorityTermSummary }>;
+  };
+};
+
+// Governance：usage + merge/redirect（term 治理）
+export type AuthorityTermUsageItem = {
+  bibliographic_id: string;
+  title: string;
+  isbn: string | null;
+  classification: string | null;
+  created_at: string;
+  // roles：只有 name term 會回傳（因為 bibliographic_name_terms 有 role 維度）
+  roles?: Array<'creator' | 'contributor'>;
+};
+
+export type AuthorityTermUsageResult = CursorPage<AuthorityTermUsageItem> & {
+  term_id: string;
+  total_bibs: number;
+};
+
+export type MergeAuthorityTermPreviewResult = {
+  mode: 'preview';
+  source_term: AuthorityTerm;
+  target_term: AuthorityTerm;
+  summary: {
+    bibs_affected: number;
+    bibs_updated: number;
+    variant_labels_added: number;
+    relations: {
+      moved: boolean;
+      skipped_due_to_vocab_mismatch: boolean;
+      considered: number;
+      inserted: number;
+      deleted: number;
+    };
+    warnings: string[];
+  };
+};
+
+// 注意：不能用 intersection 直接覆蓋 mode，因為 'preview' & 'apply' 會變成 never（TS 交集型別）
+export type MergeAuthorityTermApplyResult = Omit<MergeAuthorityTermPreviewResult, 'mode'> & {
+  mode: 'apply';
+  audit_event_id: string;
+};
+
+export type ThesaurusRelationKind = 'broader' | 'narrower' | 'related';
+
+export type ThesaurusExpandResult = {
+  term: AuthorityTerm;
+  include: Array<'self' | 'variants' | 'broader' | 'narrower' | 'related'>;
+  depth: number;
+  labels: string[];
+  term_ids: string[];
+  broader_terms: AuthorityTermSummary[];
+  narrower_terms: AuthorityTermSummary[];
+  related_terms: AuthorityTermSummary[];
+  variant_labels: string[];
+};
+
+// ----------------------------
+// Thesaurus v1.1：Hierarchy browsing + governance
+// ----------------------------
+
+export type ThesaurusNodeSummary = AuthorityTermSummary & {
+  broader_count: number;
+  narrower_count: number;
+  has_children: boolean;
+};
+
+export type ThesaurusRootsPage = CursorPage<ThesaurusNodeSummary>;
+
+export type ThesaurusChildrenPage = CursorPage<{
+  relation_id: string;
+  term: ThesaurusNodeSummary;
+}>;
+
+export type ThesaurusAncestorsResult = {
+  term: AuthorityTermSummary;
+  depth: number;
+  max_paths: number;
+  truncated: boolean;
+  paths: Array<{ is_complete: boolean; nodes: AuthorityTermSummary[] }>;
+};
+
+export type ThesaurusGraphResult = {
+  term: AuthorityTermSummary;
+  direction: 'narrower' | 'broader';
+  depth: number;
+  max_nodes: number;
+  max_edges: number;
+  truncated: boolean;
+  nodes: AuthorityTermSummary[];
+  edges: Array<{ relation_id: string; from_term_id: string; to_term_id: string; relation_type: 'broader' }>;
+};
+
+export type ThesaurusQualityIssueType = 'orphans' | 'multi_broader' | 'unused_with_relations';
+export type ThesaurusQualityItem = ThesaurusNodeSummary & { issue_type: ThesaurusQualityIssueType };
+export type ThesaurusQualityPage = CursorPage<ThesaurusQualityItem>;
+
+export type ThesaurusRelationsImportResult =
+  | {
+      mode: 'preview';
+      summary: {
+        total_rows: number;
+        create_count: number;
+        skip_existing_count: number;
+        error_count: number;
+      };
+      rows: Array<{
+        row_number: number;
+        relation_type: 'broader' | 'related' | null;
+        from_term_id: string | null;
+        to_term_id: string | null;
+        status: 'create' | 'skip_existing' | 'error';
+        error?: { code: string; message: string };
+      }>;
+    }
+  | {
+      mode: 'apply';
+      summary: {
+        total_rows: number;
+        create_count: number;
+        skip_existing_count: number;
+        error_count: number;
+      };
+    };
+
 // ----------------------------
 // US-010：Users CSV Import（名冊匯入）
 // ----------------------------
@@ -210,6 +383,8 @@ export type CirculationPolicy = {
   max_holds: number;
   hold_pickup_days: number;
   overdue_block_days: number;
+  // is_active：同一 org + role 目前生效的那一套政策（後端會保證同 role 同時只能有一筆）
+  is_active: boolean;
   created_at: string;
   updated_at: string;
 };
@@ -219,11 +394,27 @@ export type BibliographicRecord = {
   organization_id: string;
   title: string;
   creators: string[] | null;
+  // creator_term_ids/creator_terms：authority linking v1（name term_id-driven；對應 creators）
+  creator_term_ids?: string[];
+  creator_terms?: Array<{ id: string; vocabulary_code: string; preferred_label: string }>;
   contributors: string[] | null;
+  // contributor_term_ids/contributor_terms：authority linking v1（name term_id-driven；對應 contributors）
+  contributor_term_ids?: string[];
+  contributor_terms?: Array<{ id: string; vocabulary_code: string; preferred_label: string }>;
   publisher: string | null;
   published_year: number | null;
   language: string | null;
   subjects: string[] | null;
+  // subject_term_ids/subject_terms：authority linking v1（term_id-driven）
+  // - 若尚未 backfill（或尚未以 term-based UI 編輯過），可能是空陣列或 undefined
+  subject_term_ids?: string[];
+  subject_terms?: Array<{ id: string; vocabulary_code: string; preferred_label: string }>;
+  geographics: string[] | null;
+  geographic_term_ids?: string[];
+  geographic_terms?: Array<{ id: string; vocabulary_code: string; preferred_label: string }>;
+  genres: string[] | null;
+  genre_term_ids?: string[];
+  genre_terms?: Array<{ id: string; vocabulary_code: string; preferred_label: string }>;
   isbn: string | null;
   classification: string | null;
   created_at: string;
@@ -234,6 +425,284 @@ export type BibliographicRecordWithCounts = BibliographicRecord & {
   total_items: number;
   available_items: number;
 };
+
+// ----------------------------
+// Bibs Maintenance：subjects backfill（既有資料 → authority linking）
+// ----------------------------
+
+export type BackfillSubjectLabelDecision =
+  | {
+      input_label: string;
+      status: 'matched_preferred' | 'matched_variant' | 'auto_created';
+      term: { id: string; vocabulary_code: string; preferred_label: string };
+    }
+  | {
+      input_label: string;
+      status: 'ambiguous_auto_created';
+      term: { id: string; vocabulary_code: string; preferred_label: string };
+      candidates: Array<{ id: string; vocabulary_code: string; preferred_label: string }>;
+    }
+  | { input_label: string; status: 'skipped_blank' | 'unmatched'; reason: string };
+
+export type BackfillBibSubjectTermsRowReport = {
+  bibliographic_id: string;
+  title: string;
+  subjects_before: string[];
+  subjects_after: string[] | null;
+  subject_term_ids_after: string[] | null;
+  decisions: BackfillSubjectLabelDecision[];
+  status: 'would_update' | 'skipped_invalid' | 'no_subjects';
+};
+
+export type BackfillBibSubjectTermsSummary = {
+  scanned: number;
+  would_update: number;
+  skipped_invalid: number;
+  no_subjects: number;
+  labels: {
+    matched_preferred: number;
+    matched_variant: number;
+    auto_created: number;
+    ambiguous_auto_created: number;
+    unmatched: number;
+    skipped_blank: number;
+  };
+};
+
+export type BackfillBibSubjectTermsPreviewResult = {
+  mode: 'preview';
+  summary: BackfillBibSubjectTermsSummary;
+  rows: BackfillBibSubjectTermsRowReport[];
+  next_cursor: string | null;
+};
+
+export type BackfillBibSubjectTermsApplyResult = {
+  mode: 'apply';
+  summary: BackfillBibSubjectTermsSummary;
+  rows: BackfillBibSubjectTermsRowReport[];
+  next_cursor: string | null;
+  audit_event_id: string;
+};
+
+export type BackfillBibGeographicTermsRowReport = {
+  bibliographic_id: string;
+  title: string;
+  geographics_before: string[];
+  geographics_after: string[] | null;
+  geographic_term_ids_after: string[] | null;
+  decisions: BackfillSubjectLabelDecision[];
+  status: 'would_update' | 'skipped_invalid' | 'no_geographics';
+};
+
+export type BackfillBibGeographicTermsSummary = {
+  scanned: number;
+  would_update: number;
+  skipped_invalid: number;
+  no_geographics: number;
+  labels: BackfillBibSubjectTermsSummary['labels'];
+};
+
+export type BackfillBibGeographicTermsPreviewResult = {
+  mode: 'preview';
+  summary: BackfillBibGeographicTermsSummary;
+  rows: BackfillBibGeographicTermsRowReport[];
+  next_cursor: string | null;
+};
+
+export type BackfillBibGeographicTermsApplyResult = {
+  mode: 'apply';
+  summary: BackfillBibGeographicTermsSummary;
+  rows: BackfillBibGeographicTermsRowReport[];
+  next_cursor: string | null;
+  audit_event_id: string;
+};
+
+export type BackfillBibGenreTermsRowReport = {
+  bibliographic_id: string;
+  title: string;
+  genres_before: string[];
+  genres_after: string[] | null;
+  genre_term_ids_after: string[] | null;
+  decisions: BackfillSubjectLabelDecision[];
+  status: 'would_update' | 'skipped_invalid' | 'no_genres';
+};
+
+export type BackfillBibGenreTermsSummary = {
+  scanned: number;
+  would_update: number;
+  skipped_invalid: number;
+  no_genres: number;
+  labels: BackfillBibSubjectTermsSummary['labels'];
+};
+
+export type BackfillBibGenreTermsPreviewResult = {
+  mode: 'preview';
+  summary: BackfillBibGenreTermsSummary;
+  rows: BackfillBibGenreTermsRowReport[];
+  next_cursor: string | null;
+};
+
+export type BackfillBibGenreTermsApplyResult = {
+  mode: 'apply';
+  summary: BackfillBibGenreTermsSummary;
+  rows: BackfillBibGenreTermsRowReport[];
+  next_cursor: string | null;
+  audit_event_id: string;
+};
+
+// ----------------------------
+// Bibs Maintenance：names backfill（既有 creators/contributors → name linking v1）
+// ----------------------------
+
+export type BackfillBibNameTermsRowReport = {
+  bibliographic_id: string;
+  title: string;
+
+  creators_before: string[];
+  contributors_before: string[];
+
+  creators_after: string[] | null;
+  contributors_after: string[] | null;
+
+  creator_term_ids_after: string[] | null;
+  contributor_term_ids_after: string[] | null;
+
+  creator_decisions: BackfillSubjectLabelDecision[];
+  contributor_decisions: BackfillSubjectLabelDecision[];
+
+  status: 'would_update' | 'skipped_invalid' | 'no_names';
+};
+
+export type BackfillBibNameTermsSummary = {
+  scanned: number;
+  would_update: number;
+  skipped_invalid: number;
+  no_names: number;
+  labels: BackfillBibSubjectTermsSummary['labels'];
+};
+
+export type BackfillBibNameTermsPreviewResult = {
+  mode: 'preview';
+  summary: BackfillBibNameTermsSummary;
+  rows: BackfillBibNameTermsRowReport[];
+  next_cursor: string | null;
+};
+
+export type BackfillBibNameTermsApplyResult = {
+  mode: 'apply';
+  summary: BackfillBibNameTermsSummary;
+  rows: BackfillBibNameTermsRowReport[];
+  next_cursor: string | null;
+  audit_event_id: string;
+};
+
+// ----------------------------
+// MARC 21（進階編目：交換格式）
+// ----------------------------
+
+/**
+ * MARC types（Web 端）
+ *
+ * 注意：
+ * - 這裡先「複製一份」最小型別，而不是直接從 packages/shared 共用，
+ *   原因是：目前 apps/api 是 CommonJS、packages/shared 是 ESM，runtime 直接共用容易踩到模組系統坑。
+ * - 若未來要共用，建議只共用「純 type（.d.ts）或 TS source」並確保 build/emit 策略一致。
+ */
+export type MarcSubfield = { code: string; value: string };
+
+export type MarcControlField = { tag: string; value: string };
+
+export type MarcDataField = {
+  tag: string;
+  ind1: string;
+  ind2: string;
+  subfields: MarcSubfield[];
+};
+
+export type MarcField = MarcControlField | MarcDataField;
+
+export type MarcRecord = {
+  leader: string;
+  fields: MarcField[];
+};
+
+// ----------------------------
+// MARC Batch Import（preview/apply；去重 ISBN/035）
+// ----------------------------
+
+export type MarcImportMode = 'preview' | 'apply';
+export type MarcImportDecision = 'create' | 'update' | 'skip';
+
+export type MarcImportRecordError = {
+  record_index: number;
+  code: string;
+  message: string;
+  details?: unknown;
+};
+
+export type MarcImportMatch = {
+  by: 'isbn' | '035' | null;
+  bib_id: string | null;
+  bib_title: string | null;
+  bib_isbn: string | null;
+  matched_values: string[];
+};
+
+export type MarcImportRecordPlan = {
+  record_index: number;
+  bib: {
+    title: string;
+    creators?: string[];
+    contributors?: string[];
+    publisher?: string;
+    published_year?: number;
+    language?: string;
+    subjects?: string[];
+    isbn?: string;
+    classification?: string;
+  };
+  marc_extras_count: number;
+  isbn: string | null;
+  identifiers_035: string[];
+  match: MarcImportMatch;
+  suggested_decision: MarcImportDecision;
+  decision: MarcImportDecision;
+  target_bib_id: string | null;
+};
+
+export type MarcImportSummary = {
+  total_records: number;
+  valid_records: number;
+  invalid_records: number;
+  to_create: number;
+  to_update: number;
+  to_skip: number;
+  matched_by_isbn: number;
+  matched_by_035: number;
+};
+
+export type MarcImportPreviewResult = {
+  mode: 'preview';
+  source: { records: number; sha256: string; source_filename: string | null };
+  options: {
+    save_marc_extras: boolean;
+    upsert_authority_terms: boolean;
+    authority_vocabulary_code: string;
+  };
+  summary: MarcImportSummary;
+  warnings: MarcImportRecordError[];
+  errors: MarcImportRecordError[];
+  records: MarcImportRecordPlan[];
+};
+
+export type MarcImportApplyResult = {
+  mode: 'apply';
+  summary: MarcImportSummary;
+  audit_event_id: string;
+  results: Array<{ record_index: number; decision: MarcImportDecision; bib_id: string | null }>;
+};
+
+export type MarcImportResult = MarcImportPreviewResult | MarcImportApplyResult;
 
 export type ItemStatus =
   | 'available'
@@ -256,6 +725,37 @@ export type ItemCopy = {
   notes: string | null;
   created_at: string;
   updated_at: string;
+};
+
+/**
+ * ItemDetail（冊詳情：含「組合狀態」）
+ *
+ * 後端會在 item detail 一次回傳：
+ * - item：冊主檔
+ * - current_loan：若此冊目前被借出（open loan），回傳借閱者與到期日
+ * - assigned_hold：若此冊目前被指派給某筆 ready hold（取書架），回傳預約者與取書期限
+ */
+export type ItemDetail = {
+  item: ItemCopy;
+  current_loan: null | {
+    id: string;
+    user_id: string;
+    user_external_id: string;
+    user_name: string;
+    checked_out_at: string;
+    due_at: string;
+  };
+  assigned_hold: null | {
+    id: string;
+    user_id: string;
+    user_external_id: string;
+    user_name: string;
+    bibliographic_id: string;
+    pickup_location_id: string;
+    placed_at: string;
+    ready_at: string | null;
+    ready_until: string | null;
+  };
 };
 
 export type CheckoutResult = {
@@ -837,13 +1337,35 @@ async function requestJson<T>(
   const text = await response.text();
 
   // 空字串代表 API 沒回 body；這裡用 null 表示「沒有 JSON」。
-  const json = text ? (JSON.parse(text) as unknown) : null;
+  //
+  // 重要：不要讓 JSON.parse 直接丟 SyntaxError（會讓 UI 顯示成「壞掉」且訊息不友善）。
+  // - 常見原因：API base URL 指到錯的服務、或反向代理回了 HTML 404/502
+  // - 我們把它轉成 ApiError，讓每頁既有的 try/catch 能一致顯示錯誤
+  let json: unknown = null;
+  let jsonParseFailed = false;
+  if (text) {
+    try {
+      json = JSON.parse(text) as unknown;
+    } catch {
+      json = null;
+      jsonParseFailed = true;
+    }
+  }
 
   // 5) 如果 HTTP status 非 2xx，統一丟出 ApiError 讓 UI 捕捉
   if (!response.ok) {
     const body = isApiErrorBody(json) ? json : null;
     const message = body?.error?.message ?? `HTTP ${response.status}`;
     throw new ApiError(message, response.status, body);
+  }
+
+  // 6) 成功但不是合法 JSON：視為錯誤（避免頁面用到 undefined/null 而 crash）
+  if (jsonParseFailed) {
+    throw new ApiError(
+      `Invalid JSON response from API (base=${baseUrl}; path=${path})`,
+      response.status,
+      null,
+    );
   }
 
   // 6) 成功：把 json 當成 T 回傳
@@ -924,6 +1446,75 @@ async function requestText(
   }
 
   return { text, contentType: response.headers.get('content-type') };
+}
+
+/**
+ * 低階 request（bytes 版本）：用於下載 .mrc 這類二進位回應
+ *
+ * 設計：
+ * - 成功時回傳 ArrayBuffer（交給 UI 用 Blob 下載）
+ * - 失敗時盡量 parse JSON error body（與 requestJson/requestText 一致）
+ */
+async function requestBytes(
+  path: string,
+  options: { method: string; query?: Record<string, QueryValue>; body?: unknown; accept?: string },
+): Promise<{ bytes: ArrayBuffer; contentType: string | null }> {
+  const baseUrl = getApiBaseUrl();
+  const url = new URL(path, baseUrl);
+
+  if (options.query) {
+    const params = toSearchParams(options.query);
+    const queryString = params.toString();
+    if (queryString) url.search = queryString;
+  }
+
+  const headers: Record<string, string> = {};
+  if (options.accept) headers['accept'] = options.accept;
+
+  // Auth：邏輯同 requestJson/requestText
+  const orgIdForAuth = extractOrgIdFromApiPath(path);
+  const token = orgIdForAuth
+    ? isPatronMeApiPath(path, orgIdForAuth)
+      ? getOpacAccessToken(orgIdForAuth)
+      : getStaffAccessToken(orgIdForAuth)
+    : null;
+  if (token) headers['authorization'] = `Bearer ${token}`;
+
+  const init: RequestInit = { method: options.method, headers };
+  if (options.body !== undefined) {
+    headers['content-type'] = 'application/json';
+    init.body = JSON.stringify(options.body);
+  }
+
+  let response: Response;
+  try {
+    response = await fetch(url.toString(), init);
+  } catch (error) {
+    throw new ApiError(
+      error instanceof Error ? error.message : 'Network error',
+      0,
+      null,
+    );
+  }
+
+  // error：用 text 讀 body（通常是 JSON），避免把錯誤當成 bytes 下載
+  if (!response.ok) {
+    const text = await response.text();
+
+    let json: unknown = null;
+    try {
+      json = text ? (JSON.parse(text) as unknown) : null;
+    } catch {
+      json = null;
+    }
+
+    const body = isApiErrorBody(json) ? json : null;
+    const message = body?.error?.message ?? `HTTP ${response.status}`;
+    throw new ApiError(message, response.status, body);
+  }
+
+  const bytes = await response.arrayBuffer();
+  return { bytes, contentType: response.headers.get('content-type') };
 }
 
 /**
@@ -1053,9 +1644,9 @@ export async function getMe(orgId: string) {
 
 export async function listMyLoans(
   orgId: string,
-  query?: { status?: 'open' | 'closed' | 'all'; limit?: number },
+  query?: { status?: 'open' | 'closed' | 'all'; limit?: number; cursor?: string },
 ) {
-  return await requestJson<LoanWithDetails[]>(`/api/v1/orgs/${orgId}/me/loans`, {
+  return await requestJson<CursorPage<LoanWithDetails>>(`/api/v1/orgs/${orgId}/me/loans`, {
     method: 'GET',
     query: query ?? {},
   });
@@ -1063,9 +1654,9 @@ export async function listMyLoans(
 
 export async function listMyHolds(
   orgId: string,
-  query?: { status?: HoldStatus | 'all'; limit?: number },
+  query?: { status?: HoldStatus | 'all'; limit?: number; cursor?: string },
 ) {
-  return await requestJson<HoldWithDetails[]>(`/api/v1/orgs/${orgId}/me/holds`, {
+  return await requestJson<CursorPage<HoldWithDetails>>(`/api/v1/orgs/${orgId}/me/holds`, {
     method: 'GET',
     query: query ?? {},
   });
@@ -1105,11 +1696,28 @@ export async function createLocation(
   });
 }
 
+export async function updateLocation(
+  orgId: string,
+  locationId: string,
+  input: {
+    code?: string;
+    name?: string;
+    area?: string | null;
+    shelf_code?: string | null;
+    status?: Location['status'];
+  },
+) {
+  return await requestJson<Location>(`/api/v1/orgs/${orgId}/locations/${locationId}`, {
+    method: 'PATCH',
+    body: input,
+  });
+}
+
 export async function listUsers(
   orgId: string,
   queryOrFilters?:
     | string
-    | { query?: string; role?: User['role']; status?: User['status']; limit?: number },
+    | { query?: string; role?: User['role']; status?: User['status']; limit?: number; cursor?: string },
 ) {
   // Backward-compatible signature：
   // - 早期版本只支援 listUsers(orgId, query?: string)
@@ -1119,7 +1727,7 @@ export async function listUsers(
   const filters =
     typeof queryOrFilters === 'string' ? { query: queryOrFilters } : (queryOrFilters ?? {});
 
-  return await requestJson<User[]>(`/api/v1/orgs/${orgId}/users`, {
+  return await requestJson<CursorPage<User>>(`/api/v1/orgs/${orgId}/users`, {
     method: 'GET',
     query: filters,
   });
@@ -1256,11 +1864,53 @@ export async function createPolicy(
   );
 }
 
+export async function updatePolicy(
+  orgId: string,
+  policyId: string,
+  input: {
+    code?: string;
+    name?: string;
+    loan_days?: number;
+    max_loans?: number;
+    max_renewals?: number;
+    max_holds?: number;
+    hold_pickup_days?: number;
+    overdue_block_days?: number;
+    // is_active：只允許 true（設為有效）；停用由啟用另一筆政策完成
+    is_active?: true;
+  },
+) {
+  return await requestJson<CirculationPolicy>(
+    `/api/v1/orgs/${orgId}/circulation-policies/${policyId}`,
+    { method: 'PATCH', body: input },
+  );
+}
+
 export async function listBibs(
   orgId: string,
-  filters: { query?: string; isbn?: string; classification?: string },
+  filters: {
+    query?: string;
+    // subjects_any：主題詞擴充查詢（thesaurus expand 後的 labels[]；用逗號串起來送出）
+    subjects_any?: string;
+    // subject_term_ids_any：term_id-driven 的主題詞擴充查詢（UUID[]；用逗號串起來送出）
+    subject_term_ids_any?: string;
+    // subject_term_ids：alias（同 subject_term_ids_any；行為為 ANY / 任一命中）
+    subject_term_ids?: string;
+    // geographics_any / geographic_term_ids_any：MARC 651（地理名稱）擴充查詢
+    geographics_any?: string;
+    geographic_term_ids_any?: string;
+    geographic_term_ids?: string;
+    // genres_any / genre_term_ids_any：MARC 655（類型/體裁）擴充查詢
+    genres_any?: string;
+    genre_term_ids_any?: string;
+    genre_term_ids?: string;
+    isbn?: string;
+    classification?: string;
+    limit?: number;
+    cursor?: string;
+  },
 ) {
-  return await requestJson<BibliographicRecordWithCounts[]>(`/api/v1/orgs/${orgId}/bibs`, {
+  return await requestJson<CursorPage<BibliographicRecordWithCounts>>(`/api/v1/orgs/${orgId}/bibs`, {
     method: 'GET',
     query: filters,
   });
@@ -1271,11 +1921,18 @@ export async function createBib(
   input: {
     title: string;
     creators?: string[];
+    creator_term_ids?: string[];
     contributors?: string[];
+    contributor_term_ids?: string[];
     publisher?: string;
     published_year?: number;
     language?: string;
     subjects?: string[];
+    subject_term_ids?: string[];
+    geographics?: string[];
+    geographic_term_ids?: string[];
+    genres?: string[];
+    genre_term_ids?: string[];
     isbn?: string;
     classification?: string;
   },
@@ -1299,11 +1956,18 @@ export async function updateBib(
   input: {
     title?: string;
     creators?: string[] | null;
+    creator_term_ids?: string[] | null;
     contributors?: string[] | null;
+    contributor_term_ids?: string[] | null;
     publisher?: string | null;
     published_year?: number | null;
     language?: string | null;
     subjects?: string[] | null;
+    subject_term_ids?: string[] | null;
+    geographics?: string[] | null;
+    geographic_term_ids?: string[] | null;
+    genres?: string[] | null;
+    genre_term_ids?: string[] | null;
     isbn?: string | null;
     classification?: string | null;
   },
@@ -1314,16 +1978,483 @@ export async function updateBib(
   );
 }
 
+export async function previewBackfillBibSubjectTerms(
+  orgId: string,
+  input: {
+    actor_user_id: string;
+    limit?: number;
+    cursor?: string;
+    only_missing?: boolean;
+    vocabulary_code_for_new?: string;
+    source_for_new?: string;
+    prefer_vocabulary_codes?: string[];
+    note?: string;
+  },
+) {
+  return await requestJson<BackfillBibSubjectTermsPreviewResult>(
+    `/api/v1/orgs/${orgId}/bibs/maintenance/backfill-subject-terms`,
+    { method: 'POST', body: { ...input, mode: 'preview' } },
+  );
+}
+
+export async function applyBackfillBibSubjectTerms(
+  orgId: string,
+  input: {
+    actor_user_id: string;
+    limit?: number;
+    cursor?: string;
+    only_missing?: boolean;
+    vocabulary_code_for_new?: string;
+    source_for_new?: string;
+    prefer_vocabulary_codes?: string[];
+    note?: string;
+  },
+) {
+  return await requestJson<BackfillBibSubjectTermsApplyResult>(
+    `/api/v1/orgs/${orgId}/bibs/maintenance/backfill-subject-terms`,
+    { method: 'POST', body: { ...input, mode: 'apply' } },
+  );
+}
+
+export async function previewBackfillBibNameTerms(
+  orgId: string,
+  input: {
+    actor_user_id: string;
+    limit?: number;
+    cursor?: string;
+    only_missing?: boolean;
+    vocabulary_code_for_new?: string;
+    source_for_new?: string;
+    prefer_vocabulary_codes?: string[];
+    note?: string;
+  },
+) {
+  return await requestJson<BackfillBibNameTermsPreviewResult>(
+    `/api/v1/orgs/${orgId}/bibs/maintenance/backfill-name-terms`,
+    { method: 'POST', body: { ...input, mode: 'preview' } },
+  );
+}
+
+export async function applyBackfillBibNameTerms(
+  orgId: string,
+  input: {
+    actor_user_id: string;
+    limit?: number;
+    cursor?: string;
+    only_missing?: boolean;
+    vocabulary_code_for_new?: string;
+    source_for_new?: string;
+    prefer_vocabulary_codes?: string[];
+    note?: string;
+  },
+) {
+  return await requestJson<BackfillBibNameTermsApplyResult>(
+    `/api/v1/orgs/${orgId}/bibs/maintenance/backfill-name-terms`,
+    { method: 'POST', body: { ...input, mode: 'apply' } },
+  );
+}
+
+export async function previewBackfillBibGeographicTerms(
+  orgId: string,
+  input: {
+    actor_user_id: string;
+    limit?: number;
+    cursor?: string;
+    only_missing?: boolean;
+    vocabulary_code_for_new?: string;
+    source_for_new?: string;
+    prefer_vocabulary_codes?: string[];
+    note?: string;
+  },
+) {
+  return await requestJson<BackfillBibGeographicTermsPreviewResult>(
+    `/api/v1/orgs/${orgId}/bibs/maintenance/backfill-geographic-terms`,
+    { method: 'POST', body: { ...input, mode: 'preview' } },
+  );
+}
+
+export async function applyBackfillBibGeographicTerms(
+  orgId: string,
+  input: {
+    actor_user_id: string;
+    limit?: number;
+    cursor?: string;
+    only_missing?: boolean;
+    vocabulary_code_for_new?: string;
+    source_for_new?: string;
+    prefer_vocabulary_codes?: string[];
+    note?: string;
+  },
+) {
+  return await requestJson<BackfillBibGeographicTermsApplyResult>(
+    `/api/v1/orgs/${orgId}/bibs/maintenance/backfill-geographic-terms`,
+    { method: 'POST', body: { ...input, mode: 'apply' } },
+  );
+}
+
+export async function previewBackfillBibGenreTerms(
+  orgId: string,
+  input: {
+    actor_user_id: string;
+    limit?: number;
+    cursor?: string;
+    only_missing?: boolean;
+    vocabulary_code_for_new?: string;
+    source_for_new?: string;
+    prefer_vocabulary_codes?: string[];
+    note?: string;
+  },
+) {
+  return await requestJson<BackfillBibGenreTermsPreviewResult>(
+    `/api/v1/orgs/${orgId}/bibs/maintenance/backfill-genre-terms`,
+    { method: 'POST', body: { ...input, mode: 'preview' } },
+  );
+}
+
+export async function applyBackfillBibGenreTerms(
+  orgId: string,
+  input: {
+    actor_user_id: string;
+    limit?: number;
+    cursor?: string;
+    only_missing?: boolean;
+    vocabulary_code_for_new?: string;
+    source_for_new?: string;
+    prefer_vocabulary_codes?: string[];
+    note?: string;
+  },
+) {
+  return await requestJson<BackfillBibGenreTermsApplyResult>(
+    `/api/v1/orgs/${orgId}/bibs/maintenance/backfill-genre-terms`,
+    { method: 'POST', body: { ...input, mode: 'apply' } },
+  );
+}
+
+// ----------------------------
+// Bib → MARC 21 export + marc_extras
+// ----------------------------
+
+export async function getBibMarc(orgId: string, bibId: string) {
+  return await requestJson<MarcRecord>(`/api/v1/orgs/${orgId}/bibs/${bibId}/marc`, {
+    method: 'GET',
+    query: { format: 'json' },
+  });
+}
+
+export async function getBibMarcXml(orgId: string, bibId: string) {
+  const result = await requestText(`/api/v1/orgs/${orgId}/bibs/${bibId}/marc`, {
+    method: 'GET',
+    query: { format: 'xml' },
+    accept: 'application/marcxml+xml, application/xml;q=0.9, text/xml;q=0.8, */*;q=0.1',
+  });
+  return result.text;
+}
+
+export async function getBibMarcMrc(orgId: string, bibId: string) {
+  const result = await requestBytes(`/api/v1/orgs/${orgId}/bibs/${bibId}/marc`, {
+    method: 'GET',
+    query: { format: 'mrc' },
+    accept: 'application/octet-stream, application/marc;q=0.9, */*;q=0.1',
+  });
+  return result.bytes;
+}
+
+export async function getBibMarcExtras(orgId: string, bibId: string) {
+  return await requestJson<MarcField[]>(`/api/v1/orgs/${orgId}/bibs/${bibId}/marc-extras`, {
+    method: 'GET',
+  });
+}
+
+export async function updateBibMarcExtras(orgId: string, bibId: string, marc_extras: MarcField[]) {
+  return await requestJson<MarcField[]>(`/api/v1/orgs/${orgId}/bibs/${bibId}/marc-extras`, {
+    method: 'PUT',
+    body: { marc_extras },
+  });
+}
+
+export async function importMarcBatch(
+  orgId: string,
+  input: {
+    actor_user_id: string;
+    mode: MarcImportMode;
+    records: Array<{
+      bib: {
+        title: string;
+        creators?: string[];
+        contributors?: string[];
+        publisher?: string;
+        published_year?: number;
+        language?: string;
+        subjects?: string[];
+        geographics?: string[];
+        genres?: string[];
+        isbn?: string;
+        classification?: string;
+      };
+      marc_extras?: MarcField[];
+    }>;
+    options?: {
+      save_marc_extras?: boolean;
+      upsert_authority_terms?: boolean;
+      authority_vocabulary_code?: string;
+    };
+    decisions?: Array<{ index: number; decision: MarcImportDecision; target_bib_id?: string }>;
+    source_filename?: string;
+    source_note?: string;
+  },
+) {
+  return await requestJson<MarcImportResult>(`/api/v1/orgs/${orgId}/bibs/import-marc`, {
+    method: 'POST',
+    body: input,
+  });
+}
+
+// ----------------------------
+// Authority / Vocabulary v0
+// ----------------------------
+
+export async function listAuthorityTerms(
+  orgId: string,
+  query: {
+    kind: AuthorityTerm['kind'];
+    query?: string;
+    vocabulary_code?: string;
+    status?: 'active' | 'inactive' | 'all';
+    limit?: number;
+    cursor?: string;
+  },
+) {
+  return await requestJson<CursorPage<AuthorityTerm>>(`/api/v1/orgs/${orgId}/authority-terms`, {
+    method: 'GET',
+    query,
+  });
+}
+
+export async function suggestAuthorityTerms(
+  orgId: string,
+  query: {
+    kind: AuthorityTerm['kind'];
+    q: string;
+    vocabulary_code?: string;
+    limit?: number;
+  },
+) {
+  return await requestJson<AuthorityTerm[]>(`/api/v1/orgs/${orgId}/authority-terms/suggest`, {
+    method: 'GET',
+    query,
+  });
+}
+
+export async function createAuthorityTerm(
+  orgId: string,
+  input: {
+    kind: AuthorityTerm['kind'];
+    preferred_label: string;
+    vocabulary_code?: string;
+    variant_labels?: string[];
+    note?: string;
+    status?: AuthorityTerm['status'];
+    source?: string;
+  },
+) {
+  return await requestJson<AuthorityTerm>(`/api/v1/orgs/${orgId}/authority-terms`, {
+    method: 'POST',
+    body: input,
+  });
+}
+
+export async function updateAuthorityTerm(
+  orgId: string,
+  termId: string,
+  input: {
+    preferred_label?: string;
+    vocabulary_code?: string;
+    variant_labels?: string[] | null;
+    note?: string | null;
+    status?: AuthorityTerm['status'];
+    source?: string;
+  },
+) {
+  return await requestJson<AuthorityTerm>(`/api/v1/orgs/${orgId}/authority-terms/${termId}`, {
+    method: 'PATCH',
+    body: input,
+  });
+}
+
+export async function getAuthorityTerm(orgId: string, termId: string) {
+  return await requestJson<AuthorityTermDetail>(`/api/v1/orgs/${orgId}/authority-terms/${termId}`, {
+    method: 'GET',
+  });
+}
+
+export async function getAuthorityTermUsage(
+  orgId: string,
+  termId: string,
+  query?: { limit?: number; cursor?: string },
+) {
+  return await requestJson<AuthorityTermUsageResult>(
+    `/api/v1/orgs/${orgId}/authority-terms/${termId}/usage`,
+    { method: 'GET', query: query ?? {} },
+  );
+}
+
+export async function previewMergeAuthorityTerm(
+  orgId: string,
+  sourceTermId: string,
+  input: {
+    actor_user_id: string;
+    target_term_id: string;
+    deactivate_source_term?: boolean;
+    merge_variant_labels?: boolean;
+    move_relations?: boolean;
+    note?: string;
+  },
+) {
+  return await requestJson<MergeAuthorityTermPreviewResult>(
+    `/api/v1/orgs/${orgId}/authority-terms/${sourceTermId}/merge`,
+    { method: 'POST', body: { ...input, mode: 'preview' } },
+  );
+}
+
+export async function applyMergeAuthorityTerm(
+  orgId: string,
+  sourceTermId: string,
+  input: {
+    actor_user_id: string;
+    target_term_id: string;
+    deactivate_source_term?: boolean;
+    merge_variant_labels?: boolean;
+    move_relations?: boolean;
+    note?: string;
+  },
+) {
+  return await requestJson<MergeAuthorityTermApplyResult>(
+    `/api/v1/orgs/${orgId}/authority-terms/${sourceTermId}/merge`,
+    { method: 'POST', body: { ...input, mode: 'apply' } },
+  );
+}
+
+export async function addAuthorityTermRelation(
+  orgId: string,
+  termId: string,
+  input: { kind: ThesaurusRelationKind; target_term_id: string },
+) {
+  return await requestJson<AuthorityTermDetail>(`/api/v1/orgs/${orgId}/authority-terms/${termId}/relations`, {
+    method: 'POST',
+    body: input,
+  });
+}
+
+export async function deleteAuthorityTermRelation(orgId: string, termId: string, relationId: string) {
+  return await requestJson<AuthorityTermDetail>(
+    `/api/v1/orgs/${orgId}/authority-terms/${termId}/relations/${relationId}`,
+    { method: 'DELETE' },
+  );
+}
+
+export async function expandAuthorityTerm(orgId: string, termId: string, query?: { include?: string; depth?: number }) {
+  return await requestJson<ThesaurusExpandResult>(`/api/v1/orgs/${orgId}/authority-terms/${termId}/expand`, {
+    method: 'GET',
+    query,
+  });
+}
+
+export async function listThesaurusRoots(
+  orgId: string,
+  query: {
+    kind: 'subject' | 'geographic' | 'genre';
+    vocabulary_code: string;
+    status?: 'active' | 'inactive' | 'all';
+    query?: string;
+    limit?: number;
+    cursor?: string;
+  },
+) {
+  return await requestJson<ThesaurusRootsPage>(`/api/v1/orgs/${orgId}/authority-terms/thesaurus/roots`, {
+    method: 'GET',
+    query,
+  });
+}
+
+export async function listThesaurusChildren(
+  orgId: string,
+  termId: string,
+  query?: { status?: 'active' | 'inactive' | 'all'; limit?: number; cursor?: string },
+) {
+  return await requestJson<ThesaurusChildrenPage>(`/api/v1/orgs/${orgId}/authority-terms/${termId}/thesaurus/children`, {
+    method: 'GET',
+    query: query ?? {},
+  });
+}
+
+export async function getThesaurusAncestors(orgId: string, termId: string, query?: { depth?: number; max_paths?: number }) {
+  return await requestJson<ThesaurusAncestorsResult>(`/api/v1/orgs/${orgId}/authority-terms/${termId}/thesaurus/ancestors`, {
+    method: 'GET',
+    query: query ?? {},
+  });
+}
+
+export async function getThesaurusGraph(
+  orgId: string,
+  termId: string,
+  query?: { direction?: 'narrower' | 'broader'; depth?: number; max_nodes?: number; max_edges?: number },
+) {
+  return await requestJson<ThesaurusGraphResult>(`/api/v1/orgs/${orgId}/authority-terms/${termId}/thesaurus/graph`, {
+    method: 'GET',
+    query: query ?? {},
+  });
+}
+
+export async function getThesaurusQuality(
+  orgId: string,
+  query: {
+    kind: 'subject' | 'geographic' | 'genre';
+    vocabulary_code: string;
+    status?: 'active' | 'inactive' | 'all';
+    type: ThesaurusQualityIssueType;
+    limit?: number;
+    cursor?: string;
+  },
+) {
+  return await requestJson<ThesaurusQualityPage>(`/api/v1/orgs/${orgId}/authority-terms/thesaurus/quality`, {
+    method: 'GET',
+    query,
+  });
+}
+
+export async function exportThesaurusRelationsCsv(
+  orgId: string,
+  query: { kind: 'subject' | 'geographic' | 'genre'; vocabulary_code: string },
+) {
+  return await requestText(`/api/v1/orgs/${orgId}/authority-terms/thesaurus/relations/export`, {
+    method: 'GET',
+    query,
+    accept: 'text/csv',
+  });
+}
+
+export async function importThesaurusRelations(
+  orgId: string,
+  input: { kind: 'subject' | 'geographic' | 'genre'; vocabulary_code: string; mode: 'preview' | 'apply'; csv_text: string },
+) {
+  return await requestJson<ThesaurusRelationsImportResult>(`/api/v1/orgs/${orgId}/authority-terms/thesaurus/relations/import`, {
+    method: 'POST',
+    body: input,
+  });
+}
+
 export async function listItems(
   orgId: string,
   filters: {
     barcode?: string;
-    status?: ItemStatus | string;
+    status?: ItemStatus;
     location_id?: string;
     bibliographic_id?: string;
+    limit?: number;
+    cursor?: string;
   },
 ) {
-  return await requestJson<ItemCopy[]>(`/api/v1/orgs/${orgId}/items`, {
+  return await requestJson<CursorPage<ItemCopy>>(`/api/v1/orgs/${orgId}/items`, {
     method: 'GET',
     query: filters,
   });
@@ -1349,7 +2480,7 @@ export async function createItem(
 }
 
 export async function getItem(orgId: string, itemId: string) {
-  return await requestJson<ItemCopy>(`/api/v1/orgs/${orgId}/items/${itemId}`, {
+  return await requestJson<ItemDetail>(`/api/v1/orgs/${orgId}/items/${itemId}`, {
     method: 'GET',
   });
 }
@@ -1495,9 +2626,10 @@ export async function listLoans(
     user_external_id?: string;
     item_barcode?: string;
     limit?: number;
+    cursor?: string;
   },
 ) {
-  return await requestJson<LoanWithDetails[]>(`/api/v1/orgs/${orgId}/loans`, {
+  return await requestJson<CursorPage<LoanWithDetails>>(`/api/v1/orgs/${orgId}/loans`, {
     method: 'GET',
     query: filters,
   });
@@ -1565,9 +2697,10 @@ export async function listHolds(
     bibliographic_id?: string;
     pickup_location_id?: string;
     limit?: number;
+    cursor?: string;
   },
 ) {
-  return await requestJson<HoldWithDetails[]>(`/api/v1/orgs/${orgId}/holds`, {
+  return await requestJson<CursorPage<HoldWithDetails>>(`/api/v1/orgs/${orgId}/holds`, {
     method: 'GET',
     query: filters,
   });

@@ -39,7 +39,15 @@ export default function LoansPage({ params }: { params: { orgId: string } }) {
 
   // ---- loans 查詢 ----
   const [loans, setLoans] = useState<LoanWithDetails[] | null>(null);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [appliedFilters, setAppliedFilters] = useState<{
+    status?: 'open' | 'closed' | 'all';
+    user_external_id?: string;
+    item_barcode?: string;
+    limit?: number;
+  } | null>(null);
   const [loadingLoans, setLoadingLoans] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
 
   // filters（對應 API query params）
   const [status, setStatus] = useState<'open' | 'closed' | 'all'>('open');
@@ -68,18 +76,42 @@ export default function LoansPage({ params }: { params: { orgId: string } }) {
         throw new Error('limit 必須是整數');
       }
 
-      const result = await listLoans(params.orgId, {
+      const filters = {
         status: overrides?.status ?? status,
         user_external_id: userExternalId.trim() || undefined,
         item_barcode: itemBarcode.trim() || undefined,
         limit: limitNumber,
-      });
-      setLoans(result);
+      };
+
+      const result = await listLoans(params.orgId, filters);
+      setLoans(result.items);
+      setNextCursor(result.next_cursor);
+      setAppliedFilters(filters);
     } catch (e) {
       setLoans(null);
+      setNextCursor(null);
+      setAppliedFilters(null);
       setError(formatErrorMessage(e));
     } finally {
       setLoadingLoans(false);
+    }
+  }
+
+  async function loadMoreLoans() {
+    if (!nextCursor || !appliedFilters) return;
+
+    setLoadingMore(true);
+    setError(null);
+    setSuccess(null);
+
+    try {
+      const page = await listLoans(params.orgId, { ...appliedFilters, cursor: nextCursor });
+      setLoans((prev) => [...(prev ?? []), ...page.items]);
+      setNextCursor(page.next_cursor);
+    } catch (e) {
+      setError(formatErrorMessage(e));
+    } finally {
+      setLoadingMore(false);
     }
   }
 
@@ -246,56 +278,64 @@ export default function LoansPage({ params }: { params: { orgId: string } }) {
         {!loadingLoans && loans && loans.length === 0 ? <p className="muted">沒有符合條件的 loans。</p> : null}
 
         {!loadingLoans && loans && loans.length > 0 ? (
-          <ul>
-            {loans.map((l) => (
-              <li key={l.id} style={{ marginBottom: 14 }}>
-                <div style={{ display: 'grid', gap: 4 }}>
-                  <div>
-                    <Link href={`/orgs/${params.orgId}/bibs/${l.bibliographic_id}`}>
-                      <span style={{ fontWeight: 700 }}>{l.bibliographic_title}</span>
-                    </Link>{' '}
-                    <span className="muted">({l.status})</span>
-                  </div>
-
-                  <div className="muted">
-                    borrower：{l.user_name} · external_id={l.user_external_id} · role={l.user_role}
-                  </div>
-
-                  <div className="muted">
-                    item：{' '}
-                    <Link href={`/orgs/${params.orgId}/items/${l.item_id}`}>{l.item_barcode}</Link> · status=
-                    {l.item_status} · call_number={l.item_call_number}
-                  </div>
-
-                  <div className={l.is_overdue ? 'error' : 'muted'}>
-                    due_at={l.due_at}
-                    {l.is_overdue ? '（逾期）' : ''}
-                    {' · '}
-                    renewed_count={l.renewed_count}
-                  </div>
-
-                  <div className="muted" style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>
-                    loan_id={l.id}
-                  </div>
-
-                  {/* 只有 open loans 才顯示續借按鈕 */}
-                  {l.returned_at === null ? (
+          <div className="stack">
+            <ul>
+              {loans.map((l) => (
+                <li key={l.id} style={{ marginBottom: 14 }}>
+                  <div style={{ display: 'grid', gap: 4 }}>
                     <div>
-                      <button
-                        type="button"
-                        onClick={() => void onRenew(l.id)}
-                        disabled={renewingLoanId === l.id}
-                      >
-                        {renewingLoanId === l.id ? '續借中…' : '續借'}
-                      </button>
+                      <Link href={`/orgs/${params.orgId}/bibs/${l.bibliographic_id}`}>
+                        <span style={{ fontWeight: 700 }}>{l.bibliographic_title}</span>
+                      </Link>{' '}
+                      <span className="muted">({l.status})</span>
                     </div>
-                  ) : (
-                    <div className="muted">returned_at={l.returned_at}</div>
-                  )}
-                </div>
-              </li>
-            ))}
-          </ul>
+
+                    <div className="muted">
+                      borrower：{l.user_name} · external_id={l.user_external_id} · role={l.user_role}
+                    </div>
+
+                    <div className="muted">
+                      item：{' '}
+                      <Link href={`/orgs/${params.orgId}/items/${l.item_id}`}>{l.item_barcode}</Link> · status=
+                      {l.item_status} · call_number={l.item_call_number}
+                    </div>
+
+                    <div className={l.is_overdue ? 'error' : 'muted'}>
+                      due_at={l.due_at}
+                      {l.is_overdue ? '（逾期）' : ''}
+                      {' · '}
+                      renewed_count={l.renewed_count}
+                    </div>
+
+                    <div className="muted" style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>
+                      loan_id={l.id}
+                    </div>
+
+                    {/* 只有 open loans 才顯示續借按鈕 */}
+                    {l.returned_at === null ? (
+                      <div>
+                        <button
+                          type="button"
+                          onClick={() => void onRenew(l.id)}
+                          disabled={renewingLoanId === l.id}
+                        >
+                          {renewingLoanId === l.id ? '續借中…' : '續借'}
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="muted">returned_at={l.returned_at}</div>
+                    )}
+                  </div>
+                </li>
+              ))}
+            </ul>
+
+            {nextCursor ? (
+              <button type="button" onClick={() => void loadMoreLoans()} disabled={loadingMore || loadingLoans}>
+                {loadingMore ? '載入中…' : '載入更多'}
+              </button>
+            ) : null}
+          </div>
         ) : null}
       </section>
     </div>

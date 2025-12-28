@@ -72,10 +72,43 @@ export default function OrgLayout({
               <Link href={`/orgs/${orgId}/circulation-policies`}>Circulation Policies</Link>
             </li>
             <li>
+              <Link href={`/orgs/${orgId}/authority`}>Authority Control（主控入口）</Link>
+            </li>
+            <li>
+              <Link href={`/orgs/${orgId}/authority-terms`}>Authority Terms（權威控制）</Link>
+            </li>
+            <li>
+              <Link href={`/orgs/${orgId}/authority-terms/thesaurus`}>Thesaurus（主題詞樹）</Link>
+            </li>
+            <li>
+              <Link href={`/orgs/${orgId}/authority-terms/thesaurus/visual`}>Thesaurus Visual Editor</Link>
+            </li>
+            <li>
               <Link href={`/orgs/${orgId}/bibs`}>Bibs</Link>
             </li>
             <li>
               <Link href={`/orgs/${orgId}/bibs/import`}>Catalog CSV Import</Link>
+            </li>
+            <li>
+              <Link href={`/orgs/${orgId}/bibs/import-marc`}>MARC Import</Link>
+            </li>
+            <li>
+              <Link href={`/orgs/${orgId}/bibs/marc-editor`}>MARC21 編輯器</Link>
+            </li>
+            <li>
+              <Link href={`/orgs/${orgId}/bibs/marc-dictionary`}>MARC 欄位字典</Link>
+            </li>
+            <li>
+              <Link href={`/orgs/${orgId}/bibs/maintenance/backfill-name-terms`}>Bibs Name Backfill</Link>
+            </li>
+            <li>
+              <Link href={`/orgs/${orgId}/bibs/maintenance/backfill-subject-terms`}>Bibs Subject Backfill</Link>
+            </li>
+            <li>
+              <Link href={`/orgs/${orgId}/bibs/maintenance/backfill-geographic-terms`}>Bibs Geographic Backfill</Link>
+            </li>
+            <li>
+              <Link href={`/orgs/${orgId}/bibs/maintenance/backfill-genre-terms`}>Bibs Genre Backfill</Link>
             </li>
             <li>
               <Link href={`/orgs/${orgId}/items`}>Items</Link>

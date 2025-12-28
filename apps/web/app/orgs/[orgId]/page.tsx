@@ -85,11 +85,16 @@ export default function OrgDashboardPage({ params }: { params: { orgId: string }
             <div className="muted">快速入口（Web Console）</div>
             <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 8 }}>
               <Link href={`/orgs/${org.id}/login`}>Staff Login</Link>
+              <Link href={`/orgs/${org.id}/authority`}>Authority Control（主控入口）</Link>
+              <Link href={`/orgs/${org.id}/authority-terms`}>Authority Terms</Link>
+              <Link href={`/orgs/${org.id}/authority-terms/thesaurus`}>Thesaurus</Link>
               <Link href={`/orgs/${org.id}/users`}>Users</Link>
               <Link href={`/orgs/${org.id}/users/import`}>Users CSV Import</Link>
               <Link href={`/orgs/${org.id}/circulation-policies`}>Policies</Link>
               <Link href={`/orgs/${org.id}/bibs`}>Bibs</Link>
               <Link href={`/orgs/${org.id}/bibs/import`}>Catalog CSV Import</Link>
+              <Link href={`/orgs/${org.id}/bibs/import-marc`}>MARC Import</Link>
+              <Link href={`/orgs/${org.id}/bibs/marc-editor`}>MARC21 編輯器</Link>
               <Link href={`/orgs/${org.id}/items`}>Items</Link>
               <Link href={`/orgs/${org.id}/inventory`}>Inventory</Link>
               <Link href={`/orgs/${org.id}/circulation`}>Circulation</Link>

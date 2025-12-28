@@ -70,6 +70,16 @@ export default function HoldsPage({ params }: { params: { orgId: string } }) {
 
   const [holds, setHolds] = useState<HoldWithDetails[] | null>(null);
   const [loadingHolds, setLoadingHolds] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [appliedFilters, setAppliedFilters] = useState<{
+    status?: HoldStatus | 'all';
+    user_external_id?: string;
+    item_barcode?: string;
+    bibliographic_id?: string;
+    pickup_location_id?: string;
+    limit?: number;
+  } | null>(null);
 
   // filters（對應 API query params）
   const [status, setStatus] = useState<HoldStatus | 'all'>('ready');
@@ -181,12 +191,41 @@ export default function HoldsPage({ params }: { params: { orgId: string } }) {
         limit: limitNumber,
       });
 
-      setHolds(result);
+      setHolds(result.items);
+      setNextCursor(result.next_cursor);
+      setAppliedFilters({
+        status: effectiveStatus,
+        user_external_id: effectiveUserExternalId.trim() || undefined,
+        item_barcode: effectiveItemBarcode.trim() || undefined,
+        bibliographic_id: effectiveBibliographicId.trim() || undefined,
+        pickup_location_id: effectivePickupLocationId.trim() || undefined,
+        limit: limitNumber,
+      });
     } catch (e) {
       setHolds(null);
+      setNextCursor(null);
+      setAppliedFilters(null);
       setError(formatErrorMessage(e));
     } finally {
       setLoadingHolds(false);
+    }
+  }
+
+  async function loadMoreHolds() {
+    if (!nextCursor || !appliedFilters) return;
+
+    setLoadingMore(true);
+    setError(null);
+    setSuccess(null);
+
+    try {
+      const page = await listHolds(params.orgId, { ...appliedFilters, cursor: nextCursor });
+      setHolds((prev) => [...(prev ?? []), ...page.items]);
+      setNextCursor(page.next_cursor);
+    } catch (e) {
+      setError(formatErrorMessage(e));
+    } finally {
+      setLoadingMore(false);
     }
   }
 
@@ -541,77 +580,88 @@ export default function HoldsPage({ params }: { params: { orgId: string } }) {
         {!loadingHolds && holds && holds.length === 0 ? <p className="muted">沒有符合條件的 holds。</p> : null}
 
         {!loadingHolds && holds && holds.length > 0 ? (
-          <ul>
-            {holds.map((h) => (
-              <li key={h.id} style={{ marginBottom: 14 }}>
-                <div style={{ display: 'grid', gap: 6 }}>
-                  <div>
-                    <Link href={`/orgs/${params.orgId}/bibs/${h.bibliographic_id}`}>
-                      <span style={{ fontWeight: 700 }}>{h.bibliographic_title}</span>
-                    </Link>{' '}
-                    <span className="muted">({h.status})</span>
-                  </div>
+          <div className="stack">
+            <ul>
+              {holds.map((h) => (
+                <li key={h.id} style={{ marginBottom: 14 }}>
+                  <div style={{ display: 'grid', gap: 6 }}>
+                    <div>
+                      <Link href={`/orgs/${params.orgId}/bibs/${h.bibliographic_id}`}>
+                        <span style={{ fontWeight: 700 }}>{h.bibliographic_title}</span>
+                      </Link>{' '}
+                      <span className="muted">({h.status})</span>
+                    </div>
 
-                  <div className="muted">
-                    borrower：{h.user_name} · external_id={h.user_external_id} · role={h.user_role}
-                  </div>
+                    <div className="muted">
+                      borrower：{h.user_name} · external_id={h.user_external_id} · role={h.user_role}
+                    </div>
 
-                  <div className="muted">
-                    pickup：{h.pickup_location_code} · {h.pickup_location_name}
-                  </div>
+                    <div className="muted">
+                      pickup：{h.pickup_location_code} · {h.pickup_location_name}
+                    </div>
 
-                  <div className="muted">
-                    assigned_item：
-                    {h.assigned_item_id ? (
-                      <>
-                        {' '}
-                        <Link href={`/orgs/${params.orgId}/items/${h.assigned_item_id}`}>
-                          {h.assigned_item_barcode ?? h.assigned_item_id}
-                        </Link>{' '}
-                        · status={h.assigned_item_status ?? 'null'}
-                      </>
-                    ) : (
-                      '（尚未指派）'
-                    )}
-                  </div>
+                    <div className="muted">
+                      assigned_item：
+                      {h.assigned_item_id ? (
+                        <>
+                          {' '}
+                          <Link href={`/orgs/${params.orgId}/items/${h.assigned_item_id}`}>
+                            {h.assigned_item_barcode ?? h.assigned_item_id}
+                          </Link>{' '}
+                          · status={h.assigned_item_status ?? 'null'}
+                        </>
+                      ) : (
+                        '（尚未指派）'
+                      )}
+                    </div>
 
-                  <div className="muted">
-                    placed_at={h.placed_at}
-                    {h.ready_until ? ` · ready_until=${h.ready_until}` : ''}
-                    {h.cancelled_at ? ` · cancelled_at=${h.cancelled_at}` : ''}
-                    {h.fulfilled_at ? ` · fulfilled_at=${h.fulfilled_at}` : ''}
-                  </div>
+                    <div className="muted">
+                      placed_at={h.placed_at}
+                      {h.ready_until ? ` · ready_until=${h.ready_until}` : ''}
+                      {h.cancelled_at ? ` · cancelled_at=${h.cancelled_at}` : ''}
+                      {h.fulfilled_at ? ` · fulfilled_at=${h.fulfilled_at}` : ''}
+                    </div>
 
-                  <div className="muted" style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>
-                    hold_id={h.id}
-                  </div>
+                    <div
+                      className="muted"
+                      style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}
+                    >
+                      hold_id={h.id}
+                    </div>
 
-                  {/* 動作按鈕：只對 queued/ready 顯示 cancel；只對 ready 顯示 fulfill */}
-                  <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-                    {h.status === 'queued' || h.status === 'ready' ? (
-                      <button
-                        type="button"
-                        onClick={() => void onCancelHold(h.id)}
-                        disabled={cancellingHoldId === h.id || fulfillingHoldId === h.id}
-                      >
-                        {cancellingHoldId === h.id ? '取消中…' : '取消'}
-                      </button>
-                    ) : null}
+                    {/* 動作按鈕：只對 queued/ready 顯示 cancel；只對 ready 顯示 fulfill */}
+                    <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+                      {h.status === 'queued' || h.status === 'ready' ? (
+                        <button
+                          type="button"
+                          onClick={() => void onCancelHold(h.id)}
+                          disabled={cancellingHoldId === h.id || fulfillingHoldId === h.id}
+                        >
+                          {cancellingHoldId === h.id ? '取消中…' : '取消'}
+                        </button>
+                      ) : null}
 
-                    {h.status === 'ready' ? (
-                      <button
-                        type="button"
-                        onClick={() => void onFulfillHold(h.id)}
-                        disabled={fulfillingHoldId === h.id || cancellingHoldId === h.id}
-                      >
-                        {fulfillingHoldId === h.id ? '取書借出中…' : '取書借出（fulfill）'}
-                      </button>
-                    ) : null}
+                      {h.status === 'ready' ? (
+                        <button
+                          type="button"
+                          onClick={() => void onFulfillHold(h.id)}
+                          disabled={fulfillingHoldId === h.id || cancellingHoldId === h.id}
+                        >
+                          {fulfillingHoldId === h.id ? '取書借出中…' : '取書借出（fulfill）'}
+                        </button>
+                      ) : null}
+                    </div>
                   </div>
-                </div>
-              </li>
-            ))}
-          </ul>
+                </li>
+              ))}
+            </ul>
+
+            {nextCursor ? (
+              <button type="button" onClick={() => void loadMoreHolds()} disabled={loadingMore || loadingHolds}>
+                {loadingMore ? '載入中…' : '載入更多'}
+              </button>
+            ) : null}
+          </div>
         ) : null}
       </section>
     </div>

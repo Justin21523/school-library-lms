@@ -199,11 +199,12 @@ export default function CirculationPage({ params }: { params: { orgId: string } 
       // 1) 先查「這個冊條碼目前對應到哪一筆 ready hold」
       // - 正常情況應該只會有 1 筆
       // - 若回傳多筆（資料不一致或歷史資料），我們讓館員手動選要 fulfill 哪一筆
-      const candidates = await listHolds(params.orgId, {
+      const page = await listHolds(params.orgId, {
         status: 'ready',
         item_barcode: trimmedBarcode,
         limit: 5,
       });
+      const candidates = page.items;
 
       setFulfillCandidates(candidates);
 

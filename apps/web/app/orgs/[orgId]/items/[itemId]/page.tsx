@@ -25,7 +25,7 @@ import { useEffect, useMemo, useState } from 'react';
 
 import Link from 'next/link';
 
-import type { ItemCopy, Location } from '../../../../lib/api';
+import type { ItemCopy, ItemDetail, Location } from '../../../../lib/api';
 import {
   getItem,
   listLocations,
@@ -49,6 +49,8 @@ export default function ItemDetailPage({
   const actorUserId = session?.user.id ?? '';
 
   const [item, setItem] = useState<ItemCopy | null>(null);
+  const [currentLoan, setCurrentLoan] = useState<ItemDetail['current_loan']>(null);
+  const [assignedHold, setAssignedHold] = useState<ItemDetail['assigned_hold']>(null);
   const [locations, setLocations] = useState<Location[] | null>(null);
 
   const [loading, setLoading] = useState(false);
@@ -81,6 +83,10 @@ export default function ItemDetailPage({
   const [marking, setMarking] = useState<'lost' | 'repair' | 'withdrawn' | null>(null);
 
   const locationOptions = useMemo(() => locations ?? [], [locations]);
+  const assignedHoldPickupLocation = useMemo(() => {
+    if (!assignedHold || !locations) return null;
+    return locations.find((l) => l.id === assignedHold.pickup_location_id) ?? null;
+  }, [assignedHold, locations]);
 
   async function refreshAll() {
     setLoading(true);
@@ -91,10 +97,14 @@ export default function ItemDetailPage({
         listLocations(params.orgId),
       ]);
 
-      setItem(itemResult);
+      setItem(itemResult.item);
+      setCurrentLoan(itemResult.current_loan);
+      setAssignedHold(itemResult.assigned_hold);
       setLocations(locationsResult);
     } catch (e) {
       setItem(null);
+      setCurrentLoan(null);
+      setAssignedHold(null);
       setLocations(null);
       setError(formatErrorMessage(e));
     } finally {
@@ -289,6 +299,49 @@ export default function ItemDetailPage({
               bibliographic_id：{' '}
               <Link href={`/orgs/${params.orgId}/bibs/${item.bibliographic_id}`}>{item.bibliographic_id}</Link>
             </div>
+
+            <hr style={{ border: 0, borderTop: '1px solid var(--border)', margin: '12px 0' }} />
+
+            <div>
+              <div className="muted">組合狀態（Item + Circulation）</div>
+
+              {currentLoan ? (
+                <div className="muted" style={{ marginTop: 6 }}>
+                  open loan：borrower={currentLoan.user_name} · external_id={currentLoan.user_external_id} · due_at=
+                  {currentLoan.due_at}
+                </div>
+              ) : (
+                <div className="muted" style={{ marginTop: 6 }}>
+                  open loan：無
+                </div>
+              )}
+
+              {assignedHold ? (
+                <div className="muted" style={{ marginTop: 6 }}>
+                  assigned ready hold：user={assignedHold.user_name} · external_id={assignedHold.user_external_id}
+                  {assignedHold.ready_until ? ` · ready_until=${assignedHold.ready_until}` : ''}
+                  {assignedHoldPickupLocation
+                    ? ` · pickup=${assignedHoldPickupLocation.code} · ${assignedHoldPickupLocation.name}`
+                    : ` · pickup_location_id=${assignedHold.pickup_location_id}`}
+                </div>
+              ) : (
+                <div className="muted" style={{ marginTop: 6 }}>
+                  assigned ready hold：無
+                </div>
+              )}
+
+              {/* 基本一致性提示：幫助你在 scale seed/測試時快速看出狀態不一致 */}
+              {currentLoan && item.status !== 'checked_out' ? (
+                <div className="error" style={{ marginTop: 8 }}>
+                  注意：存在 open loan，但 item.status 不是 checked_out（可能有資料不一致）
+                </div>
+              ) : null}
+              {assignedHold && item.status !== 'on_hold' ? (
+                <div className="error" style={{ marginTop: 8 }}>
+                  注意：存在 assigned ready hold，但 item.status 不是 on_hold（可能有資料不一致）
+                </div>
+              ) : null}
+            </div>
           </div>
         ) : null}
       </section>
@@ -418,8 +471,8 @@ export default function ItemDetailPage({
             <select value={locationId} onChange={(e) => setLocationId(e.target.value)} disabled={!updateLocationId}>
               <option value="">（請選擇）</option>
               {locationOptions.map((loc) => (
-                <option key={loc.id} value={loc.id}>
-                  {loc.name} ({loc.code})
+                <option key={loc.id} value={loc.id} disabled={loc.status !== 'active'}>
+                  {loc.name} ({loc.code}){loc.status !== 'active' ? '（inactive）' : ''}
                 </option>
               ))}
             </select>

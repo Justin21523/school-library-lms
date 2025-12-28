@@ -2,14 +2,20 @@
  * Circulation Policies Page（/orgs/:orgId/circulation-policies）
  *
  * 對應 API：
- * - GET  /api/v1/orgs/:orgId/circulation-policies
- * - POST /api/v1/orgs/:orgId/circulation-policies
+ * - GET   /api/v1/orgs/:orgId/circulation-policies
+ * - POST  /api/v1/orgs/:orgId/circulation-policies
+ * - PATCH /api/v1/orgs/:orgId/circulation-policies/:policyId
  *
- * 借還（checkout）會依 borrower.role 找到對應 policy：
- * - student / teacher 的 loan_days / max_loans 等規則都在這裡設定
+ * 需求（US-002）：
+ * - 可建立 student/teacher 的借閱政策（借期、上限、續借、預約、逾期停權）
+ * - 有「有效政策（active/default）」機制，避免只能靠 created_at 最新一筆的隱性規則
+ *
+ * 本頁採用的治理規則（MVP）：
+ * - 同一 org + audience_role 同時只能有一筆 is_active=true（後端用 DB partial unique index 保證）
+ * - 建立新政策時，後端會先把同 role 的舊 active 全部設為 inactive，再插入新政策為 active
+ *   → 你可以把它視為「建立新版本並立即生效」
  */
 
-// 需要載入列表與表單互動，因此用 Client Component。
 'use client';
 
 import { useEffect, useState } from 'react';
@@ -17,9 +23,16 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 
 import type { CirculationPolicy } from '../../../lib/api';
-import { createPolicy, listPolicies } from '../../../lib/api';
+import { createPolicy, listPolicies, updatePolicy } from '../../../lib/api';
 import { formatErrorMessage } from '../../../lib/error';
 import { useStaffSession } from '../../../lib/use-staff-session';
+
+// 把數字欄位從字串轉成 int，並做最基本的檢查（讓錯誤在前端就能被看懂）。
+function parseIntField(label: string, value: string) {
+  const n = Number.parseInt(value.trim(), 10);
+  if (!Number.isFinite(n)) throw new Error(`${label} 必須是整數`);
+  return n;
+}
 
 export default function CirculationPoliciesPage({ params }: { params: { orgId: string } }) {
   // staff session：circulation policies 屬於 staff 設定主檔，受 StaffAuthGuard 保護。
@@ -28,11 +41,15 @@ export default function CirculationPoliciesPage({ params }: { params: { orgId: s
   // policies：目前載入到的政策列表（null 代表尚未載入）。
   const [policies, setPolicies] = useState<CirculationPolicy[] | null>(null);
 
-  // loading/error：控制 UI。
+  // loading/error/success：控制 UI。
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
 
-  // 建立 policy 表單欄位（用 string 方便與 <input type="number"> 互動）。
+  // ----------------------------
+  // 建立 policy（表單）
+  // ----------------------------
+
   const [code, setCode] = useState('');
   const [name, setName] = useState('');
   const [audienceRole, setAudienceRole] = useState<CirculationPolicy['audience_role']>('student');
@@ -43,6 +60,22 @@ export default function CirculationPoliciesPage({ params }: { params: { orgId: s
   const [holdPickupDays, setHoldPickupDays] = useState('3');
   const [overdueBlockDays, setOverdueBlockDays] = useState('7');
   const [creating, setCreating] = useState(false);
+
+  // ----------------------------
+  // 編輯/設為有效（PATCH）
+  // ----------------------------
+
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editCode, setEditCode] = useState('');
+  const [editName, setEditName] = useState('');
+  const [editLoanDays, setEditLoanDays] = useState('14');
+  const [editMaxLoans, setEditMaxLoans] = useState('5');
+  const [editMaxRenewals, setEditMaxRenewals] = useState('1');
+  const [editMaxHolds, setEditMaxHolds] = useState('3');
+  const [editHoldPickupDays, setEditHoldPickupDays] = useState('3');
+  const [editOverdueBlockDays, setEditOverdueBlockDays] = useState('7');
+
+  const [updatingId, setUpdatingId] = useState<string | null>(null);
 
   async function refresh() {
     setLoading(true);
@@ -64,13 +97,6 @@ export default function CirculationPoliciesPage({ params }: { params: { orgId: s
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [params.orgId, sessionReady, session]);
 
-  // 把數字欄位從字串轉成 int，並做最基本的檢查。
-  function parseIntField(label: string, value: string) {
-    const n = Number.parseInt(value.trim(), 10);
-    if (!Number.isFinite(n)) throw new Error(`${label} 必須是整數`);
-    return n;
-  }
-
   async function onCreate(e: React.FormEvent) {
     e.preventDefault();
 
@@ -88,6 +114,7 @@ export default function CirculationPoliciesPage({ params }: { params: { orgId: s
 
     setCreating(true);
     setError(null);
+    setSuccess(null);
 
     try {
       await createPolicy(params.orgId, {
@@ -105,11 +132,119 @@ export default function CirculationPoliciesPage({ params }: { params: { orgId: s
       // 成功後清空（或保留部分預設值）；MVP 先清空 code/name，數字保留便於連續建立。
       setCode('');
       setName('');
+      setSuccess(`已建立政策（role=${audienceRole}），並設為有效（active）`);
       await refresh();
     } catch (e) {
       setError(formatErrorMessage(e));
     } finally {
       setCreating(false);
+    }
+  }
+
+  function startEdit(p: CirculationPolicy) {
+    setEditingId(p.id);
+    setEditCode(p.code);
+    setEditName(p.name);
+    setEditLoanDays(String(p.loan_days));
+    setEditMaxLoans(String(p.max_loans));
+    setEditMaxRenewals(String(p.max_renewals));
+    setEditMaxHolds(String(p.max_holds));
+    setEditHoldPickupDays(String(p.hold_pickup_days));
+    setEditOverdueBlockDays(String(p.overdue_block_days));
+  }
+
+  function cancelEdit() {
+    setEditingId(null);
+    setEditCode('');
+    setEditName('');
+    setEditLoanDays('14');
+    setEditMaxLoans('5');
+    setEditMaxRenewals('1');
+    setEditMaxHolds('3');
+    setEditHoldPickupDays('3');
+    setEditOverdueBlockDays('7');
+  }
+
+  async function onSaveEdit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!editingId) return;
+
+    const p = (policies ?? []).find((x) => x.id === editingId);
+    if (!p) {
+      setError('找不到要編輯的 policy（請重新整理）');
+      return;
+    }
+
+    const trimmedCode = editCode.trim();
+    const trimmedName = editName.trim();
+    if (!trimmedCode) {
+      setError('code 不可為空');
+      return;
+    }
+    if (!trimmedName) {
+      setError('name 不可為空');
+      return;
+    }
+
+    const payload: Parameters<typeof updatePolicy>[2] = {};
+
+    if (trimmedCode !== p.code) payload.code = trimmedCode;
+    if (trimmedName !== p.name) payload.name = trimmedName;
+
+    const nextLoanDays = parseIntField('loan_days', editLoanDays);
+    const nextMaxLoans = parseIntField('max_loans', editMaxLoans);
+    const nextMaxRenewals = parseIntField('max_renewals', editMaxRenewals);
+    const nextMaxHolds = parseIntField('max_holds', editMaxHolds);
+    const nextHoldPickupDays = parseIntField('hold_pickup_days', editHoldPickupDays);
+    const nextOverdueBlockDays = parseIntField('overdue_block_days', editOverdueBlockDays);
+
+    if (nextLoanDays !== p.loan_days) payload.loan_days = nextLoanDays;
+    if (nextMaxLoans !== p.max_loans) payload.max_loans = nextMaxLoans;
+    if (nextMaxRenewals !== p.max_renewals) payload.max_renewals = nextMaxRenewals;
+    if (nextMaxHolds !== p.max_holds) payload.max_holds = nextMaxHolds;
+    if (nextHoldPickupDays !== p.hold_pickup_days) payload.hold_pickup_days = nextHoldPickupDays;
+    if (nextOverdueBlockDays !== p.overdue_block_days) payload.overdue_block_days = nextOverdueBlockDays;
+
+    if (Object.keys(payload).length === 0) {
+      setError('沒有任何變更需要儲存');
+      return;
+    }
+
+    setUpdatingId(editingId);
+    setError(null);
+    setSuccess(null);
+    try {
+      await updatePolicy(params.orgId, editingId, payload);
+      setSuccess('已更新政策');
+      await refresh();
+      cancelEdit();
+    } catch (e) {
+      setError(formatErrorMessage(e));
+    } finally {
+      setUpdatingId(null);
+    }
+  }
+
+  async function activatePolicy(p: CirculationPolicy) {
+    if (p.is_active) return;
+
+    const ok = window.confirm(
+      `確認要把「${p.name}（${p.code}）」設為有效政策嗎？\n\n同角色（${p.audience_role}）的其他有效政策將會自動被停用。`,
+    );
+    if (!ok) return;
+
+    setUpdatingId(p.id);
+    setError(null);
+    setSuccess(null);
+    try {
+      await updatePolicy(params.orgId, p.id, { is_active: true });
+      setSuccess(`已設為有效：role=${p.audience_role}`);
+      await refresh();
+      if (editingId === p.id) cancelEdit();
+    } catch (e) {
+      setError(formatErrorMessage(e));
+    } finally {
+      setUpdatingId(null);
     }
   }
 
@@ -144,14 +279,18 @@ export default function CirculationPoliciesPage({ params }: { params: { orgId: s
       <section className="panel">
         <h1 style={{ marginTop: 0 }}>Circulation Policies</h1>
         <p className="muted">
-          對應 API：<code>GET/POST /api/v1/orgs/:orgId/circulation-policies</code>
+          對應 API：<code>GET/POST/PATCH /api/v1/orgs/:orgId/circulation-policies</code>
+        </p>
+
+        <p className="muted">
+          提醒：建立新政策後會<strong>自動</strong>設為有效（active），並停用同角色的舊有效政策（保留做為歷史版本）。
         </p>
 
         <form onSubmit={onCreate} className="stack" style={{ marginTop: 16 }}>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
             <label>
-              code（小寫/數字/dash；同 org 內唯一）
-              <input value={code} onChange={(e) => setCode(e.target.value)} placeholder="例：student-default" />
+              code（英數/dash；同 org 內唯一）
+              <input value={code} onChange={(e) => setCode(e.target.value)} placeholder="例：STUDENT_DEFAULT" />
             </label>
 
             <label>
@@ -200,41 +339,128 @@ export default function CirculationPoliciesPage({ params }: { params: { orgId: s
           </label>
 
           <button type="submit" disabled={creating}>
-            {creating ? '建立中…' : '建立 Policy'}
+            {creating ? '建立中…' : '建立 Policy（並設為有效）'}
           </button>
         </form>
 
         {error ? <p className="error">錯誤：{error}</p> : null}
+        {success ? <p className="success">{success}</p> : null}
       </section>
 
       <section className="panel">
         <h2 style={{ marginTop: 0 }}>列表</h2>
         {loading ? <p className="muted">載入中…</p> : null}
 
-        {!loading && policies && policies.length === 0 ? (
-          <p className="muted">目前沒有 policies。</p>
-        ) : null}
+        {!loading && policies && policies.length === 0 ? <p className="muted">目前沒有 policies。</p> : null}
 
         {!loading && policies && policies.length > 0 ? (
           <ul>
-            {policies.map((p) => (
-              <li key={p.id} style={{ marginBottom: 10 }}>
-                <div style={{ display: 'grid', gap: 2 }}>
-                  <div>
-                    <span style={{ fontWeight: 700 }}>{p.name}</span>{' '}
-                    <span className="muted">({p.code})</span>
+            {policies.map((p) => {
+              const isEditing = editingId === p.id;
+              const isUpdating = updatingId === p.id;
+
+              return (
+                <li key={p.id} style={{ marginBottom: 14 }}>
+                  <div style={{ display: 'grid', gap: 6 }}>
+                    <div style={{ display: 'flex', gap: 12, alignItems: 'baseline', flexWrap: 'wrap' }}>
+                      <span style={{ fontWeight: 700 }}>{p.name}</span>
+                      <span className="muted">({p.code})</span>
+                      <span className="muted">role={p.audience_role}</span>
+                      {p.is_active ? <span className="success">active</span> : <span className="muted">inactive</span>}
+                    </div>
+
+                    <div className="muted">
+                      loan_days={p.loan_days} · max_loans={p.max_loans} · max_renewals={p.max_renewals} · max_holds=
+                      {p.max_holds} · hold_pickup_days={p.hold_pickup_days} · overdue_block_days={p.overdue_block_days}
+                    </div>
+
+                    <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+                      <button type="button" onClick={() => startEdit(p)} disabled={isUpdating || isEditing}>
+                        編輯
+                      </button>
+                      {!p.is_active ? (
+                        <button type="button" onClick={() => void activatePolicy(p)} disabled={isUpdating}>
+                          設為有效
+                        </button>
+                      ) : null}
+                    </div>
+
+                    {isEditing ? (
+                      <form onSubmit={onSaveEdit} className="stack" style={{ marginTop: 8 }}>
+                        <p className="muted">
+                          編輯中：policy_id=<code>{p.id}</code>（audience_role=<code>{p.audience_role}</code>）
+                        </p>
+
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                          <label>
+                            code（英數/dash）
+                            <input value={editCode} onChange={(e) => setEditCode(e.target.value)} />
+                          </label>
+
+                          <label>
+                            name
+                            <input value={editName} onChange={(e) => setEditName(e.target.value)} />
+                          </label>
+                        </div>
+
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 12 }}>
+                          <label>
+                            loan_days
+                            <input type="number" value={editLoanDays} onChange={(e) => setEditLoanDays(e.target.value)} />
+                          </label>
+                          <label>
+                            max_loans
+                            <input type="number" value={editMaxLoans} onChange={(e) => setEditMaxLoans(e.target.value)} />
+                          </label>
+                          <label>
+                            max_renewals
+                            <input
+                              type="number"
+                              value={editMaxRenewals}
+                              onChange={(e) => setEditMaxRenewals(e.target.value)}
+                            />
+                          </label>
+                          <label>
+                            max_holds
+                            <input type="number" value={editMaxHolds} onChange={(e) => setEditMaxHolds(e.target.value)} />
+                          </label>
+                          <label>
+                            hold_pickup_days
+                            <input
+                              type="number"
+                              value={editHoldPickupDays}
+                              onChange={(e) => setEditHoldPickupDays(e.target.value)}
+                            />
+                          </label>
+                        </div>
+
+                        <label>
+                          overdue_block_days
+                          <input
+                            type="number"
+                            value={editOverdueBlockDays}
+                            onChange={(e) => setEditOverdueBlockDays(e.target.value)}
+                          />
+                        </label>
+
+                        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+                          <button type="submit" disabled={updatingId === p.id}>
+                            {updatingId === p.id ? '儲存中…' : '儲存'}
+                          </button>
+                          <button type="button" onClick={cancelEdit} disabled={updatingId === p.id}>
+                            取消
+                          </button>
+                        </div>
+                      </form>
+                    ) : null}
                   </div>
-                  <div className="muted">
-                    role={p.audience_role} · loan_days={p.loan_days} · max_loans={p.max_loans} ·
-                    max_renewals={p.max_renewals} · max_holds={p.max_holds} · hold_pickup_days=
-                    {p.hold_pickup_days} · overdue_block_days={p.overdue_block_days}
-                  </div>
-                </div>
-              </li>
-            ))}
+                </li>
+              );
+            })}
           </ul>
         ) : null}
       </section>
     </div>
   );
 }
+

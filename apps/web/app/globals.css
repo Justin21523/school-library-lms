@@ -124,6 +124,37 @@ a:hover {
   color: var(--success);
 }
 
+/* callout：用於「重要提示/警告」的區塊（避免每頁都重複寫 inline style） */
+.callout {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.callout.warn {
+  border-color: rgba(255, 107, 107, 0.5);
+  background: rgba(255, 107, 107, 0.08);
+}
+
+/* pill：chips/標籤（用於 term-based picker 等「多選且可排序」的 UI） */
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.06);
+  font-size: 13px;
+  line-height: 1.2;
+}
+
+.pill button {
+  padding: 4px 8px;
+  border-radius: 999px;
+}
+
 /* 表單：先用最小樣式讓 MVP 可操作 */
 label {
   display: grid;
@@ -154,3 +185,22 @@ button:hover {
   background: rgba(255, 255, 255, 0.12);
 }
 
+/* 小尺寸按鈕：用於「快捷新增」「展開/收合」這類不該佔太多版面的控件 */
+.btnSmall {
+  padding: 6px 10px;
+  border-radius: 999px;
+  font-size: 13px;
+}
+
+/* 文字按鈕：看起來像 link，適合 breadcrumbs/在列表中點選 */
+.btnLink {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--link);
+  cursor: pointer;
+}
+.btnLink:hover {
+  background: transparent;
+  text-decoration: underline;
+}

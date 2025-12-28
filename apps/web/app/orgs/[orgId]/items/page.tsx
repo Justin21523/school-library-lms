@@ -26,7 +26,17 @@ export default function ItemsPage({ params }: { params: { orgId: string } }) {
   const { ready: sessionReady, session } = useStaffSession(params.orgId);
 
   const [items, setItems] = useState<ItemCopy[] | null>(null);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [appliedFilters, setAppliedFilters] = useState<{
+    barcode?: string;
+    status?: ItemStatus;
+    location_id?: string;
+    bibliographic_id?: string;
+    limit?: number;
+  } | null>(null);
+
   const [loading, setLoading] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   // 篩選條件（對應 API query params）。
@@ -44,13 +54,41 @@ export default function ItemsPage({ params }: { params: { orgId: string } }) {
     setLoading(true);
     setError(null);
     try {
-      const result = await listItems(params.orgId, filters ?? {});
-      setItems(result);
+      // 這頁的 filter 都是可選；空物件代表「列出最新 items」。
+      const effective = (filters ?? {}) as {
+        barcode?: string;
+        status?: ItemStatus;
+        location_id?: string;
+        bibliographic_id?: string;
+      };
+
+      const result = await listItems(params.orgId, effective);
+      setItems(result.items);
+      setNextCursor(result.next_cursor);
+      setAppliedFilters(effective);
     } catch (e) {
       setItems(null);
+      setNextCursor(null);
+      setAppliedFilters(null);
       setError(formatErrorMessage(e));
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function loadMore() {
+    if (!nextCursor || !appliedFilters) return;
+
+    setLoadingMore(true);
+    setError(null);
+    try {
+      const page = await listItems(params.orgId, { ...appliedFilters, cursor: nextCursor });
+      setItems((prev) => [...(prev ?? []), ...page.items]);
+      setNextCursor(page.next_cursor);
+    } catch (e) {
+      setError(formatErrorMessage(e));
+    } finally {
+      setLoadingMore(false);
     }
   }
 
@@ -164,21 +202,29 @@ export default function ItemsPage({ params }: { params: { orgId: string } }) {
         {!loading && items && items.length === 0 ? <p className="muted">沒有符合條件的 items。</p> : null}
 
         {!loading && items && items.length > 0 ? (
-          <ul>
-            {items.map((i) => (
-              <li key={i.id} style={{ marginBottom: 10 }}>
-                <div style={{ display: 'grid', gap: 2 }}>
-                  <div>
-                    <Link href={`/orgs/${params.orgId}/items/${i.id}`}>{i.barcode}</Link>{' '}
-                    <span className="muted">({i.status})</span>
+          <div className="stack">
+            <ul>
+              {items.map((i) => (
+                <li key={i.id} style={{ marginBottom: 10 }}>
+                  <div style={{ display: 'grid', gap: 2 }}>
+                    <div>
+                      <Link href={`/orgs/${params.orgId}/items/${i.id}`}>{i.barcode}</Link>{' '}
+                      <span className="muted">({i.status})</span>
+                    </div>
+                    <div className="muted">call_number={i.call_number}</div>
+                    <div className="muted">location_id={i.location_id}</div>
+                    <div className="muted">bibliographic_id={i.bibliographic_id}</div>
                   </div>
-                  <div className="muted">call_number={i.call_number}</div>
-                  <div className="muted">location_id={i.location_id}</div>
-                  <div className="muted">bibliographic_id={i.bibliographic_id}</div>
-                </div>
-              </li>
-            ))}
-          </ul>
+                </li>
+              ))}
+            </ul>
+
+            {nextCursor ? (
+              <button type="button" onClick={() => void loadMore()} disabled={loadingMore || loading}>
+                {loadingMore ? '載入中…' : '載入更多'}
+              </button>
+            ) : null}
+          </div>
         ) : null}
       </section>
     </div>

@@ -5,7 +5,7 @@
  * - 讓讀者登入後查看自己的借閱清單（open/closed/all）
  *
  * 對應 API（PatronAuthGuard）：
- * - GET /api/v1/orgs/:orgId/me/loans?status=&limit=
+ * - GET /api/v1/orgs/:orgId/me/loans?status=&limit=&cursor=
  *
  * 設計重點：
  * - 與 staff /loans 回傳 shape 保持一致（LoanWithDetails），方便未來共用 UI
@@ -29,6 +29,12 @@ export default function OpacMyLoansPage({ params }: { params: { orgId: string } 
 
   const [loans, setLoans] = useState<LoanWithDetails[] | null>(null);
   const [loading, setLoading] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [appliedFilters, setAppliedFilters] = useState<{
+    status: 'open' | 'closed' | 'all';
+    limit?: number;
+  } | null>(null);
 
   const [status, setStatus] = useState<'open' | 'closed' | 'all'>('open');
   const [limit, setLimit] = useState('200');
@@ -40,28 +46,54 @@ export default function OpacMyLoansPage({ params }: { params: { orgId: string } 
     return `${session.user.name}（${session.user.role}）· ${session.user.external_id}`;
   }, [session]);
 
-  async function refresh() {
+  async function refresh(overrides?: { status: 'open' | 'closed' | 'all'; limit: string }) {
     setLoading(true);
     setError(null);
 
     try {
-      const trimmedLimit = limit.trim();
+      // 注意：清除按鈕會「同時 setState + 重新查詢」；
+      // React state 更新是非同步，因此 refresh 允許帶 overrides 確保查詢用的是新值。
+      const effectiveStatus = overrides?.status ?? status;
+      const effectiveLimitText = overrides?.limit ?? limit;
+
+      const trimmedLimit = effectiveLimitText.trim();
       const limitNumber = trimmedLimit ? Number.parseInt(trimmedLimit, 10) : undefined;
       if (trimmedLimit && !Number.isFinite(limitNumber)) {
         throw new Error('limit 必須是整數');
       }
 
-      const result = await listMyLoans(params.orgId, {
-        status,
+      const page = await listMyLoans(params.orgId, {
+        status: effectiveStatus,
         limit: limitNumber,
       });
 
-      setLoans(result);
+      setLoans(page.items);
+      setNextCursor(page.next_cursor);
+      setAppliedFilters({ status: effectiveStatus, limit: limitNumber });
     } catch (e) {
       setLoans(null);
+      setNextCursor(null);
+      setAppliedFilters(null);
       setError(formatErrorMessage(e));
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function loadMore() {
+    if (!nextCursor || !appliedFilters) return;
+
+    setLoadingMore(true);
+    setError(null);
+
+    try {
+      const page = await listMyLoans(params.orgId, { ...appliedFilters, cursor: nextCursor });
+      setLoans((prev) => [...(prev ?? []), ...page.items]);
+      setNextCursor(page.next_cursor);
+    } catch (e) {
+      setError(formatErrorMessage(e));
+    } finally {
+      setLoadingMore(false);
     }
   }
 
@@ -110,7 +142,7 @@ export default function OpacMyLoansPage({ params }: { params: { orgId: string } 
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, alignItems: 'end' }}>
             <label>
               status
-              <select value={status} onChange={(e) => setStatus(e.target.value as any)}>
+              <select value={status} onChange={(e) => setStatus(e.target.value as 'open' | 'closed' | 'all')}>
                 <option value="open">open（未歸還）</option>
                 <option value="closed">closed（已歸還）</option>
                 <option value="all">all（全部）</option>
@@ -130,9 +162,11 @@ export default function OpacMyLoansPage({ params }: { params: { orgId: string } 
             <button
               type="button"
               onClick={() => {
-                setStatus('open');
-                setLimit('200');
-                void refresh();
+                const nextStatus: 'open' | 'closed' | 'all' = 'open';
+                const nextLimit = '200';
+                setStatus(nextStatus);
+                setLimit(nextLimit);
+                void refresh({ status: nextStatus, limit: nextLimit });
               }}
               disabled={loading}
             >
@@ -151,35 +185,45 @@ export default function OpacMyLoansPage({ params }: { params: { orgId: string } 
         {!loading && loans && loans.length === 0 ? <p className="muted">沒有符合條件的借閱。</p> : null}
 
         {!loading && loans && loans.length > 0 ? (
-          <ul>
-            {loans.map((l) => (
-              <li key={l.id} style={{ marginBottom: 14 }}>
-                <div style={{ display: 'grid', gap: 6 }}>
-                  <div>
-                    <span style={{ fontWeight: 700 }}>{l.bibliographic_title}</span>{' '}
-                    <span className="muted">
-                      ({l.status}
-                      {l.is_overdue ? ' · overdue' : ''})
-                    </span>
-                  </div>
+          <div className="stack">
+            <ul>
+              {loans.map((l) => (
+                <li key={l.id} style={{ marginBottom: 14 }}>
+                  <div style={{ display: 'grid', gap: 6 }}>
+                    <div>
+                      <span style={{ fontWeight: 700 }}>{l.bibliographic_title}</span>{' '}
+                      <span className="muted">
+                        ({l.status}
+                        {l.is_overdue ? ' · overdue' : ''})
+                      </span>
+                    </div>
 
-                  <div className="muted">
-                    item_barcode={l.item_barcode} · call_number={l.item_call_number}
-                  </div>
+                    <div className="muted">
+                      item_barcode={l.item_barcode} · call_number={l.item_call_number}
+                    </div>
 
-                  <div className="muted">checked_out_at={l.checked_out_at}</div>
-                  <div className="muted">due_at={l.due_at}</div>
+                    <div className="muted">checked_out_at={l.checked_out_at}</div>
+                    <div className="muted">due_at={l.due_at}</div>
 
-                  <div className="muted" style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>
-                    loan_id={l.id}
+                    <div
+                      className="muted"
+                      style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}
+                    >
+                      loan_id={l.id}
+                    </div>
                   </div>
-                </div>
-              </li>
-            ))}
-          </ul>
+                </li>
+              ))}
+            </ul>
+
+            {nextCursor ? (
+              <button type="button" onClick={() => void loadMore()} disabled={loadingMore || loading}>
+                {loadingMore ? '載入中…' : '載入更多'}
+              </button>
+            ) : null}
+          </div>
         ) : null}
       </section>
     </div>
   );
 }
-

@@ -108,7 +108,9 @@ export default function OrgLoginPage({ params }: { params: { orgId: string } }) 
               <>
                 <br />
                 <span className="muted">
-                  提示：此帳號尚未設定密碼；請由 admin 使用 bootstrap 或 set-password 先設定。
+                  提示：此帳號尚未設定密碼；若是第一次初始化，可用{' '}
+                  <Link href={`/orgs/${params.orgId}/bootstrap-set-password`}>Bootstrap Set Password</Link>（需要{' '}
+                  <code>AUTH_BOOTSTRAP_SECRET</code>）。
                 </span>
               </>
             ) : null}

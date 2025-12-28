@@ -87,6 +87,13 @@ export default function InventoryPage({ params }: { params: { orgId: string } })
   const [sessions, setSessions] = useState<InventorySessionWithDetails[] | null>(null);
   const [loadingSessions, setLoadingSessions] = useState(false);
 
+  // sessions filters（查詢條件）
+  // - API 支援 location_id/status/limit，但 MVP UI 先前只固定抓最近 50 筆
+  // - scale seed 下 sessions 可能很多；加上 filter 才能更快定位要回看的那一次盤點
+  const [sessionsLocationFilter, setSessionsLocationFilter] = useState(''); // '' = all
+  const [sessionsStatusFilter, setSessionsStatusFilter] = useState<'all' | 'open' | 'closed'>('all');
+  const [sessionsLimit, setSessionsLimit] = useState('50');
+
   // currentSessionId：目前正在操作/查看的 session（可以是 open 或 closed）
   const [currentSessionId, setCurrentSessionId] = useState<string>('');
 
@@ -168,15 +175,55 @@ export default function InventoryPage({ params }: { params: { orgId: string } })
     }
   }
 
-  async function refreshSessionsList() {
+  async function refreshSessionsList(overrides?: {
+    location_id?: string; // '' = all
+    status?: 'all' | 'open' | 'closed';
+    limit?: number;
+  }) {
     setLoadingSessions(true);
     setError(null);
     try {
-      const result = await listInventorySessions(params.orgId, { limit: 50 });
+      // 重要：React state 更新是「非同步」的。
+      // - 像 onStartSession/onCloseSession 會先 setSessionsStatusFilter(...) 再 refresh；
+      // - 若 refreshSessionsList 只讀 state，會讀到舊值，造成「UI 顯示的 filter 與實際查詢不一致」。
+      // 因此這裡支援 overrides：需要立即套用的 filter 用參數傳進來，並同步更新 state。
+      const effectiveLocationId =
+        overrides?.location_id !== undefined ? overrides.location_id : sessionsLocationFilter;
+      const effectiveStatus =
+        overrides?.status !== undefined ? overrides.status : sessionsStatusFilter;
+
+      if (overrides?.location_id !== undefined) setSessionsLocationFilter(overrides.location_id);
+      if (overrides?.status !== undefined) setSessionsStatusFilter(overrides.status);
+      if (overrides?.limit !== undefined) setSessionsLimit(String(overrides.limit));
+
+      // limit：避免一次拉太多（預設 50）
+      let limitNumber: number | undefined = overrides?.limit;
+      if (limitNumber === undefined) {
+        const trimmed = sessionsLimit.trim();
+        limitNumber = trimmed ? Number.parseInt(trimmed, 10) : undefined;
+        if (trimmed && !Number.isFinite(limitNumber)) {
+          // 這裡不直接 throw：避免在「開始/關閉 session」這種流程中因為輸入框打錯而整個中斷。
+          // - 我們回報錯誤給使用者，但仍用預設值 50 繼續。
+          setError('sessions limit 必須是整數（已改用預設 50）');
+          limitNumber = undefined;
+        }
+      }
+
+      const result = await listInventorySessions(params.orgId, {
+        ...(effectiveLocationId ? { location_id: effectiveLocationId } : {}),
+        ...(effectiveStatus !== 'all' ? { status: effectiveStatus } : {}),
+        ...(limitNumber ? { limit: limitNumber } : { limit: 50 }),
+      });
       setSessions(result);
 
-      // UX：若尚未選任何 session，就預設選第一筆（最新）
-      if (!currentSessionId && result.length > 0) setCurrentSessionId(result[0]!.id);
+      // UX：確保 currentSessionId 永遠指向「清單內存在的那一筆」：
+      // - 使用者改了 filter 之後，舊的 currentSessionId 可能不在清單內
+      // - 這時自動切到第一筆（最新）會比顯示空白更可用
+      setCurrentSessionId((prev) => {
+        if (result.length === 0) return '';
+        if (!prev) return result[0]!.id;
+        return result.some((s) => s.id === prev) ? prev : result[0]!.id;
+      });
     } catch (e) {
       setSessions(null);
       setError(formatErrorMessage(e));
@@ -226,7 +273,9 @@ export default function InventoryPage({ params }: { params: { orgId: string } })
       });
 
       // 1) 重新抓 sessions（讓清單與統計一致）
-      await refreshSessionsList();
+      // UX：開始盤點後，sessions 篩選自動切到「此 location 的 open sessions」
+      // - 讓新建的 session 一定會出現在清單內，也更符合櫃台實際使用（只關注正在盤點的地點）
+      await refreshSessionsList({ location_id: locationId, status: 'open' });
 
       // 2) 切換目前 session（立即進入掃描模式）
       setCurrentSessionId(created.id);
@@ -338,7 +387,10 @@ export default function InventoryPage({ params }: { params: { orgId: string } })
       setSuccess(`已關閉盤點：audit_event_id=${result.audit_event_id}`);
 
       // 重新整理 sessions 清單（讓 closed_at、統計更新）
-      await refreshSessionsList();
+      // UX：關閉 session 後，sessions 可能從 open → closed；
+      // 若使用者先前用 status=open 篩選，關閉後會「消失」造成看不到結果。
+      // 因此我們自動切回 all，確保能回看剛關閉的那一次盤點與差異清單。
+      await refreshSessionsList({ status: 'all' });
 
       // UX：關閉後自動拉一次差異清單（讓使用者立即看到結果）
       await runDiff();
@@ -489,6 +541,49 @@ export default function InventoryPage({ params }: { params: { orgId: string } })
       {/* 選擇 session（回看/切換） */}
       <section className="panel">
         <h2 style={{ marginTop: 0 }}>選擇盤點 session</h2>
+
+        {/* sessions filters：小缺口補齊（location/status） */}
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            void refreshSessionsList();
+          }}
+          style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'end' }}
+        >
+          <label>
+            篩選 location（選填）
+            <select value={sessionsLocationFilter} onChange={(e) => setSessionsLocationFilter(e.target.value)}>
+              <option value="">（全部 locations）</option>
+              {(locations ?? []).map((l) => (
+                <option key={l.id} value={l.id}>
+                  {l.code} · {l.name}
+                  {l.status === 'inactive' ? '（inactive）' : ''}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label>
+            篩選 status
+            <select
+              value={sessionsStatusFilter}
+              onChange={(e) => setSessionsStatusFilter(e.target.value as 'all' | 'open' | 'closed')}
+            >
+              <option value="all">all（全部）</option>
+              <option value="open">open（未關閉）</option>
+              <option value="closed">closed（已關閉）</option>
+            </select>
+          </label>
+
+          <label>
+            limit（最近 N 筆）
+            <input value={sessionsLimit} onChange={(e) => setSessionsLimit(e.target.value)} placeholder="50" />
+          </label>
+
+          <button type="submit" disabled={loadingSessions}>
+            {loadingSessions ? '查詢中…' : '套用篩選'}
+          </button>
+        </form>
 
         <label>
           最近 sessions（最新在最上方）
@@ -798,4 +893,3 @@ export default function InventoryPage({ params }: { params: { orgId: string } })
     </div>
   );
 }
-

@@ -41,8 +41,20 @@ export default function UsersPage({ params }: { params: { orgId: string } }) {
   // users：目前載入到的 user 列表（null 代表尚未載入）。
   const [users, setUsers] = useState<User[] | null>(null);
 
+  // nextCursor：cursor pagination 的下一頁游標（null 代表沒有下一頁或尚未查詢）。
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+
+  // appliedFilters：目前列表實際採用的 filters（避免使用者改了輸入但沒按搜尋，卻拿舊 cursor 續查造成錯亂）
+  const [appliedFilters, setAppliedFilters] = useState<{
+    query?: string;
+    role?: User['role'];
+    status?: User['status'];
+    limit?: number;
+  } | null>(null);
+
   // loading/error：控制 UI 狀態。
   const [loading, setLoading] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
@@ -74,6 +86,18 @@ export default function UsersPage({ params }: { params: { orgId: string } }) {
   const [orgUnit, setOrgUnit] = useState('');
   const [creating, setCreating] = useState(false);
 
+  // editDraft：更正主檔（一次只編一位，避免同時展開多個表單造成混亂）
+  // - 後端支援 PATCH name/role/org_unit/status（US-011）
+  // - 這裡先把更正主檔落地：name/role/org_unit（status 仍保留「停用/啟用」按鈕）
+  const [editDraft, setEditDraft] = useState<{
+    userId: string;
+    external_id: string;
+    name: string;
+    role: User['role'];
+    org_unit: string; // UI 用 string；送出時空字串會轉成 null（清空）
+  } | null>(null);
+  const [savingEdit, setSavingEdit] = useState(false);
+
   // 設定/重設密碼（避免同時點多個）
   const [settingPasswordUserId, setSettingPasswordUserId] = useState<string | null>(null);
 
@@ -81,6 +105,7 @@ export default function UsersPage({ params }: { params: { orgId: string } }) {
     setLoading(true);
     setError(null);
     setSuccess(null);
+    setEditDraft(null); // 重新查詢時關閉編輯表單，避免編輯的是舊資料/舊 cursor
     try {
       const trimmedLimit = limit.trim();
       const limitNumber = trimmedLimit ? Number.parseInt(trimmedLimit, 10) : undefined;
@@ -88,19 +113,48 @@ export default function UsersPage({ params }: { params: { orgId: string } }) {
         throw new Error('limit 必須是整數');
       }
 
-      const result = await listUsers(params.orgId, {
+      const filters = {
         query: query.trim() || undefined,
         role: roleFilter || undefined,
         status: statusFilter || undefined,
         limit: limitNumber,
-      });
+      };
 
-      setUsers(result);
+      const result = await listUsers(params.orgId, filters);
+
+      setUsers(result.items);
+      setNextCursor(result.next_cursor);
+      setAppliedFilters(filters);
     } catch (e) {
       setUsers(null);
+      setNextCursor(null);
+      setAppliedFilters(null);
       setError(formatErrorMessage(e));
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function loadMore() {
+    // 沒有 nextCursor 就代表沒有下一頁（或還沒查過）。
+    if (!nextCursor || !appliedFilters) return;
+
+    setLoadingMore(true);
+    setError(null);
+    setSuccess(null);
+
+    try {
+      const page = await listUsers(params.orgId, {
+        ...appliedFilters,
+        cursor: nextCursor,
+      });
+
+      setUsers((prev) => [...(prev ?? []), ...page.items]);
+      setNextCursor(page.next_cursor);
+    } catch (e) {
+      setError(formatErrorMessage(e));
+    } finally {
+      setLoadingMore(false);
     }
   }
 
@@ -149,7 +203,6 @@ export default function UsersPage({ params }: { params: { orgId: string } }) {
       setName('');
       setRole('student');
       setOrgUnit('');
-      setSuccess('已建立 User');
 
       // UX：建立後回到「全列表」，避免使用者以為沒成功（因為被 filter 擋掉）
       setQuery('');
@@ -157,6 +210,7 @@ export default function UsersPage({ params }: { params: { orgId: string } }) {
       setStatusFilter('');
       setLimit('200');
       await refresh();
+      setSuccess('已建立 User');
     } catch (e) {
       setError(formatErrorMessage(e));
     } finally {
@@ -188,10 +242,78 @@ export default function UsersPage({ params }: { params: { orgId: string } }) {
         ...(actionNote.trim() ? { note: actionNote.trim() } : {}),
       });
 
-      setSuccess(`已更新使用者狀態：${user.external_id} → ${desired}`);
       await refresh();
+      setSuccess(`已更新使用者狀態：${user.external_id} → ${desired}`);
     } catch (e) {
       setError(formatErrorMessage(e));
+    }
+  }
+
+  /**
+   * 更正主檔（name/role/org_unit）
+   *
+   * 對應 API：
+   * - PATCH /api/v1/orgs/:orgId/users/:userId
+   *
+   * 權限提醒（對齊後端 UsersService.update）：
+   * - actor 必須是 admin/librarian
+   * - librarian 不可修改 staff（admin/librarian），也不可把人升級成 staff
+   * - 這裡的 UI 先做「最小防呆」：librarian 看不到 staff 的編輯入口；角色選單也不提供 staff
+   */
+  function startEdit(user: User) {
+    setError(null);
+    setSuccess(null);
+
+    setEditDraft({
+      userId: user.id,
+      external_id: user.external_id,
+      name: user.name,
+      role: user.role,
+      org_unit: user.org_unit ?? '',
+    });
+  }
+
+  function cancelEdit() {
+    setEditDraft(null);
+  }
+
+  async function saveEdit() {
+    if (!editDraft) return;
+
+    setError(null);
+    setSuccess(null);
+
+    if (!actorUserId) {
+      setError('缺少 actor_user_id（請先登入）');
+      return;
+    }
+
+    const trimmedName = editDraft.name.trim();
+    if (!trimmedName) {
+      setError('name 不可為空');
+      return;
+    }
+
+    // org_unit：空字串 → null（清空）；非空 → trim 後送出
+    const trimmedOrgUnit = editDraft.org_unit.trim();
+    const orgUnitOrNull = trimmedOrgUnit ? trimmedOrgUnit : null;
+
+    setSavingEdit(true);
+    try {
+      await updateUser(params.orgId, editDraft.userId, {
+        actor_user_id: actorUserId,
+        name: trimmedName,
+        role: editDraft.role,
+        org_unit: orgUnitOrNull,
+        ...(actionNote.trim() ? { note: actionNote.trim() } : {}),
+      });
+
+      await refresh();
+      setSuccess(`已更正使用者資料：${editDraft.external_id}`);
+    } catch (e) {
+      setError(formatErrorMessage(e));
+    } finally {
+      setSavingEdit(false);
     }
   }
 
@@ -414,58 +536,178 @@ export default function UsersPage({ params }: { params: { orgId: string } }) {
         {!loading && users && users.length === 0 ? <p className="muted">沒有符合條件的 users。</p> : null}
 
         {!loading && users && users.length > 0 ? (
-          <ul>
-            {users.map((u) => (
-              <li key={u.id} style={{ marginBottom: 10 }}>
-                <div style={{ display: 'grid', gap: 6 }}>
-                  <div>
-                    <span style={{ fontWeight: 700 }}>{u.name}</span>{' '}
-                    <span className="muted">
-                      ({u.role}, {u.status})
-                    </span>
-                  </div>
-                  <div className="muted">
-                    external_id={u.external_id}
-                    {u.org_unit ? ` · org_unit=${u.org_unit}` : ''}
-                  </div>
-                  <div className="muted" style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>
-                    id={u.id}
-                  </div>
-
-                  <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-                    <button
-                      type="button"
-                      onClick={() => void toggleUserStatus(u)}
-                      disabled={!actorUserId || loading}
-                      title={!actorUserId ? '缺少 actor_user_id（請先登入）' : undefined}
+          <div className="stack">
+            <ul>
+              {users.map((u) => (
+                <li key={u.id} style={{ marginBottom: 10 }}>
+                  <div style={{ display: 'grid', gap: 6 }}>
+                    <div>
+                      <span style={{ fontWeight: 700 }}>{u.name}</span>{' '}
+                      <span className="muted">
+                        ({u.role}, {u.status})
+                      </span>
+                    </div>
+                    <div className="muted">
+                      external_id={u.external_id}
+                      {u.org_unit ? ` · org_unit=${u.org_unit}` : ''}
+                    </div>
+                    <div
+                      className="muted"
+                      style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}
                     >
-                      {u.status === 'active' ? '停用' : '啟用'}
-                    </button>
+                      id={u.id}
+                    </div>
 
-                    <button
-                      type="button"
-                      onClick={() => void onSetPassword(u)}
-                      disabled={
-                        !actorUserId ||
-                        loading ||
-                        settingPasswordUserId === u.id ||
-                        u.role === 'guest'
-                      }
-                      title={
-                        u.role === 'guest'
-                          ? 'guest 不支援設定密碼'
-                          : !actorUserId
-                            ? '缺少 actor_user_id（請先登入）'
-                            : undefined
-                      }
-                    >
-                      {settingPasswordUserId === u.id ? '設定中…' : '設定/重設密碼'}
-                    </button>
+                    <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+                      {/* 更正主檔（name/role/org_unit） */}
+                      {session.user.role === 'librarian' && (u.role === 'admin' || u.role === 'librarian') ? (
+                        <button
+                          type="button"
+                          disabled
+                          title="librarian 不可修改 staff（admin/librarian）帳號；需由 admin 操作"
+                        >
+                          更正資料
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => startEdit(u)}
+                          disabled={!actorUserId || loading}
+                          title={!actorUserId ? '缺少 actor_user_id（請先登入）' : undefined}
+                        >
+                          更正資料
+                        </button>
+                      )}
+
+                      <button
+                        type="button"
+                        onClick={() => void toggleUserStatus(u)}
+                        disabled={
+                          !actorUserId ||
+                          loading ||
+                          (session.user.role === 'librarian' && (u.role === 'admin' || u.role === 'librarian'))
+                        }
+                        title={
+                          session.user.role === 'librarian' && (u.role === 'admin' || u.role === 'librarian')
+                            ? 'librarian 不可修改 staff（admin/librarian）帳號；需由 admin 操作'
+                            : !actorUserId
+                              ? '缺少 actor_user_id（請先登入）'
+                              : undefined
+                        }
+                      >
+                        {u.status === 'active' ? '停用' : '啟用'}
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => void onSetPassword(u)}
+                        disabled={
+                          !actorUserId ||
+                          loading ||
+                          settingPasswordUserId === u.id ||
+                          u.role === 'guest'
+                        }
+                        title={
+                          u.role === 'guest'
+                            ? 'guest 不支援設定密碼'
+                            : !actorUserId
+                              ? '缺少 actor_user_id（請先登入）'
+                              : undefined
+                        }
+                      >
+                        {settingPasswordUserId === u.id ? '設定中…' : '設定/重設密碼'}
+                      </button>
+                    </div>
+
+                    {/* 編輯表單：只展開在正在編輯的那一位 */}
+                    {editDraft && editDraft.userId === u.id ? (
+                      <form
+                        className="stack"
+                        style={{
+                          marginTop: 8,
+                          padding: 12,
+                          border: '1px solid var(--border)',
+                          borderRadius: 8,
+                          background: 'rgba(255, 255, 255, 0.03)',
+                        }}
+                        onSubmit={(e) => {
+                          e.preventDefault();
+                          void saveEdit();
+                        }}
+                      >
+                        <div className="muted">
+                          更正：<code>{u.external_id}</code>（external_id 不可在此頁更改）
+                        </div>
+
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                          <label>
+                            name（姓名）
+                            <input
+                              value={editDraft.name}
+                              onChange={(e) => setEditDraft({ ...editDraft, name: e.target.value })}
+                            />
+                          </label>
+
+                          <label>
+                            org_unit（班級/單位；留空=清空）
+                            <input
+                              value={editDraft.org_unit}
+                              onChange={(e) => setEditDraft({ ...editDraft, org_unit: e.target.value })}
+                              placeholder="例：501"
+                            />
+                          </label>
+                        </div>
+
+                        <label>
+                          role（角色）
+                          <select
+                            value={editDraft.role}
+                            onChange={(e) =>
+                              setEditDraft({ ...editDraft, role: e.target.value as User['role'] })
+                            }
+                          >
+                            {session.user.role === 'admin' ? (
+                              <>
+                                <option value="student">student（學生）</option>
+                                <option value="teacher">teacher（教師）</option>
+                                <option value="librarian">librarian（館員）</option>
+                                <option value="admin">admin（管理者）</option>
+                                <option value="guest">guest（訪客）</option>
+                              </>
+                            ) : (
+                              <>
+                                <option value="student">student（學生）</option>
+                                <option value="teacher">teacher（教師）</option>
+                                <option value="guest">guest（訪客）</option>
+                              </>
+                            )}
+                          </select>
+                          <div className="muted" style={{ marginTop: 6 }}>
+                            備註：此更正會共用上方的 note（寫入 audit metadata）。
+                          </div>
+                        </label>
+
+                        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+                          <button type="submit" disabled={savingEdit || loading}>
+                            {savingEdit ? '儲存中…' : '儲存更正'}
+                          </button>
+                          <button type="button" onClick={cancelEdit} disabled={savingEdit || loading}>
+                            取消
+                          </button>
+                        </div>
+                      </form>
+                    ) : null}
                   </div>
-                </div>
-              </li>
-            ))}
-          </ul>
+                </li>
+              ))}
+            </ul>
+
+            {nextCursor ? (
+              <button type="button" onClick={() => void loadMore()} disabled={loadingMore || loading}>
+                {loadingMore ? '載入中…' : '載入更多'}
+              </button>
+            ) : null}
+          </div>
         ) : null}
       </section>
     </div>

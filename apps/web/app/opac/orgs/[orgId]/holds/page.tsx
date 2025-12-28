@@ -33,7 +33,7 @@ export default function OpacHoldsPage({ params }: { params: { orgId: string } })
   // 讀者輸入（可由 query string 預填，提升跨頁體驗）
   const [userExternalId, setUserExternalId] = useState('');
 
-  // status filter：OPAC 預設看全部（ready 會被排在最前面）
+  // status filter：OPAC 預設看全部（可依需求切到 ready/queued）
   const [status, setStatus] = useState<HoldStatus | 'all'>('all');
 
   // limit：避免一次載入過多（預設 200）
@@ -42,6 +42,13 @@ export default function OpacHoldsPage({ params }: { params: { orgId: string } })
   // list 結果與狀態
   const [holds, setHolds] = useState<HoldWithDetails[] | null>(null);
   const [loading, setLoading] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [appliedFilters, setAppliedFilters] = useState<
+    | { mode: 'me'; status?: HoldStatus | 'all'; limit?: number }
+    | { mode: 'external'; status?: HoldStatus | 'all'; user_external_id: string; limit?: number }
+    | null
+  >(null);
 
   // cancel 動作狀態
   const [cancellingHoldId, setCancellingHoldId] = useState<string | null>(null);
@@ -80,27 +87,68 @@ export default function OpacHoldsPage({ params }: { params: { orgId: string } })
       // 依登入狀態選擇 API：
       // - 已登入：/me/holds（安全）
       // - 未登入：/holds?user_external_id=...（過渡、不安全）
-      const result = session
-        ? await listMyHolds(params.orgId, {
-            status,
-            limit: limitNumber,
-          })
-        : await (async () => {
-            const trimmed = userExternalId.trim();
-            if (!trimmed) throw new Error('請輸入 user_external_id（學號/員編）');
-            return await listHolds(params.orgId, {
-              status,
-              user_external_id: trimmed,
-              limit: limitNumber,
-            });
-          })();
+      if (session) {
+        const page = await listMyHolds(params.orgId, {
+          status,
+          limit: limitNumber,
+        });
 
-      setHolds(result);
+        setHolds(page.items);
+        setNextCursor(page.next_cursor);
+        setAppliedFilters({ mode: 'me', status, limit: limitNumber });
+      } else {
+        const trimmed = userExternalId.trim();
+        if (!trimmed) throw new Error('請輸入 user_external_id（學號/員編）');
+
+        const filters = {
+          status,
+          user_external_id: trimmed,
+          limit: limitNumber,
+        };
+
+        const page = await listHolds(params.orgId, filters);
+        setHolds(page.items);
+        setNextCursor(page.next_cursor);
+        setAppliedFilters({ mode: 'external', ...filters });
+      }
     } catch (e) {
       setHolds(null);
+      setNextCursor(null);
+      setAppliedFilters(null);
       setError(formatErrorMessage(e));
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function loadMore() {
+    if (!nextCursor || !appliedFilters) return;
+
+    setLoadingMore(true);
+    setError(null);
+    setSuccess(null);
+
+    try {
+      const page =
+        appliedFilters.mode === 'me'
+          ? await listMyHolds(params.orgId, {
+              status: appliedFilters.status,
+              limit: appliedFilters.limit,
+              cursor: nextCursor,
+            })
+          : await listHolds(params.orgId, {
+              status: appliedFilters.status,
+              user_external_id: appliedFilters.user_external_id,
+              limit: appliedFilters.limit,
+              cursor: nextCursor,
+            });
+
+      setHolds((prev) => [...(prev ?? []), ...page.items]);
+      setNextCursor(page.next_cursor);
+    } catch (e) {
+      setError(formatErrorMessage(e));
+    } finally {
+      setLoadingMore(false);
     }
   }
 
@@ -128,8 +176,8 @@ export default function OpacHoldsPage({ params }: { params: { orgId: string } })
       const result = session
         ? await cancelMyHold(params.orgId, holdId)
         : await cancelHold(params.orgId, holdId, {});
-      setSuccess(`已取消：hold_id=${result.id}`);
       await refresh();
+      setSuccess(`已取消：hold_id=${result.id}`);
     } catch (e) {
       setError(formatErrorMessage(e));
     } finally {
@@ -215,44 +263,61 @@ export default function OpacHoldsPage({ params }: { params: { orgId: string } })
         {!loading && holds && holds.length === 0 ? <p className="muted">沒有符合條件的預約。</p> : null}
 
         {!loading && holds && holds.length > 0 ? (
-          <ul>
-            {holds.map((h) => (
-              <li key={h.id} style={{ marginBottom: 14 }}>
-                <div style={{ display: 'grid', gap: 6 }}>
-                  <div>
-                    <span style={{ fontWeight: 700 }}>{h.bibliographic_title}</span>{' '}
-                    <span className="muted">({h.status})</span>
-                  </div>
-
-                  <div className="muted">
-                    pickup：{h.pickup_location_code} · {h.pickup_location_name}
-                  </div>
-
-                  <div className="muted">
-                    assigned_item：
-                    {h.assigned_item_barcode ? ` ${h.assigned_item_barcode} · ${h.assigned_item_status}` : '（尚未指派）'}
-                  </div>
-
-                  <div className="muted">
-                    placed_at={h.placed_at}
-                    {h.ready_until ? ` · ready_until=${h.ready_until}` : ''}
-                  </div>
-
-                  <div className="muted" style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>
-                    hold_id={h.id}
-                  </div>
-
-                  {h.status === 'queued' || h.status === 'ready' ? (
+          <div className="stack">
+            <ul>
+              {holds.map((h) => (
+                <li key={h.id} style={{ marginBottom: 14 }}>
+                  <div style={{ display: 'grid', gap: 6 }}>
                     <div>
-                      <button type="button" onClick={() => void onCancel(h.id)} disabled={cancellingHoldId === h.id}>
-                        {cancellingHoldId === h.id ? '取消中…' : '取消'}
-                      </button>
+                      <span style={{ fontWeight: 700 }}>{h.bibliographic_title}</span>{' '}
+                      <span className="muted">({h.status})</span>
                     </div>
-                  ) : null}
-                </div>
-              </li>
-            ))}
-          </ul>
+
+                    <div className="muted">
+                      pickup：{h.pickup_location_code} · {h.pickup_location_name}
+                    </div>
+
+                    <div className="muted">
+                      assigned_item：
+                      {h.assigned_item_barcode
+                        ? ` ${h.assigned_item_barcode} · ${h.assigned_item_status}`
+                        : '（尚未指派）'}
+                    </div>
+
+                    <div className="muted">
+                      placed_at={h.placed_at}
+                      {h.ready_until ? ` · ready_until=${h.ready_until}` : ''}
+                    </div>
+
+                    <div
+                      className="muted"
+                      style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}
+                    >
+                      hold_id={h.id}
+                    </div>
+
+                    {h.status === 'queued' || h.status === 'ready' ? (
+                      <div>
+                        <button
+                          type="button"
+                          onClick={() => void onCancel(h.id)}
+                          disabled={cancellingHoldId === h.id}
+                        >
+                          {cancellingHoldId === h.id ? '取消中…' : '取消'}
+                        </button>
+                      </div>
+                    ) : null}
+                  </div>
+                </li>
+              ))}
+            </ul>
+
+            {nextCursor ? (
+              <button type="button" onClick={() => void loadMore()} disabled={loadingMore || loading}>
+                {loadingMore ? '載入中…' : '載入更多'}
+              </button>
+            ) : null}
+          </div>
         ) : null}
       </section>
     </div>
