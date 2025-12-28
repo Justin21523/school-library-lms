@@ -95,7 +95,11 @@ export class DbService implements OnModuleDestroy {
 
   constructor() {
     const connectionString = process.env.DATABASE_URL;
-    if (!connectionString) throw new Error('Missing required env var: DATABASE_URL');
+    if (!connectionString) {
+      throw new Error(
+        'Missing required env var: DATABASE_URL (請在環境變數或 repo root 的 .env / apps/api/.env 設定 DATABASE_URL)',
+      );
+    }
     this.pool = new Pool({ connectionString });
   }
 
@@ -195,17 +199,18 @@ export class ZodValidationPipe implements PipeTransform {
 
 ## 8) CORS 與 dotenv：為什麼需要？
 本機開發時 Web（3000）與 API（3001）是不同 port，瀏覽器會視為不同 origin，因此需要 CORS。
-- 我在 `apps/api/src/main.ts` 加入 `@fastify/cors` 讓 dev 時可以直接呼叫 API。
+- 我們在 `apps/api/src/main.ts` 設定 `app.enableCors({ origin: true })`，讓 dev 時可以直接呼叫 API。
 
 另外 Node.js 不會自動讀 `.env`，所以用 `dotenv`：
-- `dotenv.config()` 讓你本機可以用 `.env` 或環境變數設定 `DATABASE_URL`、`API_PORT`
+- API 啟動時會載入 `.env`（monorepo/workspaces 友善：先找 `apps/api/.env`，再找 repo root `.env`）
+  → 讓你本機可以用 `.env` 或環境變數設定 `DATABASE_URL`、`API_PORT`
 
 ### 範例：main.ts（dotenv + CORS）
 `apps/api/src/main.ts`
 ```ts
-dotenv.config();
+loadEnv();
 const app = await NestFactory.create(AppModule, new FastifyAdapter());
-await app.register(cors, { origin: true });
+app.enableCors({ origin: true });
 await app.listen({ port: Number(process.env.API_PORT ?? 3001), host: '0.0.0.0' });
 ```
 

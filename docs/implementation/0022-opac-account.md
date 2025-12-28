@@ -72,13 +72,14 @@ Response（shape 與 staff login 一致，方便前端共用）：
 
 提供：
 - `GET /me`：我的基本資料
-- `GET /me/loans?status=&limit=`：我的借閱
-- `GET /me/holds?status=&limit=`：我的預約
+- `GET /me/loans?status=&limit=&cursor=`：我的借閱（cursor pagination；回 `{ items, next_cursor }`）
+- `GET /me/holds?status=&limit=&cursor=`：我的預約（cursor pagination；回 `{ items, next_cursor }`）
 - `POST /me/holds`：替自己建立預約（place hold）
 - `POST /me/holds/:holdId/cancel`：取消自己的預約
 
 設計重點：
 - listMyLoans/listMyHolds：SQL 直接用 `WHERE user_id = token.sub` 篩選（最清楚也最安全）
+- cursor pagination：大量資料（scale seed）下仍可順暢翻頁（同後台 list endpoints 的 `{ items, next_cursor }` 模式）
 - place/cancel hold：重用 `HoldsService` 商業規則，但強制帶 `actor_user_id=token.sub`，避免授權漏洞
 
 ---
@@ -160,4 +161,3 @@ Web：
 - `apps/web/app/opac/orgs/[orgId]/holds/page.tsx`
 - `apps/web/app/opac/orgs/[orgId]/page.tsx`
 - `apps/web/app/orgs/[orgId]/users/page.tsx`（新增設定/重設密碼按鈕）
-

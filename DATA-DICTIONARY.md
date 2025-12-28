@@ -52,8 +52,106 @@
 | published_year | int | N | 出版年 | `2000` |
 | language | string | N | 語言（建議 ISO 639-1） | `zh` |
 | subjects | string[] | N | 主題詞/關鍵詞 | `["魔法","小說"]` |
+| geographics | string[] | N | 地理名稱（MARC 651；term-based 後會正規化成 preferred_label） | `["臺灣","臺北市"]` |
+| genres | string[] | N | 類型/體裁（MARC 655；term-based 後會正規化成 preferred_label） | `["青少年小說","奇幻文學"]` |
 | isbn | string | N | ISBN（去除破折號後儲存也可） | `9789573317248` |
 | classification | string | N | 分類（如 DDC 主類/類號） | `823.914` |
+| marc_extras | json | Y | 進階編目：未做成表單的 MARC 欄位（`MarcField[]`；預設 `[]`） | `[]` |
+
+## 2.1) authority_terms（權威控制款目 / 詞彙庫）
+| 欄位 | 型別 | 必填 | 說明 | 例子 |
+| --- | --- | --- | --- | --- |
+| id | string | Y | 權威款目 ID（UUID） | `a_9f1...` |
+| organization_id | string | Y | 所屬 organization | `org_1a2...` |
+| kind | enum | Y | `name`（姓名）/ `subject`（主題詞）/ `geographic`（地理）/ `genre`（類型）/ `language`（語言）/ `relator`（角色代碼） | `subject` |
+| vocabulary_code | string | Y | 詞彙庫代碼（例如 `local`/`builtin-zh`；可擴充多套） | `builtin-zh` |
+| preferred_label | string | Y | 權威標目（推薦用詞） | `魔法` |
+| variant_labels | string[] | N | 別名/同義詞（簡化 UF/alt labels） | `["巫術","魔術"]` |
+| note | text | N | 備註（來源/範圍/用法） | `學校自建主題詞` |
+| source | string | Y | 資料來源標記（`local`/`seed-demo`/`seed-scale`…） | `seed-demo` |
+| status | enum | Y | `active/inactive`（停用不刪除） | `active` |
+| created_at | datetime | Y | 建立時間 | `2025-12-24T00:00:00Z` |
+| updated_at | datetime | Y | 更新時間 | `2025-12-24T00:00:00Z` |
+
+## 2.1.1) authority_term_relations（Thesaurus：BT/NT/RT）
+> v1 先落地「最小可行」的 thesaurus 關係，供館員治理/瀏覽，並可用於後續檢索擴充（expand）。
+
+| 欄位 | 型別 | 必填 | 說明 | 例子 |
+| --- | --- | --- | --- | --- |
+| id | string | Y | relation ID（UUID） | `atr_...` |
+| organization_id | string | Y | 所屬 organization | `org_1a2...` |
+| from_term_id | string | Y | 起點 term（UUID；對 `broader` 代表 narrower term） | `a_...` |
+| relation_type | enum | Y | `broader/related`（v1 只落地這兩種；`narrower` 由反向推導） | `broader` |
+| to_term_id | string | Y | 終點 term（UUID；對 `broader` 代表 broader term） | `a_...` |
+| created_at | datetime | Y | 建立時間 | `2025-12-24T00:00:00Z` |
+| updated_at | datetime | Y | 更新時間 | `2025-12-24T00:00:00Z` |
+
+補充語意（很重要）：
+- `relation_type=broader` 使用「narrower → broader」方向存（BT/NT 的資料模型核心）
+  - 例：A（魔法史）BT B（魔法）→ 存成 `from=A, to=B, type=broader`
+  - NT（narrower）不用存：查 `to=本 term` 的那些 `from` 即可得到下位詞
+- `relation_type=related` 是對稱關係（RT）
+  - DB 只存一筆 canonical pair（由 service 以 UUID 字串排序決定 from/to），避免 A↔B 存兩筆造成去重困難
+
+## 2.2) bibliographic_identifiers（書目識別碼：外部系統對應/去重）
+| 欄位 | 型別 | 必填 | 說明 | 例子 |
+| --- | --- | --- | --- | --- |
+| id | string | Y | identifier ID（UUID） | `bi_...` |
+| organization_id | string | Y | 所屬 organization | `org_1a2...` |
+| bibliographic_id | string | Y | 對應書目 ID | `b_8aa...` |
+| scheme | string | Y | 識別碼 scheme（例如 `035`；可擴充） | `035` |
+| value | string | Y | 識別碼值（通常來自 MARC `035$a`） | `(OCoLC)1234567` |
+| created_at | datetime | Y | 建立時間 | `2025-12-24T00:00:00Z` |
+| updated_at | datetime | Y | 更新時間 | `2025-12-24T00:00:00Z` |
+
+## 2.3) bibliographic_subject_terms（書目 ↔ 主題詞連結；term_id-driven）
+> 書目編目 UI 以 term id 為真相來源：送 `subject_term_ids[]`，後端回寫正規化後的 `subjects[]` 供顯示/相容/快速查詢。
+
+| 欄位 | 型別 | 必填 | 說明 | 例子 |
+| --- | --- | --- | --- | --- |
+| organization_id | string | Y | 所屬 organization | `org_1a2...` |
+| bibliographic_id | string | Y | 書目 ID（FK） | `b_8aa...` |
+| term_id | string | Y | authority_terms.id（FK；kind=subject） | `a_...` |
+| position | int | Y | 編目順序（1-based） | `1` |
+| created_at | datetime | Y | 建立時間 | `2025-12-24T00:00:00Z` |
+| updated_at | datetime | Y | 更新時間 | `2025-12-24T00:00:00Z` |
+
+## 2.4) bibliographic_geographic_terms（書目 ↔ 地理名稱連結；MARC 651）
+> 送 `geographic_term_ids[]`，後端回寫正規化後的 `geographics[]`。
+
+| 欄位 | 型別 | 必填 | 說明 | 例子 |
+| --- | --- | --- | --- | --- |
+| organization_id | string | Y | 所屬 organization | `org_1a2...` |
+| bibliographic_id | string | Y | 書目 ID（FK） | `b_8aa...` |
+| term_id | string | Y | authority_terms.id（FK；kind=geographic） | `a_...` |
+| position | int | Y | 編目順序（1-based） | `1` |
+| created_at | datetime | Y | 建立時間 | `2025-12-24T00:00:00Z` |
+| updated_at | datetime | Y | 更新時間 | `2025-12-24T00:00:00Z` |
+
+## 2.5) bibliographic_genre_terms（書目 ↔ 類型/體裁連結；MARC 655）
+> 送 `genre_term_ids[]`，後端回寫正規化後的 `genres[]`。
+
+| 欄位 | 型別 | 必填 | 說明 | 例子 |
+| --- | --- | --- | --- | --- |
+| organization_id | string | Y | 所屬 organization | `org_1a2...` |
+| bibliographic_id | string | Y | 書目 ID（FK） | `b_8aa...` |
+| term_id | string | Y | authority_terms.id（FK；kind=genre） | `a_...` |
+| position | int | Y | 編目順序（1-based） | `1` |
+| created_at | datetime | Y | 建立時間 | `2025-12-24T00:00:00Z` |
+| updated_at | datetime | Y | 更新時間 | `2025-12-24T00:00:00Z` |
+
+## 2.6) bibliographic_name_terms（書目 ↔ 人名連結；100/700）
+> creators/contributors 以 term id 為真相來源（role + position），匯出 MARC 100/700 時可在 `$0` 放 `urn:uuid:<term_id>`。
+
+| 欄位 | 型別 | 必填 | 說明 | 例子 |
+| --- | --- | --- | --- | --- |
+| organization_id | string | Y | 所屬 organization | `org_1a2...` |
+| bibliographic_id | string | Y | 書目 ID（FK） | `b_8aa...` |
+| role | enum | Y | `creator` / `contributor` | `creator` |
+| term_id | string | Y | authority_terms.id（FK；kind=name） | `a_...` |
+| position | int | Y | role 內順序（1-based） | `1` |
+| created_at | datetime | Y | 建立時間 | `2025-12-24T00:00:00Z` |
+| updated_at | datetime | Y | 更新時間 | `2025-12-24T00:00:00Z` |
 
 ## 3) item_copies（館藏冊/複本）
 | 欄位 | 型別 | 必填 | 說明 | 例子 |

@@ -31,6 +31,7 @@
 - `API-DRAFT.md`：API 端點草案（先對齊契約，再開始寫程式）。
 - `DATA-DICTIONARY.md`：資料表/欄位定義（MVP 的「真相來源」之一）。
 - `db/schema.sql`：PostgreSQL schema 草案（含 index/constraint 思路）。
+- `docs/marc21-controlled-vocab-mapping.md`：MARC21 ↔ controlled vocabulary 對應規則（650/651/655/100/700/041；term_id / `$0` / `$2`）。
 
 ## 4) 本機跑起來（最小步驟）
 前置需求：
@@ -38,16 +39,49 @@
 - Docker Desktop（跑 PostgreSQL/Redis）
 
 步驟（在倉庫根目錄）：
-1. 啟動資料庫  
-   `docker compose up -d postgres redis`
-2. 安裝依賴（第一次一定要做）  
+1. 設定環境變數（第一次一定要做）  
+   `cp .env.example .env`（至少要有 `DATABASE_URL`）
+2. 啟動資料庫 + 匯入 schema/demo seed（建議一鍵）  
+   `npm run demo:db:seed`
+3. 安裝依賴（第一次一定要做）  
    `npm install`
-3. 啟動開發伺服器（同時跑 web 與 api）  
+4. 啟動開發伺服器（同時跑 web 與 api）  
    `npm run dev`
 
 你應該會看到：
 - Web：`http://localhost:3000`（Console：`/orgs`）
 - API 健康檢查：`http://localhost:3001/health` 回 `{ ok: true }`
+
+常用的後台入口（都在 `/orgs/:orgId/*` 範圍）：
+- Authority Control（主控入口；把 Terms/Thesaurus/Backfill/MARC 集中）：`/orgs/:orgId/authority`
+- Authority Terms（權威控制主檔）：`/orgs/:orgId/authority-terms`
+- Thesaurus（主題詞樹）：`/orgs/:orgId/authority-terms/thesaurus`
+- Thesaurus Visual Editor（樹 + 詳情 + graph）：`/orgs/:orgId/authority-terms/thesaurus/visual`
+- MARC 匯入：`/orgs/:orgId/bibs/import-marc`
+- MARC21 編輯器（編 `marc_extras` + 下載 .mrc/.xml/.json）：`/orgs/:orgId/bibs/marc-editor`
+- MARC 欄位字典（欄位/指標/子欄位一覽 + 搜尋）：`/orgs/:orgId/bibs/marc-dictionary`
+
+### 4.0 常見問題：API 3001 被佔用（EADDRINUSE）
+如果你看到：
+- `listen EADDRINUSE: address already in use 0.0.0.0:3001`
+
+代表你的機器上已經有其他程序在用 3001（常見：你先前啟動過 API、或 `docker compose` 的 `api` container 還在跑）。
+
+處理方式（二選一）：
+1) 停掉佔用 3001 的程序（例如 `docker compose stop api`，或把對應 PID kill 掉）
+2) 改 port（建議最直覺）：把 repo root `.env` 的
+   - `API_PORT=3002`
+   - `NEXT_PUBLIC_API_BASE_URL=http://localhost:3002`
+   然後重啟 `npm run dev`
+
+### 4.1 （可選）用 Docker 跑整套（前後端也在容器內）
+如果你希望把 Web/API 也放進 Docker（方便做「整套環境」驗證），可以用：
+- 啟動整套（含 build）：`npm run docker:up`
+- 匯入 demo 假資料：`npm run docker:seed`
+- 跑 smoke（容器內跑 HTTP 驗證）：`npm run docker:smoke`
+- 一鍵跑完（會清空 DB volume）：`npm run docker:test`
+
+若你遇到 port 被佔用，可用環境變數改 host port（例如 `REDIS_PORT=6380 npm run docker:up`）。
 
 > 目前已落地主檔/書目/冊/借還等核心 API，Web 也有最小可操作的 Console；後續功能仍建議依 `USER-STORIES.md` 逐步擴充。
 

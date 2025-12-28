@@ -36,9 +36,10 @@
 - `PATCH /orgs/{orgId}/locations/{locationId}`：更新/停用位置（Librarian）
 
 ## 3) Users（Patrons/Staff）
-- `GET /orgs/{orgId}/users?query=...&role=...&status=...&limit=...`：搜尋使用者（Librarian）
+- `GET /orgs/{orgId}/users?query=...&role=...&status=...&limit=...&cursor=...`：搜尋使用者（Librarian）
   - `query`：模糊搜尋（external_id/name/org_unit）
   - `role/status`：精準篩選
+  - Response：`{ items: User[]; next_cursor: string|null }`
 - `POST /orgs/{orgId}/users`：新增使用者（Librarian）
 - `PATCH /orgs/{orgId}/users/{userId}`：更新/停用（US-011；Librarian）
   - MVP 權限：需帶 `actor_user_id`（admin/librarian），後端驗證 role/status，並寫入 `audit_events`（action=`user.update`）
@@ -72,8 +73,39 @@
   - Response（preview）：回傳 `summary + errors + rows`（不寫 DB）
   - Response（apply）：回傳 `summary + audit_event_id`，並寫入 `audit_events`（action=`user.import_csv`）
 
+## 3.5) Authority / Vocabulary（權威控制檔）
+- `GET /orgs/{orgId}/authority-terms?kind=name|subject|geographic|genre|language|relator&query=...&vocabulary_code=...&status=active|inactive|all&limit=...&cursor=...`：列出/搜尋權威款目（Staff）
+  - Response：`{ items: AuthorityTerm[]; next_cursor: string|null }`
+- `GET /orgs/{orgId}/authority-terms/suggest?kind=name|subject|geographic|genre|language|relator&q=...&vocabulary_code=...&limit=...`：autocomplete 建議（Staff）
+  - Response：`AuthorityTerm[]`（不包 cursor；通常只取前 10~20 筆）
+- `POST /orgs/{orgId}/authority-terms`：建立權威款目（Staff）
+- `PATCH /orgs/{orgId}/authority-terms/{termId}`：更新/停用權威款目（Staff）
+- `GET /orgs/{orgId}/authority-terms/{termId}`：款目詳情 + BT/NT/RT（Staff；thesaurus v1）
+  - Response：`{ term: AuthorityTerm; relations: { broader/narrower/related } }`
+- `POST /orgs/{orgId}/authority-terms/{termId}/relations`：新增 BT/NT/RT（Staff；thesaurus v1）
+  - Request：`{ kind: "broader"|"narrower"|"related"; target_term_id: string(uuid) }`
+  - Response：同 `GET /authority-terms/{termId}`（回最新的關係視圖，便於 UI 直接 refresh）
+- `DELETE /orgs/{orgId}/authority-terms/{termId}/relations/{relationId}`：刪除 BT/NT/RT（Staff；thesaurus v1）
+  - Response：同 `GET /authority-terms/{termId}`
+- `GET /orgs/{orgId}/authority-terms/{termId}/expand?include=self,variants,broader,narrower,related&depth=1`：展開（檢索擴充用；Staff；thesaurus v1）
+  - 說明：
+    - `include` 預設全開；`depth` 預設 1，並會在服務層 clamp 到 `0..5`
+    - v1 的 `related` 只展開一階（避免 graph 擴散爆炸）
+  - Response：`{ term; include; depth; labels; term_ids; broader_terms; narrower_terms; related_terms; variant_labels }`
+
 ## 4) Bibliographic Records（書目）
-- `GET /orgs/{orgId}/bibs?query=...&isbn=...&classification=...`：查詢書目（含可借/總冊數；query 會比對 title/creators/subjects 等）
+- `GET /orgs/{orgId}/bibs?query=...&subjects_any=...&subject_term_ids=...&geographics_any=...&geographic_term_ids=...&genres_any=...&genre_term_ids=...&isbn=...&classification=...&limit=...&cursor=...`：查詢書目（含可借/總冊數）
+  - `query`：關鍵字（ILIKE；比對 title/creators/contributors/subjects/publisher/isbn/classification）
+  - `subjects_any`：主題詞擴充查詢（thesaurus expand 後的 labels；用逗號串起來，例如 `subjects_any=汰舊,報廢,除籍`；DB 用 `subjects && $labels::text[]`）
+  - `subject_term_ids`：term_id-driven 主題詞過濾（任一命中；用逗號串起來，例如 `subject_term_ids=uuid1,uuid2,...`；DB 用 junction table `bibliographic_subject_terms`）
+    - 相容 alias：`subject_term_ids_any`（行為相同；可逐步淘汰）
+  - `geographics_any`：地理名稱（MARC 651）擴充查詢（labels；逗號串起來；DB 用 `geographics && $labels::text[]`）
+  - `geographic_term_ids`：term_id-driven 地理名稱過濾（任一命中；逗號串起來；DB 用 junction table `bibliographic_geographic_terms`）
+    - 相容 alias：`geographic_term_ids_any`（行為相同；可逐步淘汰）
+  - `genres_any`：類型/體裁（MARC 655）擴充查詢（labels；逗號串起來；DB 用 `genres && $labels::text[]`）
+  - `genre_term_ids`：term_id-driven 類型/體裁過濾（任一命中；逗號串起來；DB 用 junction table `bibliographic_genre_terms`）
+    - 相容 alias：`genre_term_ids_any`（行為相同；可逐步淘汰）
+  - Response：`{ items: BibliographicRecordWithCounts[]; next_cursor: string|null }`
 - `POST /orgs/{orgId}/bibs`：新增書目（Librarian）
 - `POST /orgs/{orgId}/bibs/import`：書目/冊 CSV 匯入（US-022；preview/apply；Librarian）
   - 權限：需 Bearer token（StaffAuthGuard）+ `actor_user_id`（admin/librarian，且必須等於登入者）
@@ -89,11 +121,60 @@
     }
     ```
   - audit：apply 成功後寫入 `audit_events`（action=`catalog.import_csv`；entity_id=csv_sha256）
+- `POST /orgs/{orgId}/bibs/import-marc`：MARC 批次匯入（preview/apply；Staff；進階編目）
+  - 目的：
+    - 多筆 record preview/apply
+    - 去重：ISBN（bibs.isbn）/ 035（bibliographic_identifiers scheme=`035`）
+    - per record 選擇 create/update/skip
+    - apply 成功後寫一筆 `audit_events`（action=`catalog.import_marc`）
+  - Request（摘要）：
+    ```json
+    {
+      "actor_user_id": "u_admin_or_librarian",
+      "mode": "preview|apply",
+      "records": [
+        {
+          "bib": { "title": "...", "creators": ["..."], "subjects": ["..."], "isbn": "..." },
+          "marc_extras": [{ "tag": "245", "ind1": "1", "ind2": "4", "subfields": [{ "code": "c", "value": "..." }] }]
+        }
+      ],
+      "options": {
+        "save_marc_extras": true,
+        "upsert_authority_terms": true,
+        "authority_vocabulary_code": "local"
+      },
+      "decisions": [
+        { "index": 0, "decision": "create|update|skip", "target_bib_id": "optional (for update)" }
+      ],
+      "source_filename": "optional",
+      "source_note": "optional"
+    }
+    ```
+  - Response（preview）：回傳 `summary + warnings + errors + records`
+  - Response（apply）：回傳 `summary + audit_event_id + results`
 - `GET /orgs/{orgId}/bibs/{bibId}`：取得書目（含可借冊數）
 - `PATCH /orgs/{orgId}/bibs/{bibId}`：更新書目（Librarian）
+- `GET /orgs/{orgId}/bibs/{bibId}/marc?format=json|xml|mrc`：MARC 21 匯出（Staff；進階編目基礎）
+  - 目的：由「表單欄位」產生 MARC core fields，並把 `bibliographic_records.marc_extras` merge/append（保留未覆蓋欄位且避免重複）
+  - `format=json`：回傳 `MarcRecord`（JSON-friendly 結構）
+  - `format=xml`：回傳 MARCXML（MARC21 slim）
+  - `format=mrc`：回傳 ISO2709 `.mrc`（傳統交換格式）
+  - 規則：`001`/`005` 由系統產生；`marc_extras` 內同 tag 不會覆蓋（避免控制號/時間戳被污染）
+- `GET /orgs/{orgId}/bibs/{bibId}/marc-extras`：讀取 `marc_extras`（Staff）
+  - Response：`MarcField[]`（已 sanitize；不合法 element 會被丟掉）
+- `PUT /orgs/{orgId}/bibs/{bibId}/marc-extras`：更新 `marc_extras`（Staff）
+  - Request（JSON）：
+    ```json
+    {
+      "marc_extras": [
+        { "tag": "500", "ind1": " ", "ind2": " ", "subfields": [{ "code": "a", "value": "附錄：題解與索引" }] }
+      ]
+    }
+    ```
 
 ## 5) Item Copies（冊）
-- `GET /orgs/{orgId}/items?barcode=...&status=...&location_id=...&bibliographic_id=...`：查詢冊（Librarian）
+- `GET /orgs/{orgId}/items?barcode=...&status=...&location_id=...&bibliographic_id=...&limit=...&cursor=...`：查詢冊（Librarian）
+  - Response：`{ items: ItemCopy[]; next_cursor: string|null }`
 - `POST /orgs/{orgId}/bibs/{bibId}/items`：在書目下新增冊（Librarian）
 - `GET /orgs/{orgId}/items/{itemId}`：取得冊（含當前借閱/預約狀態）
 - `PATCH /orgs/{orgId}/items/{itemId}`：更新冊（位置/索書號/備註等）（Librarian）
@@ -111,23 +192,26 @@
 > 借還建議用「動作端點」，避免前端直接改資料狀態造成不一致。
 
 ### Loans（借閱查詢）
-- `GET /orgs/{orgId}/loans?status=open|closed|all&user_external_id=...&item_barcode=...&limit=...`
+- `GET /orgs/{orgId}/loans?status=open|closed|all&user_external_id=...&item_barcode=...&limit=...&cursor=...`
   - 說明：
     - `status` 未提供時預設 `open`（未歸還）
     - `is_overdue` 由 `returned_at IS NULL AND due_at < now()` 推導（不存狀態）
   - Response（摘要）：回傳 loan + borrower + item + bib title（便於 UI 顯示）
     ```json
-    [
-      {
-        "id": "l_...",
-        "item_barcode": "LIB-00001234",
-        "bibliographic_title": "哈利波特：神秘的魔法石",
-        "user_external_id": "S1130123",
-        "due_at": "2025-12-15T23:59:59Z",
-        "renewed_count": 0,
-        "is_overdue": false
-      }
-    ]
+    {
+      "items": [
+        {
+          "id": "l_...",
+          "item_barcode": "LIB-00001234",
+          "bibliographic_title": "哈利波特：神秘的魔法石",
+          "user_external_id": "S1130123",
+          "due_at": "2025-12-15T23:59:59Z",
+          "renewed_count": 0,
+          "is_overdue": false
+        }
+      ],
+      "next_cursor": null
+    }
     ```
 
 - `POST /orgs/{orgId}/loans/purge-history`：借閱歷史保存期限清理（US-061；Admin）
@@ -220,11 +304,11 @@ Holds 同時服務兩條流程：
 - Response：回傳「hold + borrower + bib title + pickup location + assigned item」的組合資料（snake_case）
 
 ### 7.2 查詢預約（List holds）
-- `GET /orgs/{orgId}/holds?status=...&user_external_id=...&item_barcode=...&bibliographic_id=...&pickup_location_id=...&limit=...`
+- `GET /orgs/{orgId}/holds?status=...&user_external_id=...&item_barcode=...&bibliographic_id=...&pickup_location_id=...&limit=...&cursor=...`
 - 說明：
   - `status` 可為 `queued|ready|cancelled|fulfilled|expired|all`；未提供時等同 `all`
   - `user_external_id`/`item_barcode`/`bibliographic_id`/`pickup_location_id` 為精確過濾
-- Response：`HoldWithDetails[]`
+- Response：`{ items: HoldWithDetails[]; next_cursor: string|null }`
 
 ### 7.3 取消預約（Cancel）
 - `POST /orgs/{orgId}/holds/{holdId}/cancel`
@@ -576,8 +660,8 @@ Holds 同時服務兩條流程：
 > - user_id 由 token 推導，不允許前端用 `user_external_id` 指定他人
 
 - `GET /orgs/{orgId}/me`：取得我的基本資料
-- `GET /orgs/{orgId}/me/loans?status=open|closed|all&limit=`：我的借閱
-- `GET /orgs/{orgId}/me/holds?status=queued|ready|cancelled|fulfilled|expired|all&limit=`：我的預約
+- `GET /orgs/{orgId}/me/loans?status=open|closed|all&limit=&cursor=`：我的借閱（cursor pagination；回 `{ items, next_cursor }`）
+- `GET /orgs/{orgId}/me/holds?status=queued|ready|cancelled|fulfilled|expired|all&limit=&cursor=`：我的預約（cursor pagination；回 `{ items, next_cursor }`）
 - `POST /orgs/{orgId}/me/holds`：替自己建立預約
   - Request：
     ```json

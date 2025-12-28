@@ -39,6 +39,16 @@
 - `docs/implementation/0022-opac-account.md`
 - `docs/implementation/0023-demo-seed-and-navigation.md`
 - `docs/implementation/0024-demo-smoke-and-ci.md`
+- `docs/implementation/0025-scale-seed.md`
+- `docs/implementation/0026-locations-policies-pagination-and-item-detail.md`
+- `docs/implementation/0027-bootstrap-ui-users-edit-me-cursor-and-maintenance-runner.md`
+- `docs/implementation/0028-marc-export-and-marc-extras.md`
+- `docs/implementation/0029-authority-vocabulary-v0.md`
+- `docs/implementation/0030-marc-import-v0.md`（v1：批次 preview/apply + roundtrip）
+- `docs/implementation/0031-thesaurus-v1.md`
+- `docs/implementation/0032-marc21-field-dictionary-and-validation.md`
+- `docs/implementation/0033-subject-normalization-and-authority-linking.md`
+- `docs/implementation/0034-name-linking-and-controlled-vocab-mappings.md`
 
 ## 註解規範
 - `docs/commenting-guidelines.md`

@@ -12,7 +12,7 @@
 - **US-022 批次匯入書目/冊**：已做（見 `docs/implementation/0021-us-022-catalog-csv-import.md`）
 
 對照 `API-DRAFT.md`（v1）已落地端點：
-- `GET /api/v1/orgs/:orgId/bibs?query=&isbn=&classification=`
+- `GET /api/v1/orgs/:orgId/bibs?query=&subjects_any=&subject_term_ids_any=&isbn=&classification=`
 - `POST /api/v1/orgs/:orgId/bibs`
 - `GET /api/v1/orgs/:orgId/bibs/:bibId`
 - `PATCH /api/v1/orgs/:orgId/bibs/:bibId`
@@ -35,11 +35,13 @@ DB 的 FK 只保證「bib/location 存在」，但無法保證「同一 org」�
 ## 3) 基本搜尋怎麼做？（MVP 版本）
 MVP 先追求「能用、可維運」：
 - **`query` 關鍵字**：用 `ILIKE` + `%...%`，比對 `title/creators/subjects/publisher/isbn/classification`。
+- **`subject_term_ids_any` 主題詞擴充（建議）**：用 junction table `bibliographic_subject_terms` 做 `EXISTS` 過濾（term_id-driven；避免靠字串長相）。
+- **`subjects_any` 主題詞擴充（相容）**：用 `subjects && $labels::text[]`（array overlap）做「任一命中」，適合尚未 backfill term links 的舊資料（建議對 `subjects` 建 GIN index）。
 - **`isbn`**：採精確比對（掃描/複製 ISBN 時最準）。
 - **`classification`**：採 prefix 比對（輸入 823 可找 823.914）。
 - **可借冊數**：用 `COUNT` + `FILTER` 在 DB 端計算，避免前端自己算。
 
-> 這裡選用 `ILIKE` 的原因是：`db/schema.sql` 已建立 `pg_trgm`，title 的模糊搜尋會被 trigram index 加速；而作者/主題詞目前是 text[]，先用 `array_to_string` 做簡化比對即可。
+> 這裡選用 `ILIKE` 的原因是：`db/schema.sql` 已建立 `pg_trgm`，title 的模糊搜尋會被 trigram index 加速；而 creators/subjects 目前是 text[]，`query` 先用 `array_to_string` 做簡化比對即可；需要「精確的主題詞擴充」則用 `subjects_any`（overlap + GIN）。
 
 ## 4) 重要實作片段（逐段落帶讀）
 
@@ -76,6 +78,8 @@ const search = filters.query?.trim() ? `%${filters.query.trim()}%` : null;
 const classification = filters.classification?.trim()
   ? `${filters.classification.trim()}%`
   : null;
+const subjectsAny = filters.subjects_any?.length ? filters.subjects_any : null;
+const subjectTermIdsAny = filters.subject_term_ids_any?.length ? filters.subject_term_ids_any : null;
 
 const result = await this.db.query<BibliographicWithCountsRow>(
   `
@@ -89,21 +93,38 @@ const result = await this.db.query<BibliographicWithCountsRow>(
     ON i.organization_id = b.organization_id
    AND i.bibliographic_id = b.id
   WHERE b.organization_id = $1
+    AND ($2::text IS NULL OR b.isbn = $2)
     AND ($3::text IS NULL OR b.classification ILIKE $3)
     AND (
-      $4::text IS NULL
-      OR b.title ILIKE $4
-      OR COALESCE(array_to_string(b.creators, ' '), '') ILIKE $4
+      $4::uuid[] IS NULL
+      OR EXISTS (
+        SELECT 1
+        FROM bibliographic_subject_terms bst
+        WHERE bst.organization_id = b.organization_id
+          AND bst.bibliographic_id = b.id
+          AND bst.term_id = ANY($4::uuid[])
+      )
+    )
+    AND (
+      $5::text[] IS NULL
+      OR b.subjects && $5::text[]
+    )
+    AND (
+      $6::text IS NULL
+      OR b.title ILIKE $6
+      OR COALESCE(array_to_string(b.creators, ' '), '') ILIKE $6
     )
   GROUP BY b.id
   `,
-  [orgId, isbn, classification, search],
+  [orgId, isbn, classification, subjectTermIdsAny, subjectsAny, search],
 );
 ```
 重點說明：
 1. `COUNT(...) FILTER (...)` 在 SQL 端直接算出「可借冊數」，前端不用再做二次計算。
-2. `array_to_string` 是因為 creators/subjects 目前是 `text[]`，先用簡化搜尋。
-3. `classification` 用 prefix 搜尋（`823%`）更符合館員輸入習慣。
+2. `subject_term_ids_any` 用 junction table 做 EXISTS 過濾（term_id-driven；推薦）。
+3. `subjects_any` 用 `subjects && $labels::text[]` 做 overlap（相容舊資料或過渡期）。
+4. `query` 的 `array_to_string + ILIKE` 是因為 creators/subjects 目前是 `text[]`，先用簡化搜尋。
+5. `classification` 用 prefix 搜尋（`823%`）更符合館員輸入習慣。
 
 ### 4.3 新增冊的「跨租戶一致性」檢查
 `apps/api/src/items/items.service.ts`

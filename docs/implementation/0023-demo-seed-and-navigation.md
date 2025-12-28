@@ -117,8 +117,25 @@ seed 內建了：
 - 快速入口（Reports / Maintenance / Audit）
 - 快速入口（OPAC / 讀者端）
 
+本輪（authority control + MARC）新增的常用入口（都在「快速入口（Web Console）」區塊）：
+- `Authority Terms`：`/orgs/:orgId/authority-terms`
+- `Thesaurus`：`/orgs/:orgId/authority-terms/thesaurus`
+- `Thesaurus Visual Editor`：`/orgs/:orgId/authority-terms/thesaurus/visual`
+- `MARC Import`：`/orgs/:orgId/bibs/import-marc`
+- `MARC21 編輯器`：`/orgs/:orgId/bibs/marc-editor`
+- `MARC 欄位字典`：`/orgs/:orgId/bibs/marc-dictionary`
+
 ### 5.3 入口 3：左側導覽（側邊欄）
 在任何 `/orgs/:orgId/*` 子頁面，左側都有完整導覽（含 Users/Bibs/Items/Loans/Holds/Reports/Inventory/Audit…）。
+
+authority control / MARC 相關頁面也都已放進側邊欄（方便你「找得到」並逐步治理）：
+- Authority Terms（主檔 CRUD）
+- Thesaurus（主題詞樹：瀏覽/品質檢查）
+- Thesaurus Visual Editor（樹 + 詳情 + graph；可視覺化編輯）
+- MARC Import（匯入交換檔 → 表單欄位 + marc_extras）
+- MARC21 編輯器（編輯 marc_extras + 下載 JSON/XML/MRC）
+- MARC 欄位字典（欄位/指標/子欄位一覽 + 搜尋）
+- Backfill（subjects / 651 geographic / 655 genre / name creators+contributors）
 
 ---
 
@@ -195,4 +212,3 @@ docker compose up -d postgres redis
 docker compose exec -T postgres psql -U library -d library_system -f db/schema.sql
 docker compose exec -T postgres psql -U library -d library_system -f db/seed-demo.sql
 ```
-

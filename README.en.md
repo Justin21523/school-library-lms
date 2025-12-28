@@ -89,6 +89,44 @@ Check:
 - Web: `http://localhost:3000`
 - API: `http://localhost:3001/health`
 
+## Run the Full Stack in Docker (DB + API + Web + demo seed + smoke)
+If you want both frontend and backend to run inside Docker (closer to a deployable setup):
+
+### 1) Bring up the stack (build images)
+```bash
+npm run docker:up
+```
+
+If you hit port conflicts (common ones: `6379`/`5432`/`3000`/`3001`), override host ports via env vars:
+```bash
+REDIS_PORT=6380 POSTGRES_PORT=55432 API_HOST_PORT=3002 WEB_HOST_PORT=3003 npm run docker:up
+```
+
+### 2) Load demo seed data (idempotent)
+```bash
+npm run docker:seed
+```
+
+### 3) Run smoke tests (inside Docker network)
+```bash
+npm run docker:smoke
+```
+
+All-in-one (wipe DB volume → up → seed → smoke):
+```bash
+npm run docker:test
+```
+
+Shut down:
+```bash
+npm run docker:down
+```
+
+Remove volumes too (deletes DB data):
+```bash
+npm run docker:down:volumes
+```
+
 ## Turning Docs into Code (Recommended Workflow)
 1. Pick a story in `USER-STORIES.md` (e.g., US-040 checkout).
 2. Align request/response/errors in `API-DRAFT.md`.
@@ -99,4 +137,3 @@ Check:
 ## Contributing
 - Follow `AGENTS.md` (doc conventions, naming, commands, and “keep docs in sync” rule).
 - Some `reference-docs/` exports may contain personal data (e.g., `**User:**` lines). Redact before making the repository public.
-
