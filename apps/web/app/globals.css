@@ -443,6 +443,11 @@ a:hover {
   border-color: var(--border);
 }
 
+.navGroupHeader.active {
+  background: var(--sidebar-active);
+  border-color: var(--borderStrong);
+}
+
 .navGroupChildren {
   margin-left: 12px;
   padding-left: 10px;

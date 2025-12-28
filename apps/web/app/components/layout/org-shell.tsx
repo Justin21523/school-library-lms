@@ -260,29 +260,62 @@ function NavNode({
 
   const open = groupOpen[node.id] ?? node.defaultOpen ?? false;
   const showChildren = collapsed ? false : open;
+  const active = isNodeActive(node, pathname);
 
-  return (
-    <div className="navGroup">
-      <button
-        type="button"
-        className="navGroupHeader"
-        onClick={() => onToggleGroup(node.id)}
-        title={collapsed ? node.label : undefined}
-        data-tooltip={collapsed ? node.label : undefined}
+  // 收合（icon-only）模式的 UX：
+  // - 若收合時「完全看不到 items」，使用者就無法靠 sidebar 導覽
+  // - 因此我們把每個 group 映射成「該群組的預設入口」（第一個可用的 leaf item）
+  //
+  // 這樣的好處：
+  // - icon-only sidebar 仍然可用（點一下就能跳到該模組）
+  // - 更細的頁面仍可透過 Ctrl/Cmd+K 的 command palette 到達
+  if (collapsed) {
+    const first = findFirstItem(node);
+    if (!first) {
+      // 理論上不會發生（我們的 group 都會有 children items），但保底：render 成 disabled button
+      return (
+        <button type="button" className="navItem" disabled title={node.label} data-tooltip={node.label}>
+          {node.icon ? (
+            <span className="navIcon">
+              <NavIcon id={node.icon} />
+            </span>
+          ) : null}
+        </button>
+      );
+    }
+
+    return (
+      <Link
+        href={first.href}
+        className={active ? 'navItem active' : 'navItem'}
+        title={node.label}
+        data-tooltip={node.label}
       >
         {node.icon ? (
           <span className="navIcon">
             <NavIcon id={node.icon} />
           </span>
         ) : null}
-        {!collapsed ? (
-          <>
-            <span className="navLabel">{node.label}</span>
-            <span className="navChevron" aria-hidden="true">
-              {open ? '▾' : '▸'}
-            </span>
-          </>
+      </Link>
+    );
+  }
+
+  return (
+    <div className="navGroup">
+      <button
+        type="button"
+        className={active ? 'navGroupHeader active' : 'navGroupHeader'}
+        onClick={() => onToggleGroup(node.id)}
+      >
+        {node.icon ? (
+          <span className="navIcon">
+            <NavIcon id={node.icon} />
+          </span>
         ) : null}
+        <span className="navLabel">{node.label}</span>
+        <span className="navChevron" aria-hidden="true">
+          {open ? '▾' : '▸'}
+        </span>
       </button>
 
       {showChildren ? (
@@ -305,6 +338,20 @@ function NavNode({
 
 function clamp(value: number, min: number, max: number) {
   return Math.max(min, Math.min(max, value));
+}
+
+function isNodeActive(node: OrgConsoleNavNode, pathname: string): boolean {
+  if (node.type === 'item') return isItemActive(pathname, node.href);
+  return node.children.some((c) => isNodeActive(c, pathname));
+}
+
+function findFirstItem(group: OrgConsoleNavGroup): OrgConsoleNavItem | null {
+  for (const child of group.children) {
+    if (child.type === 'item') return child;
+    const nested = findFirstItem(child);
+    if (nested) return nested;
+  }
+  return null;
 }
 
 function buildDefaultGroupOpen(nav: OrgConsoleNavGroup[]): GroupOpenState {
