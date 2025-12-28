@@ -275,69 +275,84 @@ BEGIN
   -- ----------------------------
   -- E) circulation_policies：用 (org, code) 找；不存在就建立
   -- ----------------------------
-  IF NOT EXISTS (
-    SELECT 1
-    FROM circulation_policies
-    WHERE organization_id = v_org_id
-      AND code = 'student_default'
-  ) THEN
-    INSERT INTO circulation_policies (
-      organization_id,
-      code,
-      name,
-      audience_role,
-      loan_days,
-      max_loans,
-      max_renewals,
-      max_holds,
-      hold_pickup_days,
-      overdue_block_days
-    )
-    VALUES (
-      v_org_id,
-      'student_default',
-      '學生預設政策（Demo）',
-      'student',
-      14,
-      5,
-      1,
-      3,
-      3,
-      7
-    );
-  END IF;
+	  IF NOT EXISTS (
+	    SELECT 1
+	    FROM circulation_policies
+	    WHERE organization_id = v_org_id
+	      AND code = 'student_default'
+	  ) THEN
+	    INSERT INTO circulation_policies (
+	      organization_id,
+	      code,
+	      name,
+	      audience_role,
+	      loan_days,
+	      max_loans,
+	      max_renewals,
+	      max_holds,
+	      hold_pickup_days,
+	      overdue_block_days,
+	      is_active
+	    )
+	    VALUES (
+	      v_org_id,
+	      'student_default',
+	      '學生預設政策（Demo）',
+	      'student',
+	      14,
+	      5,
+	      1,
+	      3,
+	      3,
+	      7,
+	      true
+	    );
+	  END IF;
 
-  IF NOT EXISTS (
-    SELECT 1
-    FROM circulation_policies
-    WHERE organization_id = v_org_id
-      AND code = 'teacher_default'
-  ) THEN
-    INSERT INTO circulation_policies (
-      organization_id,
-      code,
-      name,
-      audience_role,
-      loan_days,
-      max_loans,
-      max_renewals,
-      max_holds,
-      hold_pickup_days,
-      overdue_block_days
-    )
-    VALUES (
-      v_org_id,
-      'teacher_default',
-      '教師預設政策（Demo）',
-      'teacher',
-      30,
-      10,
-      2,
-      5,
-      5,
-      14
-    );
-  END IF;
+	  IF NOT EXISTS (
+	    SELECT 1
+	    FROM circulation_policies
+	    WHERE organization_id = v_org_id
+	      AND code = 'teacher_default'
+	  ) THEN
+	    INSERT INTO circulation_policies (
+	      organization_id,
+	      code,
+	      name,
+	      audience_role,
+	      loan_days,
+	      max_loans,
+	      max_renewals,
+	      max_holds,
+	      hold_pickup_days,
+	      overdue_block_days,
+	      is_active
+	    )
+	    VALUES (
+	      v_org_id,
+	      'teacher_default',
+	      '教師預設政策（Demo）',
+	      'teacher',
+	      30,
+	      10,
+	      2,
+	      5,
+	      5,
+	      14,
+	      true
+	    );
+	  END IF;
+
+	  -- 對齊「每個角色一套有效政策」：把 demo 預設政策設為 active，並把同 role 其他政策設為 inactive
+	  UPDATE circulation_policies
+	  SET is_active = (code = 'student_default'), updated_at = now()
+	  WHERE organization_id = v_org_id
+	    AND audience_role = 'student';
+
+	  UPDATE circulation_policies
+	  SET is_active = (code = 'teacher_default'), updated_at = now()
+	  WHERE organization_id = v_org_id
+	    AND audience_role = 'teacher';
 
   -- ----------------------------
   -- F) bibliographic_records：固定 UUID + ON CONFLICT DO NOTHING
@@ -447,6 +462,207 @@ BEGIN
     '000.000'
   )
   ON CONFLICT (id) DO NOTHING;
+
+  -- ----------------------------
+  -- F.1) authority_terms（Authority / Vocabulary v0）
+  --
+  -- 目的：
+  -- - 讓你在 demo DB 一進 UI 就能測：
+  --   - 主題詞/姓名 權威控制主檔的管理頁
+  --   - autocomplete（後續會接到編目表單）
+  --
+  -- 設計：
+  -- - vocabulary_code：
+  --   - builtin-zh：示意「內建詞彙庫」（可擴充成多套）
+  --   - local：示意「本校自建款目」
+  -- - source：標記資料來源，便於追溯（traceability）
+  -- ----------------------------
+  INSERT INTO authority_terms (
+    organization_id, kind, vocabulary_code, preferred_label, variant_labels, note, source, status
+  )
+  VALUES
+    -- subjects（內建示例）
+    (v_org_id, 'subject', 'builtin-zh', '魔法', ARRAY['巫術', '魔術'], NULL, 'seed-demo', 'active'),
+    (v_org_id, 'subject', 'builtin-zh', '小說', ARRAY['長篇小說', '短篇小說'], NULL, 'seed-demo', 'active'),
+    (v_org_id, 'subject', 'builtin-zh', '寓言', ARRAY['寓言故事'], NULL, 'seed-demo', 'active'),
+    (v_org_id, 'subject', 'builtin-zh', '成長', ARRAY['成長故事'], NULL, 'seed-demo', 'active'),
+    (v_org_id, 'subject', 'builtin-zh', '盤點', ARRAY['清點'], NULL, 'seed-demo', 'active'),
+    (v_org_id, 'subject', 'builtin-zh', '汰舊', ARRAY['除舊'], NULL, 'seed-demo', 'active'),
+    (v_org_id, 'subject', 'builtin-zh', '預約', ARRAY['館藏預約'], NULL, 'seed-demo', 'active'),
+    (v_org_id, 'subject', 'builtin-zh', '報廢', ARRAY['除籍'], NULL, 'seed-demo', 'active'),
+
+    -- names（本校示例；對齊 demo 書目 creators）
+    (v_org_id, 'name', 'local', 'J. K. Rowling', ARRAY['Rowling, J. K.'], NULL, 'seed-demo', 'active'),
+    (v_org_id, 'name', 'local', 'Antoine de Saint-Exupéry', ARRAY['Saint-Exupéry, Antoine de'], NULL, 'seed-demo', 'active')
+  ON CONFLICT (organization_id, kind, vocabulary_code, preferred_label) DO NOTHING;
+
+  -- ----------------------------
+  -- F.2) authority_term_relations（Thesaurus v1：BT/NT/RT）
+  --
+  -- 目的：
+  -- - 讓你在 demo DB 一進 thesaurus UI 就能看到 BT/NT/RT 的效果
+  --
+  -- 注意：
+  -- - 這裡只放少量示例關係（不是權威的完整學科分類）
+  -- - related（RT）在 DB 只存一筆（canonical pair）；這裡用 UUID 字串排序避免重複
+  -- ----------------------------
+
+  -- 報廢（narrower） BT 汰舊（broader）
+  INSERT INTO authority_term_relations (organization_id, from_term_id, relation_type, to_term_id)
+  SELECT
+    v_org_id,
+    a.id,
+    'broader'::authority_relation_type,
+    b.id
+  FROM authority_terms a
+  JOIN authority_terms b
+    ON b.organization_id = a.organization_id
+   AND b.kind = a.kind
+   AND b.vocabulary_code = a.vocabulary_code
+  WHERE a.organization_id = v_org_id
+    AND a.kind = 'subject'
+    AND a.vocabulary_code = 'builtin-zh'
+    AND a.preferred_label = '報廢'
+    AND b.preferred_label = '汰舊'
+  ON CONFLICT DO NOTHING;
+
+  -- 盤點 RT 汰舊（related；canonical pair）
+  INSERT INTO authority_term_relations (organization_id, from_term_id, relation_type, to_term_id)
+  SELECT
+    v_org_id,
+    CASE WHEN a.id::text < b.id::text THEN a.id ELSE b.id END,
+    'related'::authority_relation_type,
+    CASE WHEN a.id::text < b.id::text THEN b.id ELSE a.id END
+  FROM authority_terms a
+  JOIN authority_terms b
+    ON b.organization_id = a.organization_id
+   AND b.kind = a.kind
+   AND b.vocabulary_code = a.vocabulary_code
+  WHERE a.organization_id = v_org_id
+    AND a.kind = 'subject'
+    AND a.vocabulary_code = 'builtin-zh'
+    AND a.preferred_label = '盤點'
+    AND b.preferred_label = '汰舊'
+  ON CONFLICT DO NOTHING;
+
+  -- ----------------------------
+  -- F.3) bibliographic_subject_terms（authority linking v1：term_id-driven）
+  --
+  -- 目標：
+  -- - 讓 demo 書目的 subjects 能「正規化」到 preferred_label
+  -- - 並把 term_id 連結落到 bibliographic_subject_terms（供：
+  --   - term_id-driven 查詢（不再靠字串長相）
+  --   - MARC 650/651 的 $0（authority term id）
+  --
+  -- 取捨：
+  -- - demo seed 也做一次 backfill，避免「seed 直接 INSERT」繞過 API 的正規化流程
+  -- - 若某個 subjects label 在 authority_terms 找不到（也不在 variant_labels），就自動建立 local subject term
+  -- ----------------------------
+
+  -- 1) 確保「每個 subjects label」至少能對應到一個 term（缺的就補建 local）
+  WITH used_labels AS (
+    SELECT DISTINCT unnest(subjects) AS label
+    FROM bibliographic_records
+    WHERE organization_id = v_org_id
+      AND subjects IS NOT NULL
+  ),
+  missing_labels AS (
+    SELECT u.label
+    FROM used_labels u
+    WHERE NOT EXISTS (
+      SELECT 1
+      FROM authority_terms t
+      WHERE t.organization_id = v_org_id
+        AND t.kind = 'subject'
+        AND (
+          t.preferred_label = u.label
+          OR (t.variant_labels IS NOT NULL AND u.label = ANY(t.variant_labels))
+        )
+    )
+  )
+  INSERT INTO authority_terms (organization_id, kind, vocabulary_code, preferred_label, variant_labels, note, source, status)
+  SELECT v_org_id, 'subject', 'local', label, NULL, NULL, 'seed-demo-auto', 'active'
+  FROM missing_labels
+  ON CONFLICT (organization_id, kind, vocabulary_code, preferred_label) DO NOTHING;
+
+  -- 2) 正規化 bibliographic_records.subjects：variant label → preferred_label（並去重保序）
+  WITH bib_subjects AS (
+    SELECT
+      b.id AS bib_id,
+      s.ordinality::int AS pos,
+      s.label AS raw_label
+    FROM bibliographic_records b
+    JOIN LATERAL unnest(b.subjects) WITH ORDINALITY AS s(label, ordinality)
+      ON TRUE
+    WHERE b.organization_id = v_org_id
+      AND b.subjects IS NOT NULL
+  ),
+  mapped AS (
+    SELECT
+      bs.bib_id,
+      bs.pos,
+      (
+        SELECT t.preferred_label
+        FROM authority_terms t
+        WHERE t.organization_id = v_org_id
+          AND t.kind = 'subject'
+          AND (
+            t.preferred_label = bs.raw_label
+            OR (t.variant_labels IS NOT NULL AND bs.raw_label = ANY(t.variant_labels))
+          )
+        -- demo 策略：若同 label 在多個 vocabulary_code 內都存在，優先 builtin-zh（避免 local 蓋過內建）
+        ORDER BY
+          CASE WHEN t.preferred_label = bs.raw_label THEN 0 ELSE 1 END,
+          CASE WHEN t.vocabulary_code = 'builtin-zh' THEN 0 ELSE 1 END,
+          t.id ASC
+        LIMIT 1
+      ) AS preferred_label
+    FROM bib_subjects bs
+  ),
+  dedup AS (
+    SELECT bib_id, preferred_label, MIN(pos) AS first_pos
+    FROM mapped
+    WHERE preferred_label IS NOT NULL
+    GROUP BY bib_id, preferred_label
+  ),
+  canon AS (
+    SELECT bib_id, array_agg(preferred_label ORDER BY first_pos) AS subjects
+    FROM dedup
+    GROUP BY bib_id
+  )
+  UPDATE bibliographic_records b
+  SET subjects = c.subjects, updated_at = now()
+  FROM canon c
+  WHERE b.organization_id = v_org_id
+    AND b.id = c.bib_id;
+
+  -- 3) rebuild bibliographic_subject_terms（先刪掉同 org 的舊資料，再插入）
+  DELETE FROM bibliographic_subject_terms
+  WHERE organization_id = v_org_id;
+
+  INSERT INTO bibliographic_subject_terms (organization_id, bibliographic_id, term_id, position)
+  SELECT
+    v_org_id,
+    b.id AS bibliographic_id,
+    t.id AS term_id,
+    s.ordinality::int AS position
+  FROM bibliographic_records b
+  JOIN LATERAL unnest(b.subjects) WITH ORDINALITY AS s(label, ordinality)
+    ON TRUE
+  JOIN LATERAL (
+    SELECT id
+    FROM authority_terms t
+    WHERE t.organization_id = v_org_id
+      AND t.kind = 'subject'
+      AND t.preferred_label = s.label
+    ORDER BY
+      CASE WHEN t.vocabulary_code = 'builtin-zh' THEN 0 ELSE 1 END,
+      t.id ASC
+    LIMIT 1
+  ) t ON TRUE
+  WHERE b.organization_id = v_org_id
+    AND b.subjects IS NOT NULL
+  ON CONFLICT DO NOTHING;
 
   -- ----------------------------
   -- G) item_copies：固定 UUID + ON CONFLICT DO NOTHING
