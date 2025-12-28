@@ -10,10 +10,10 @@
  * - 以 URL 表達多租戶邊界：/orgs/{orgId}/...
  */
 
-import { Body, Controller, Get, Param, ParseUUIDPipe, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, ParseUUIDPipe, Patch, Post, UseGuards } from '@nestjs/common';
 import { StaffAuthGuard } from '../auth/staff-auth.guard';
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
-import { createLocationSchema } from './locations.schemas';
+import { createLocationSchema, updateLocationSchema } from './locations.schemas';
 import { LocationsService } from './locations.service';
 
 @Controller('api/v1/orgs/:orgId/locations')
@@ -32,5 +32,26 @@ export class LocationsController {
     @Body(new ZodValidationPipe(createLocationSchema)) body: any,
   ) {
     return await this.locations.create(orgId, body);
+  }
+
+  /**
+   * 更新/停用 location（US-001）
+   *
+   * PATCH /api/v1/orgs/:orgId/locations/:locationId
+   *
+   * - location 是主檔（master data）；多數情境不建議刪除，而是改成 inactive
+   * - inactive 的 location 不應再被用於：
+   *   - 新增冊（items.create / catalog import）
+   *   - 新建預約的取書地點（holds.create / me.placeHold）
+   *   - 新建盤點 session（inventory.createSession）
+   */
+  @UseGuards(StaffAuthGuard)
+  @Patch(':locationId')
+  async update(
+    @Param('orgId', new ParseUUIDPipe()) orgId: string,
+    @Param('locationId', new ParseUUIDPipe()) locationId: string,
+    @Body(new ZodValidationPipe(updateLocationSchema)) body: any,
+  ) {
+    return await this.locations.update(orgId, locationId, body);
   }
 }

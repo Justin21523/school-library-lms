@@ -778,7 +778,8 @@ export class CirculationService {
       FROM circulation_policies
       WHERE organization_id = $1
         AND audience_role = $2::user_role
-      ORDER BY created_at DESC
+        AND is_active = true
+      -- 同 role 同時只允許一筆 active policy（DB partial unique index 保證）
       LIMIT 1
       `,
       [orgId, role],
@@ -835,16 +836,16 @@ export class CirculationService {
       JOIN users u
         ON u.id = h.user_id
        AND u.organization_id = h.organization_id
-      -- policy（取「最新一筆」）：
-      -- - circulation_policies 允許同 role 多筆（例如政策調整時新增）
-      -- - 若直接 JOIN，會造成同一筆 hold 乘上多筆 policy，導致結果不穩定
-      -- - 用 LATERAL subquery 固定只取最新政策
+      -- policy（取「有效政策」）：
+      -- - circulation_policies 允許同 role 多筆（代表可保留歷史版本）
+      -- - 但每個 role 同時只允許一筆 is_active=true（由 DB partial unique index 保證）
+      -- - 用 LATERAL subquery 讓每筆 hold 都能拿到「該 borrower.role 的有效 hold_pickup_days」
       LEFT JOIN LATERAL (
         SELECT cp.hold_pickup_days
         FROM circulation_policies cp
         WHERE cp.organization_id = h.organization_id
           AND cp.audience_role = u.role
-        ORDER BY cp.created_at DESC
+          AND cp.is_active = true
         LIMIT 1
       ) p ON true
       WHERE h.organization_id = $1

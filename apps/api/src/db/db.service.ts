@@ -24,7 +24,9 @@ export class DbService implements OnModuleDestroy {
     const connectionString = process.env.DATABASE_URL;
     if (!connectionString) {
       // 在沒有 DB 連線資訊時，直接 fail-fast。
-      throw new Error('Missing required env var: DATABASE_URL');
+      throw new Error(
+        'Missing required env var: DATABASE_URL (請在環境變數或 repo root 的 .env / apps/api/.env 設定 DATABASE_URL)',
+      );
     }
 
     // 初始化連線池（之後所有 query 都透過 pool 取得連線）。

@@ -47,6 +47,11 @@ export const listLoansQuerySchema = z.object({
 
   // limit：可選；控制回傳筆數上限（避免一次拉太多）。
   limit: intFromStringSchema.optional(),
+
+  // cursor：cursor pagination（keyset）
+  // - 由 API 回傳 next_cursor
+  // - 前端「載入更多」時帶回來即可續查
+  cursor: z.string().trim().min(1).max(500).optional(),
 });
 
 export type ListLoansQuery = z.infer<typeof listLoansQuerySchema>;

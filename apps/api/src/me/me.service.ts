@@ -10,8 +10,9 @@
  * - place/cancel hold：重用 HoldsService 的商業規則（排隊、指派、釋放、audit）
  */
 
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import type { PoolClient } from 'pg';
+import { decodeCursorV1, encodeCursorV1, normalizeSortToIso, type CursorPage } from '../common/cursor';
 import { DbService } from '../db/db.service';
 import { HoldsService } from '../holds/holds.service';
 import type { HoldWithDetailsRow } from '../holds/holds.service';
@@ -62,10 +63,22 @@ export class MeService {
    *
    * - 只回傳該 user 的資料
    * - 回傳 shape 與 staff /loans 一致，方便前端共用 UI 元件
+   *
+   * 大量資料注意：
+   * - scale seed 下，一個讀者可能有數千筆借閱歷史
+   * - 因此前端需要 cursor pagination（keyset）來「往後翻頁」
    */
-  async listMyLoans(orgId: string, userId: string, query: ListMyLoansQuery): Promise<LoanWithDetailsRow[]> {
+  async listMyLoans(
+    orgId: string,
+    userId: string,
+    query: ListMyLoansQuery,
+  ): Promise<CursorPage<LoanWithDetailsRow>> {
+    // status 預設 open：讀者最常看的就是「我現在借了哪些」。
     const status = query.status ?? 'open';
-    const limit = query.limit ?? 200;
+
+    // limit 預設 200：避免一次拉太多；並用「多抓 1 筆」判斷是否還有下一頁。
+    const pageSize = query.limit ?? 200;
+    const queryLimit = pageSize + 1;
 
     const whereClauses: string[] = ['l.organization_id = $1', 'l.user_id = $2'];
     const params: unknown[] = [orgId, userId];
@@ -73,7 +86,28 @@ export class MeService {
     if (status === 'open') whereClauses.push('l.returned_at IS NULL');
     if (status === 'closed') whereClauses.push('l.returned_at IS NOT NULL');
 
-    params.push(limit);
+    // cursor pagination（keyset）：
+    // - loans 的排序鍵：checked_out_at DESC, id DESC（與 staff /loans 一致）
+    // - next page 條件：(checked_out_at, id) < (cursor.sort, cursor.id)
+    if (query.cursor) {
+      try {
+        const cursor = decodeCursorV1(query.cursor);
+        params.push(cursor.sort, cursor.id);
+        const sortParam = `$${params.length - 1}`;
+        const idParam = `$${params.length}`;
+        whereClauses.push(`(l.checked_out_at, l.id) < (${sortParam}::timestamptz, ${idParam}::uuid)`);
+      } catch (error: any) {
+        throw new BadRequestException({
+          error: {
+            code: 'VALIDATION_ERROR',
+            message: 'Invalid cursor',
+            details: { reason: error?.message ?? String(error) },
+          },
+        });
+      }
+    }
+
+    params.push(queryLimit);
     const limitParam = `$${params.length}`;
 
     const result = await this.db.query<LoanWithDetailsRow>(
@@ -118,13 +152,23 @@ export class MeService {
         ON b.id = i.bibliographic_id
        AND b.organization_id = i.organization_id
       WHERE ${whereClauses.join(' AND ')}
-      ORDER BY l.checked_out_at DESC
+      ORDER BY l.checked_out_at DESC, l.id DESC
       LIMIT ${limitParam}
       `,
       params,
     );
 
-    return result.rows;
+    const rows = result.rows;
+    const items = rows.slice(0, pageSize);
+    const hasMore = rows.length > pageSize;
+
+    const last = items.at(-1) ?? null;
+    const next_cursor =
+      hasMore && last
+        ? encodeCursorV1({ sort: normalizeSortToIso(last.checked_out_at), id: last.id })
+        : null;
+
+    return { items, next_cursor };
   }
 
   /**
@@ -132,10 +176,20 @@ export class MeService {
    *
    * - 只回傳該 user 的資料
    * - 回傳 shape 與 /holds 一致（HoldWithDetailsRow）
+   *
+   * cursor pagination（對齊 /holds）：
+   * - ready：按 ready_at ASC（越早 ready 越優先取書）
+   * - queued：按 placed_at ASC（公平排隊）
+   * - 其他/全部：按 placed_at DESC（近期優先，方便回顧）
    */
-  async listMyHolds(orgId: string, userId: string, query: ListMyHoldsQuery): Promise<HoldWithDetailsRow[]> {
+  async listMyHolds(
+    orgId: string,
+    userId: string,
+    query: ListMyHoldsQuery,
+  ): Promise<CursorPage<HoldWithDetailsRow>> {
     const status = query.status ?? 'all';
-    const limit = query.limit ?? 200;
+    const pageSize = query.limit ?? 200;
+    const queryLimit = pageSize + 1;
 
     const whereClauses: string[] = ['h.organization_id = $1', 'h.user_id = $2'];
     const params: unknown[] = [orgId, userId];
@@ -145,7 +199,37 @@ export class MeService {
       whereClauses.push(`h.status = $${params.length}::hold_status`);
     }
 
-    params.push(limit);
+    // cursor pagination（keyset）：與 HoldsService.list 的策略一致。
+    const order =
+      status === 'ready'
+        ? { column: 'h.ready_at', direction: 'ASC' as const }
+        : status === 'queued'
+          ? { column: 'h.placed_at', direction: 'ASC' as const }
+          : { column: 'h.placed_at', direction: 'DESC' as const };
+
+    if (query.cursor) {
+      try {
+        const cursor = decodeCursorV1(query.cursor);
+        params.push(cursor.sort, cursor.id);
+        const sortParam = `$${params.length - 1}`;
+        const idParam = `$${params.length}`;
+        whereClauses.push(
+          order.direction === 'ASC'
+            ? `(${order.column}, h.id) > (${sortParam}::timestamptz, ${idParam}::uuid)`
+            : `(${order.column}, h.id) < (${sortParam}::timestamptz, ${idParam}::uuid)`,
+        );
+      } catch (error: any) {
+        throw new BadRequestException({
+          error: {
+            code: 'VALIDATION_ERROR',
+            message: 'Invalid cursor',
+            details: { reason: error?.message ?? String(error) },
+          },
+        });
+      }
+    }
+
+    params.push(queryLimit);
     const limitParam = `$${params.length}`;
 
     const result = await this.db.query<HoldWithDetailsRow>(
@@ -194,22 +278,29 @@ export class MeService {
         ON ai.id = h.assigned_item_id
        AND ai.organization_id = h.organization_id
       WHERE ${whereClauses.join(' AND ')}
-      ORDER BY
-        CASE h.status
-          WHEN 'ready' THEN 0
-          WHEN 'queued' THEN 1
-          ELSE 2
-        END,
-        CASE
-          WHEN h.status = 'ready' THEN h.ready_at
-          ELSE h.placed_at
-        END ASC
+      ORDER BY ${order.column} ${order.direction}, h.id ${order.direction}
       LIMIT ${limitParam}
       `,
       params,
     );
 
-    return result.rows;
+    const rows = result.rows;
+    const items = rows.slice(0, pageSize);
+    const hasMore = rows.length > pageSize;
+
+    const last = items.at(-1) ?? null;
+    const sortValue =
+      !last
+        ? null
+        : status === 'ready'
+          ? // ready_at 理論上不會是 NULL；這裡用 placed_at 做保險 fallback
+            (last.ready_at ?? last.placed_at)
+          : last.placed_at;
+
+    const next_cursor =
+      hasMore && last && sortValue ? encodeCursorV1({ sort: normalizeSortToIso(sortValue), id: last.id }) : null;
+
+    return { items, next_cursor };
   }
 
   /**
@@ -248,4 +339,3 @@ export class MeService {
     return null;
   }
 }
-

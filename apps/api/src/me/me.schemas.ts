@@ -33,6 +33,8 @@ export const meLoanStatusSchema = z.enum(['open', 'closed', 'all']);
 export const listMyLoansQuerySchema = z.object({
   status: meLoanStatusSchema.optional(),
   limit: intFromStringSchema.optional(),
+  // cursor：支援大量資料時的 keyset pagination（與 /loans、/holds 一致）
+  cursor: z.string().trim().min(1).max(500).optional(),
 });
 
 export type ListMyLoansQuery = z.infer<typeof listMyLoansQuerySchema>;
@@ -43,6 +45,8 @@ export const meHoldStatusSchema = z.enum(['queued', 'ready', 'cancelled', 'fulfi
 export const listMyHoldsQuerySchema = z.object({
   status: meHoldStatusSchema.optional(),
   limit: intFromStringSchema.optional(),
+  // cursor：支援大量資料時的 keyset pagination（與 /loans、/holds 一致）
+  cursor: z.string().trim().min(1).max(500).optional(),
 });
 
 export type ListMyHoldsQuery = z.infer<typeof listMyHoldsQuerySchema>;
@@ -53,4 +57,3 @@ export const placeMyHoldSchema = z.object({
 });
 
 export type PlaceMyHoldInput = z.infer<typeof placeMyHoldSchema>;
-

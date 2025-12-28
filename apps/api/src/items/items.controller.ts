@@ -26,6 +26,7 @@ import { ZodValidationPipe } from '../common/zod-validation.pipe';
 import { ItemsService } from './items.service';
 import {
   createItemSchema,
+  listItemsQuerySchema,
   markItemLostSchema,
   markItemRepairSchema,
   markItemWithdrawnSchema,
@@ -40,17 +41,9 @@ export class ItemsController {
   @Get('items')
   async list(
     @Param('orgId', new ParseUUIDPipe()) orgId: string,
-    @Query('barcode') barcode?: string,
-    @Query('status') status?: string,
-    @Query('location_id') locationId?: string,
-    @Query('bibliographic_id') bibliographicId?: string,
+    @Query(new ZodValidationPipe(listItemsQuerySchema)) query: any,
   ) {
-    return await this.items.list(orgId, {
-      barcode,
-      status,
-      location_id: locationId,
-      bibliographic_id: bibliographicId,
-    });
+    return await this.items.list(orgId, query);
   }
 
   @Post('bibs/:bibId/items')

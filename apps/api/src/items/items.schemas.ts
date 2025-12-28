@@ -19,6 +19,41 @@ export const itemStatusValues = [
 
 const itemStatusSchema = z.enum(itemStatusValues);
 
+// ----------------------------
+// list items query（支援大量資料的 cursor pagination）
+// ----------------------------
+
+// limit：query string → int（1..500）
+const intFromStringSchema = z.preprocess((value) => {
+  if (value === undefined || value === null) return undefined;
+
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (!trimmed) return undefined;
+    return Number.parseInt(trimmed, 10);
+  }
+
+  return value;
+}, z.number().int().min(1).max(500));
+
+/**
+ * list items query
+ *
+ * 注意：
+ * - items 的列表在 scale seed 下可能非常大，因此採用 cursor pagination（keyset）
+ * - cursor 由 API 回傳（next_cursor），前端在「載入更多」時帶回來即可續查
+ */
+export const listItemsQuerySchema = z.object({
+  barcode: z.string().trim().min(1).max(64).optional(),
+  status: itemStatusSchema.optional(),
+  location_id: z.string().uuid().optional(),
+  bibliographic_id: z.string().uuid().optional(),
+  limit: intFromStringSchema.optional(),
+  cursor: z.string().trim().min(1).max(500).optional(),
+});
+
+export type ListItemsQuery = z.infer<typeof listItemsQuerySchema>;
+
 export const createItemSchema = z.object({
   // barcode：同 org 內唯一，建議實體條碼直接對應。
   barcode: z.string().trim().min(1).max(64),

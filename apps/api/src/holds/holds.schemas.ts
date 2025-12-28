@@ -136,6 +136,11 @@ export const listHoldsQuerySchema = z.object({
   bibliographic_id: uuidSchema.optional(),
   pickup_location_id: uuidSchema.optional(),
   limit: intFromStringSchema.optional(),
+
+  // cursor：cursor pagination（keyset）
+  // - 由 API 回傳 next_cursor
+  // - 前端「載入更多」時帶回來即可續查
+  cursor: z.string().trim().min(1).max(500).optional(),
 });
 
 export type ListHoldsQuery = z.infer<typeof listHoldsQuerySchema>;

@@ -55,9 +55,7 @@ export class ReportsController {
       // - content-type：指定 charset=utf-8（搭配 BOM，讓 Excel 更穩）
       // - content-disposition：attachment 會觸發下載；filename 提供預設檔名
       const safeDate = new Date().toISOString().slice(0, 10);
-      res.setHeader('content-type', 'text/csv; charset=utf-8');
-      res.setHeader('content-disposition', `attachment; filename="overdue-${safeDate}.csv"`);
-      res.setHeader('cache-control', 'no-store');
+      setCsvDownloadHeaders(res, `overdue-${safeDate}.csv`);
 
       return csv;
     }
@@ -98,12 +96,7 @@ export class ReportsController {
           ? `-${query.pickup_location_id.slice(0, 8)}`
           : '';
 
-      res.setHeader('content-type', 'text/csv; charset=utf-8');
-      res.setHeader(
-        'content-disposition',
-        `attachment; filename="ready-holds-${safeAsOf}${pickupSuffix}.csv"`,
-      );
-      res.setHeader('cache-control', 'no-store');
+      setCsvDownloadHeaders(res, `ready-holds-${safeAsOf}${pickupSuffix}.csv`);
       return csv;
     }
 
@@ -131,12 +124,7 @@ export class ReportsController {
       const safeFrom = safeIsoDateForFilename(query.from);
       const safeTo = safeIsoDateForFilename(query.to);
 
-      res.setHeader('content-type', 'text/csv; charset=utf-8');
-      res.setHeader(
-        'content-disposition',
-        `attachment; filename="zero-circulation-${safeFrom}-${safeTo}.csv"`,
-      );
-      res.setHeader('cache-control', 'no-store');
+      setCsvDownloadHeaders(res, `zero-circulation-${safeFrom}-${safeTo}.csv`);
       return csv;
     }
 
@@ -164,12 +152,7 @@ export class ReportsController {
       const safeFrom = safeIsoDateForFilename(query.from);
       const safeTo = safeIsoDateForFilename(query.to);
 
-      res.setHeader('content-type', 'text/csv; charset=utf-8');
-      res.setHeader(
-        'content-disposition',
-        `attachment; filename="top-circulation-${safeFrom}-${safeTo}.csv"`,
-      );
-      res.setHeader('cache-control', 'no-store');
+      setCsvDownloadHeaders(res, `top-circulation-${safeFrom}-${safeTo}.csv`);
       return csv;
     }
 
@@ -198,12 +181,10 @@ export class ReportsController {
       const safeFrom = safeIsoDateForFilename(query.from);
       const safeTo = safeIsoDateForFilename(query.to);
 
-      res.setHeader('content-type', 'text/csv; charset=utf-8');
-      res.setHeader(
-        'content-disposition',
-        `attachment; filename="circulation-summary-${query.group_by}-${safeFrom}-${safeTo}.csv"`,
+      setCsvDownloadHeaders(
+        res,
+        `circulation-summary-${query.group_by}-${safeFrom}-${safeTo}.csv`,
       );
-      res.setHeader('cache-control', 'no-store');
       return csv;
     }
 
@@ -240,12 +221,7 @@ export class ReportsController {
           ? `-${query.inventory_session_id.slice(0, 8)}`
           : '';
 
-      res.setHeader('content-type', 'text/csv; charset=utf-8');
-      res.setHeader(
-        'content-disposition',
-        `attachment; filename="inventory-diff-${safeDate}${sessionSuffix}.csv"`,
-      );
-      res.setHeader('cache-control', 'no-store');
+      setCsvDownloadHeaders(res, `inventory-diff-${safeDate}${sessionSuffix}.csv`);
       return csv;
     }
 
@@ -269,4 +245,42 @@ function safeIsoDateForFilename(value: unknown) {
   const d = new Date(trimmed);
   if (Number.isNaN(d.getTime())) return fallback;
   return d.toISOString().slice(0, 10);
+}
+
+/**
+ * CSV download headers（讓瀏覽器以檔案下載）
+ *
+ * 為什麼不用 `res.setHeader`？
+ * - 我們的 NestJS 是跑在 Fastify 上（@nestjs/platform-fastify）
+ * - FastifyReply 沒有 `setHeader`，正確做法是 `reply.header(name, value)`
+ *
+ * 但這個 repo 也希望維持「可切換 HTTP adapter」的彈性，
+ * 因此這裡做一個極小的抽象：
+ * - Fastify：`res.header(...)`
+ * - Express：`res.setHeader(...)`
+ * - Fastify 也可走 `res.raw.setHeader(...)`（Node 原生 response）
+ */
+function setHeaderCompat(res: any, name: string, value: string) {
+  if (!res) return;
+
+  if (typeof res.header === 'function') {
+    res.header(name, value);
+    return;
+  }
+
+  if (typeof res.setHeader === 'function') {
+    res.setHeader(name, value);
+    return;
+  }
+
+  // FastifyReply.raw：Node 的 ServerResponse（保底）
+  if (res.raw && typeof res.raw.setHeader === 'function') {
+    res.raw.setHeader(name, value);
+  }
+}
+
+function setCsvDownloadHeaders(res: any, filename: string) {
+  setHeaderCompat(res, 'content-type', 'text/csv; charset=utf-8');
+  setHeaderCompat(res, 'content-disposition', `attachment; filename="${filename}"`);
+  setHeaderCompat(res, 'cache-control', 'no-store');
 }

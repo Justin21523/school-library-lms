@@ -16,9 +16,10 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import type { PoolClient } from 'pg';
+import { decodeCursorV1, encodeCursorV1, normalizeSortToIso, type CursorPage } from '../common/cursor';
 import { DbService } from '../db/db.service';
 import { itemStatusValues } from './items.schemas';
-import type { CreateItemInput, UpdateItemInput } from './items.schemas';
+import type { CreateItemInput, ListItemsQuery, UpdateItemInput } from './items.schemas';
 import type {
   MarkItemLostInput,
   MarkItemRepairInput,
@@ -49,6 +50,39 @@ type ItemRow = {
   updated_at: string;
 };
 
+/**
+ * ItemDetailResult（Item detail 組合狀態）
+ *
+ * 需求背景：
+ * - scale seed 下，館員常會點進「冊詳情」確認：
+ *   1) 這冊目前是不是被借走？（open loan）
+ *   2) 這冊是否已被指派給某位讀者取書？（ready hold + assigned_item_id）
+ *
+ * 因此我們把 item 本體 + 流通狀態一起回傳，避免前端為了顯示一頁而打 2~3 個 API。
+ */
+type ItemDetailResult = {
+  item: ItemRow;
+  current_loan: null | {
+    id: string;
+    user_id: string;
+    user_external_id: string;
+    user_name: string;
+    checked_out_at: string;
+    due_at: string;
+  };
+  assigned_hold: null | {
+    id: string;
+    user_id: string;
+    user_external_id: string;
+    user_name: string;
+    bibliographic_id: string;
+    pickup_location_id: string;
+    placed_at: string;
+    ready_at: string | null;
+    ready_until: string | null;
+  };
+};
+
 type ActorRow = { id: string; role: UserRole; status: UserStatus };
 
 type OpenLoanRow = { id: string; user_id: string; due_at: string };
@@ -61,70 +95,97 @@ export class ItemsService {
 
   async list(
     orgId: string,
-    filters: {
-      barcode?: string;
-      status?: string;
-      location_id?: string;
-      bibliographic_id?: string;
-    },
-  ): Promise<ItemRow[]> {
-    const barcodeSearch = filters.barcode?.trim() ? `%${filters.barcode.trim()}%` : null;
-    const status = filters.status?.trim() ? filters.status.trim() : null;
-    const locationId = filters.location_id?.trim() ? filters.location_id.trim() : null;
-    const bibliographicId = filters.bibliographic_id?.trim()
-      ? filters.bibliographic_id.trim()
-      : null;
+    query: ListItemsQuery,
+  ): Promise<CursorPage<ItemRow>> {
+    // items list 在 scale seed 下可能非常大，因此採用 cursor pagination（keyset）。
+    // - 排序鍵：created_at DESC, id DESC
+    // - next page 條件：(created_at, id) < (cursor.sort, cursor.id)
 
-    // status 若給了不合法的 enum 值，直接回 400（避免 DB error）。
-    if (status && !itemStatusValues.includes(status as ItemStatus)) {
-      throw new BadRequestException({
-        error: { code: 'VALIDATION_ERROR', message: 'Invalid item status filter' },
-      });
+    const whereClauses: string[] = ['organization_id = $1'];
+    const params: unknown[] = [orgId];
+
+    if (query.barcode) {
+      params.push(`%${query.barcode}%`);
+      whereClauses.push(`barcode ILIKE $${params.length}`);
     }
 
-    try {
-      const result = await this.db.query<ItemRow>(
-        `
-        SELECT
-          id,
-          organization_id,
-          bibliographic_id,
-          barcode,
-          call_number,
-          location_id,
-          status,
-          acquired_at,
-          last_inventory_at,
-          notes,
-          created_at,
-          updated_at
-        FROM item_copies
-        WHERE organization_id = $1
-          AND ($2::text IS NULL OR barcode ILIKE $2)
-          AND ($3::text IS NULL OR status = $3::item_status)
-          AND ($4::uuid IS NULL OR location_id = $4)
-          AND ($5::uuid IS NULL OR bibliographic_id = $5)
-        ORDER BY created_at DESC
-        LIMIT 200
-        `,
-        [orgId, barcodeSearch, status, locationId, bibliographicId],
-      );
-      return result.rows;
-    } catch (error: any) {
-      // 22P02 = invalid_text_representation：UUID/enum 轉型失敗。
-      if (error?.code === '22P02') {
+    if (query.status) {
+      // schema 已保證 status 是合法 enum；這裡仍 cast 一次讓 SQL 更明確。
+      params.push(query.status);
+      whereClauses.push(`status = $${params.length}::item_status`);
+    }
+
+    if (query.location_id) {
+      params.push(query.location_id);
+      whereClauses.push(`location_id = $${params.length}::uuid`);
+    }
+
+    if (query.bibliographic_id) {
+      params.push(query.bibliographic_id);
+      whereClauses.push(`bibliographic_id = $${params.length}::uuid`);
+    }
+
+    if (query.cursor) {
+      try {
+        const cursor = decodeCursorV1(query.cursor);
+        params.push(cursor.sort, cursor.id);
+        const sortParam = `$${params.length - 1}`;
+        const idParam = `$${params.length}`;
+        whereClauses.push(`(created_at, id) < (${sortParam}::timestamptz, ${idParam}::uuid)`);
+      } catch (error: any) {
         throw new BadRequestException({
-          error: { code: 'VALIDATION_ERROR', message: 'Invalid filter format' },
+          error: {
+            code: 'VALIDATION_ERROR',
+            message: 'Invalid cursor',
+            details: { reason: error?.message ?? String(error) },
+          },
         });
       }
-      throw error;
     }
+
+    const pageSize = query.limit ?? 200;
+    const queryLimit = pageSize + 1;
+    params.push(queryLimit);
+    const limitParam = `$${params.length}`;
+
+    const result = await this.db.query<ItemRow>(
+      `
+      SELECT
+        id,
+        organization_id,
+        bibliographic_id,
+        barcode,
+        call_number,
+        location_id,
+        status,
+        acquired_at,
+        last_inventory_at,
+        notes,
+        created_at,
+        updated_at
+      FROM item_copies
+      WHERE ${whereClauses.join(' AND ')}
+      ORDER BY created_at DESC, id DESC
+      LIMIT ${limitParam}
+      `,
+      params,
+    );
+
+    const rows = result.rows;
+    const items = rows.slice(0, pageSize);
+    const hasMore = rows.length > pageSize;
+
+    const last = items.at(-1) ?? null;
+    const next_cursor =
+      hasMore && last ? encodeCursorV1({ sort: normalizeSortToIso(last.created_at), id: last.id }) : null;
+
+    return { items, next_cursor };
   }
 
   async create(orgId: string, bibId: string, input: CreateItemInput): Promise<ItemRow> {
     // 防止跨 org 亂接：先確認 bibliographic/location 都屬於同一 org。
     await this.assertBibliographicExists(orgId, bibId);
-    await this.assertLocationExists(orgId, input.location_id);
+    await this.assertLocationActive(orgId, input.location_id);
 
     try {
       const result = await this.db.query<ItemRow>(
@@ -191,25 +252,99 @@ export class ItemsService {
     }
   }
 
-  async getById(orgId: string, itemId: string): Promise<ItemRow> {
-    const result = await this.db.query<ItemRow>(
+  async getById(orgId: string, itemId: string): Promise<ItemDetailResult> {
+    // 這裡使用 LATERAL subquery 的原因：
+    // - open loan / ready hold 都應該「最多一筆」（由 constraint/流程保證，但仍可能因資料不一致而多筆）
+    // - LATERAL + LIMIT 1 能保證 item detail 回傳固定 1 row，避免 join 造成 row 爆炸
+    type ItemDetailQueryRow = ItemRow & {
+      loan_id: string | null;
+      loan_user_id: string | null;
+      loan_checked_out_at: string | null;
+      loan_due_at: string | null;
+      loan_user_external_id: string | null;
+      loan_user_name: string | null;
+
+      hold_id: string | null;
+      hold_user_id: string | null;
+      hold_bibliographic_id: string | null;
+      hold_pickup_location_id: string | null;
+      hold_placed_at: string | null;
+      hold_ready_at: string | null;
+      hold_ready_until: string | null;
+      hold_user_external_id: string | null;
+      hold_user_name: string | null;
+    };
+
+    const result = await this.db.query<ItemDetailQueryRow>(
       `
       SELECT
-        id,
-        organization_id,
-        bibliographic_id,
-        barcode,
-        call_number,
-        location_id,
-        status,
-        acquired_at,
-        last_inventory_at,
-        notes,
-        created_at,
-        updated_at
-      FROM item_copies
-      WHERE organization_id = $1
-        AND id = $2
+        -- item 本體
+        i.id,
+        i.organization_id,
+        i.bibliographic_id,
+        i.barcode,
+        i.call_number,
+        i.location_id,
+        i.status,
+        i.acquired_at,
+        i.last_inventory_at,
+        i.notes,
+        i.created_at,
+        i.updated_at,
+
+        -- current open loan（可能為 NULL）
+        l.id AS loan_id,
+        l.user_id AS loan_user_id,
+        l.checked_out_at AS loan_checked_out_at,
+        l.due_at AS loan_due_at,
+        lu.external_id AS loan_user_external_id,
+        lu.name AS loan_user_name,
+
+        -- assigned ready hold（可能為 NULL）
+        h.id AS hold_id,
+        h.user_id AS hold_user_id,
+        h.bibliographic_id AS hold_bibliographic_id,
+        h.pickup_location_id AS hold_pickup_location_id,
+        h.placed_at AS hold_placed_at,
+        h.ready_at AS hold_ready_at,
+        h.ready_until AS hold_ready_until,
+        hu.external_id AS hold_user_external_id,
+        hu.name AS hold_user_name
+      FROM item_copies i
+      -- open loan：returned_at IS NULL
+      LEFT JOIN LATERAL (
+        SELECT id, user_id, checked_out_at, due_at
+        FROM loans
+        WHERE organization_id = i.organization_id
+          AND item_id = i.id
+          AND returned_at IS NULL
+        LIMIT 1
+      ) l ON true
+      LEFT JOIN users lu
+        ON lu.id = l.user_id
+       AND lu.organization_id = i.organization_id
+      -- ready hold：status='ready' AND assigned_item_id = itemId
+      LEFT JOIN LATERAL (
+        SELECT
+          id,
+          user_id,
+          bibliographic_id,
+          pickup_location_id,
+          placed_at,
+          ready_at,
+          ready_until
+        FROM holds
+        WHERE organization_id = i.organization_id
+          AND assigned_item_id = i.id
+          AND status = 'ready'
+        ORDER BY ready_at ASC NULLS LAST, placed_at ASC
+        LIMIT 1
+      ) h ON true
+      LEFT JOIN users hu
+        ON hu.id = h.user_id
+       AND hu.organization_id = i.organization_id
+      WHERE i.organization_id = $1
+        AND i.id = $2
       `,
       [orgId, itemId],
     );
@@ -220,7 +355,49 @@ export class ItemsService {
       });
     }
 
-    return result.rows[0]!;
+    const row = result.rows[0]!;
+
+    const item: ItemRow = {
+      id: row.id,
+      organization_id: row.organization_id,
+      bibliographic_id: row.bibliographic_id,
+      barcode: row.barcode,
+      call_number: row.call_number,
+      location_id: row.location_id,
+      status: row.status,
+      acquired_at: row.acquired_at,
+      last_inventory_at: row.last_inventory_at,
+      notes: row.notes,
+      created_at: row.created_at,
+      updated_at: row.updated_at,
+    };
+
+    const current_loan = row.loan_id
+      ? {
+          id: row.loan_id,
+          user_id: row.loan_user_id!,
+          user_external_id: row.loan_user_external_id ?? '(unknown)',
+          user_name: row.loan_user_name ?? '(unknown)',
+          checked_out_at: row.loan_checked_out_at!,
+          due_at: row.loan_due_at!,
+        }
+      : null;
+
+    const assigned_hold = row.hold_id
+      ? {
+          id: row.hold_id,
+          user_id: row.hold_user_id!,
+          user_external_id: row.hold_user_external_id ?? '(unknown)',
+          user_name: row.hold_user_name ?? '(unknown)',
+          bibliographic_id: row.hold_bibliographic_id!,
+          pickup_location_id: row.hold_pickup_location_id!,
+          placed_at: row.hold_placed_at!,
+          ready_at: row.hold_ready_at,
+          ready_until: row.hold_ready_until,
+        }
+      : null;
+
+    return { item, current_loan, assigned_hold };
   }
 
   async update(orgId: string, itemId: string, input: UpdateItemInput): Promise<ItemRow> {
@@ -236,8 +413,8 @@ export class ItemsService {
     if (input.call_number !== undefined) addClause('call_number', input.call_number);
 
     if (input.location_id !== undefined) {
-      // 更新 location 前先確認它屬於同 org（避免跨租戶亂接）。
-      await this.assertLocationExists(orgId, input.location_id);
+      // 更新 location 前先確認它屬於同 org，且必須是 active（避免把冊掛到停用館別）。
+      await this.assertLocationActive(orgId, input.location_id);
       addClause('location_id', input.location_id);
     }
 
@@ -801,10 +978,21 @@ export class ItemsService {
     }
   }
 
-  private async assertLocationExists(orgId: string, locationId: string) {
-    const result = await this.db.query<{ id: string }>(
+  /**
+   * assertLocationActive：驗證 location 存在且為 active
+   *
+   * 為什麼要檢查 active？
+   * - locations.status=inactive 代表「已停用/不可再使用」
+   * - 需求：停用 location 不可再被用於「新增冊/更新冊位置」（避免資料越用越亂）
+   *
+   * 注意：
+   * - 我們只在「會寫入/變更 location_id」的操作做這個檢查
+   * - 查詢（list/getById）仍允許回傳既有資料（即使它指向 inactive location）
+   */
+  private async assertLocationActive(orgId: string, locationId: string) {
+    const result = await this.db.query<{ id: string; status: 'active' | 'inactive' }>(
       `
-      SELECT id
+      SELECT id, status
       FROM locations
       WHERE id = $1
         AND organization_id = $2
@@ -815,6 +1003,13 @@ export class ItemsService {
     if (result.rowCount === 0) {
       throw new NotFoundException({
         error: { code: 'NOT_FOUND', message: 'Location not found' },
+      });
+    }
+
+    const location = result.rows[0]!;
+    if (location.status !== 'active') {
+      throw new ConflictException({
+        error: { code: 'LOCATION_INACTIVE', message: 'Location is inactive' },
       });
     }
   }

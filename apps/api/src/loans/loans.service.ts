@@ -19,6 +19,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import type { PoolClient } from 'pg';
+import { decodeCursorV1, encodeCursorV1, normalizeSortToIso, type CursorPage } from '../common/cursor';
 import { DbService } from '../db/db.service';
 import type { ListLoansQuery, PurgeLoanHistoryInput } from './loans.schemas';
 
@@ -121,12 +122,13 @@ type LoanIdRow = { id: string };
 export class LoansService {
   constructor(private readonly db: DbService) {}
 
-  async list(orgId: string, query: ListLoansQuery): Promise<LoanWithDetailsRow[]> {
+  async list(orgId: string, query: ListLoansQuery): Promise<CursorPage<LoanWithDetailsRow>> {
     // status 預設 open：符合館員最常見情境（先看「目前借出」）。
     const status = query.status ?? 'open';
 
     // limit 預設 200，避免一次拉太多資料。
-    const limit = query.limit ?? 200;
+    const pageSize = query.limit ?? 200;
+    const queryLimit = pageSize + 1;
 
     // 動態組 WHERE 條件（安全：只插入固定字串片段，值仍用參數化）。
     const whereClauses: string[] = ['l.organization_id = $1'];
@@ -147,8 +149,29 @@ export class LoansService {
     if (status === 'closed') whereClauses.push('l.returned_at IS NOT NULL');
     // status === 'all' 則不加條件
 
+    // cursor pagination（keyset）：
+    // - loans 的排序鍵：checked_out_at DESC, id DESC
+    // - next page 條件：(checked_out_at, id) < (cursor.sort, cursor.id)
+    if (query.cursor) {
+      try {
+        const cursor = decodeCursorV1(query.cursor);
+        params.push(cursor.sort, cursor.id);
+        const sortParam = `$${params.length - 1}`;
+        const idParam = `$${params.length}`;
+        whereClauses.push(`(l.checked_out_at, l.id) < (${sortParam}::timestamptz, ${idParam}::uuid)`);
+      } catch (error: any) {
+        throw new BadRequestException({
+          error: {
+            code: 'VALIDATION_ERROR',
+            message: 'Invalid cursor',
+            details: { reason: error?.message ?? String(error) },
+          },
+        });
+      }
+    }
+
     // LIMIT 也用參數化，避免拼字串造成 SQL injection 風險。
-    params.push(limit);
+    params.push(queryLimit);
     const limitParam = `$${params.length}`;
 
     const result = await this.db.query<LoanWithDetailsRow>(
@@ -193,13 +216,23 @@ export class LoansService {
         ON b.id = i.bibliographic_id
        AND b.organization_id = i.organization_id
       WHERE ${whereClauses.join(' AND ')}
-      ORDER BY l.checked_out_at DESC
+      ORDER BY l.checked_out_at DESC, l.id DESC
       LIMIT ${limitParam}
       `,
       params,
     );
 
-    return result.rows;
+    const rows = result.rows;
+    const items = rows.slice(0, pageSize);
+    const hasMore = rows.length > pageSize;
+
+    const last = items.at(-1) ?? null;
+    const next_cursor =
+      hasMore && last
+        ? encodeCursorV1({ sort: normalizeSortToIso(last.checked_out_at), id: last.id })
+        : null;
+
+    return { items, next_cursor };
   }
 
   /**

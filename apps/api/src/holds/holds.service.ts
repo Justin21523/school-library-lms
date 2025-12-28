@@ -27,6 +27,7 @@ import {
 } from '@nestjs/common';
 import type { PoolClient } from 'pg';
 import { assertBorrowingAllowedByOverdue } from '../common/borrowing-block';
+import { decodeCursorV1, encodeCursorV1, normalizeSortToIso, type CursorPage } from '../common/cursor';
 import { DbService } from '../db/db.service';
 import type {
   CancelHoldInput,
@@ -68,7 +69,7 @@ type PolicyRow = {
 
 type BibRow = { id: string; title: string };
 
-type LocationRow = { id: string; code: string; name: string };
+type LocationRow = { id: string; code: string; name: string; status: 'active' | 'inactive' };
 
 type HoldRow = {
   id: string;
@@ -180,9 +181,10 @@ type ExpiredReadyHoldCandidateRow = {
 export class HoldsService {
   constructor(private readonly db: DbService) {}
 
-  async list(orgId: string, query: ListHoldsQuery): Promise<HoldWithDetailsRow[]> {
+  async list(orgId: string, query: ListHoldsQuery): Promise<CursorPage<HoldWithDetailsRow>> {
     const status = query.status ?? 'all';
-    const limit = query.limit ?? 200;
+    const pageSize = query.limit ?? 200;
+    const queryLimit = pageSize + 1;
 
     const whereClauses: string[] = ['h.organization_id = $1'];
     const params: unknown[] = [orgId];
@@ -212,7 +214,49 @@ export class HoldsService {
       whereClauses.push(`ai.barcode = $${params.length}`);
     }
 
-    params.push(limit);
+    // cursor pagination（keyset）
+    //
+    // holds 的「合理排序」會隨 status 而不同：
+    // - ready：館員要優先處理「越早 ready 的越先取書」 → ready_at ASC
+    // - queued：公平排隊（placed_at 越早越先） → placed_at ASC
+    // - 其他/全部：偏向查詢/追溯（最近的先看） → placed_at DESC
+    //
+    // 重點：
+    // - cursor.sort 的語意會隨 status 改變，但前端不需要理解，只要把 next_cursor 帶回即可
+    // - next page 條件：
+    //   - ASC： (sort, id) > (cursor.sort, cursor.id)
+    //   - DESC：(sort, id) < (cursor.sort, cursor.id)
+
+    const order =
+      status === 'ready'
+        ? { column: 'h.ready_at', direction: 'ASC' as const }
+        : status === 'queued'
+          ? { column: 'h.placed_at', direction: 'ASC' as const }
+          : { column: 'h.placed_at', direction: 'DESC' as const };
+
+    if (query.cursor) {
+      try {
+        const cursor = decodeCursorV1(query.cursor);
+        params.push(cursor.sort, cursor.id);
+        const sortParam = `$${params.length - 1}`;
+        const idParam = `$${params.length}`;
+        whereClauses.push(
+          order.direction === 'ASC'
+            ? `(${order.column}, h.id) > (${sortParam}::timestamptz, ${idParam}::uuid)`
+            : `(${order.column}, h.id) < (${sortParam}::timestamptz, ${idParam}::uuid)`,
+        );
+      } catch (error: any) {
+        throw new BadRequestException({
+          error: {
+            code: 'VALIDATION_ERROR',
+            message: 'Invalid cursor',
+            details: { reason: error?.message ?? String(error) },
+          },
+        });
+      }
+    }
+
+    params.push(queryLimit);
     const limitParam = `$${params.length}`;
 
     const result = await this.db.query<HoldWithDetailsRow>(
@@ -261,22 +305,31 @@ export class HoldsService {
         ON ai.id = h.assigned_item_id
        AND ai.organization_id = h.organization_id
       WHERE ${whereClauses.join(' AND ')}
-      ORDER BY
-        CASE h.status
-          WHEN 'ready' THEN 0
-          WHEN 'queued' THEN 1
-          ELSE 2
-        END,
-        CASE
-          WHEN h.status = 'ready' THEN h.ready_at
-          ELSE h.placed_at
-        END ASC
+      ORDER BY ${order.column} ${order.direction}, h.id ${order.direction}
       LIMIT ${limitParam}
       `,
       params,
     );
 
-    return result.rows;
+    const rows = result.rows;
+    const items = rows.slice(0, pageSize);
+    const hasMore = rows.length > pageSize;
+
+    const last = items.at(-1) ?? null;
+    const sortValue =
+      !last
+        ? null
+        : status === 'ready'
+          ? // ready_at 理論上不會是 NULL；這裡用 placed_at 做保險 fallback
+            (last.ready_at ?? last.placed_at)
+          : last.placed_at;
+
+    const next_cursor =
+      hasMore && last && sortValue
+        ? encodeCursorV1({ sort: normalizeSortToIso(sortValue), id: last.id })
+        : null;
+
+    return { items, next_cursor };
   }
 
   async create(orgId: string, input: CreateHoldInput): Promise<HoldWithDetailsRow> {
@@ -310,9 +363,9 @@ export class HoldsService {
           });
         }
 
-        // 4) 確認 bib 與 pickup location 都屬於 org（避免跨租戶亂接）。
+        // 4) 確認 bib 與 pickup location 都屬於 org，且 pickup location 必須是 active。
         await this.assertBibliographicExists(client, orgId, input.bibliographic_id);
-        await this.assertLocationExists(client, orgId, input.pickup_location_id);
+        await this.assertPickupLocationActive(client, orgId, input.pickup_location_id);
 
         // 5) 取得 borrower 的 policy（用來限制 max_holds 與決定 hold_pickup_days）。
         const policy = await this.getPolicyForRole(client, orgId, borrower.role);
@@ -1097,10 +1150,21 @@ export class HoldsService {
     }
   }
 
-  private async assertLocationExists(client: PoolClient, orgId: string, locationId: string) {
+  /**
+   * assertPickupLocationActive：驗證「取書地點」存在且為 active
+   *
+   * 需求（US-001 + OPAC UX）：
+   * - locations.status=inactive 代表「已停用館別/位置」
+   * - 停用的 location 不應再被用作「新建立預約的取書地點」（避免讀者選到關閉的分館）
+   *
+   * 注意：
+   * - 這個檢查只影響「新建立 hold」；既有 holds 仍可被查詢/取消/fulfill
+   * - 若未來需要「更改 pickup location」，可在 holds PATCH 時重用這個檢查
+   */
+  private async assertPickupLocationActive(client: PoolClient, orgId: string, locationId: string) {
     const result = await client.query<LocationRow>(
       `
-      SELECT id, code, name
+      SELECT id, code, name, status
       FROM locations
       WHERE organization_id = $1
         AND id = $2
@@ -1111,6 +1175,13 @@ export class HoldsService {
     if (result.rowCount === 0) {
       throw new NotFoundException({
         error: { code: 'NOT_FOUND', message: 'Location not found' },
+      });
+    }
+
+    const location = result.rows[0]!;
+    if (location.status !== 'active') {
+      throw new ConflictException({
+        error: { code: 'LOCATION_INACTIVE', message: 'Pickup location is inactive' },
       });
     }
   }
@@ -1130,7 +1201,7 @@ export class HoldsService {
       FROM circulation_policies
       WHERE organization_id = $1
         AND audience_role = $2::user_role
-      ORDER BY created_at DESC
+        AND is_active = true
       LIMIT 1
       `,
       [orgId, role],
@@ -1240,16 +1311,16 @@ export class HoldsService {
       JOIN users u
         ON u.id = h.user_id
        AND u.organization_id = h.organization_id
-      -- policy（取「最新一筆」）：
-      -- - circulation_policies 允許同 role 多筆（例如調整政策時新增一筆）
-      -- - 若直接 JOIN，會讓同一筆 hold 乘上多筆 policy，造成結果不穩定
-      -- - 用 LATERAL subquery + ORDER BY created_at DESC，確保只取最新政策
+      -- policy（取「有效政策」）：
+      -- - circulation_policies 允許同 role 多筆（可保留歷史版本）
+      -- - 但每個 role 同時只允許一筆 is_active=true（由 DB partial unique index 保證）
+      -- - 用 LATERAL subquery 讓每筆 queued hold 都能拿到對應的 hold_pickup_days
       LEFT JOIN LATERAL (
         SELECT cp.hold_pickup_days
         FROM circulation_policies cp
         WHERE cp.organization_id = h.organization_id
           AND cp.audience_role = u.role
-        ORDER BY cp.created_at DESC
+          AND cp.is_active = true
         LIMIT 1
       ) p ON true
       WHERE h.organization_id = $1

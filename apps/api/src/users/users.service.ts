@@ -20,6 +20,7 @@ import {
 } from '@nestjs/common';
 import { createHash } from 'crypto';
 import type { PoolClient } from 'pg';
+import { decodeCursorV1, encodeCursorV1, normalizeSortToIso, type CursorPage } from '../common/cursor';
 import { DbService } from '../db/db.service';
 import { parseCsv } from '../common/csv';
 import type { CreateUserInput } from './users.schemas';
@@ -146,10 +147,10 @@ export class UsersService {
    * - role/status：精準篩選
    *
    * 注意：
-   * - 目前仍採 MVP 的「最多回傳 N 筆」模式（未實作 cursor 分頁）
+   * - 為了支援大量資料（scale seed），此端點採用 cursor pagination（keyset）
    * - 這個端點會被很多頁面用來「挑 actor/borrrower」；因此要保持快且穩定
    */
-  async list(orgId: string, query: ListUsersQuery): Promise<UserRow[]> {
+  async list(orgId: string, query: ListUsersQuery): Promise<CursorPage<UserRow>> {
     // 1) 組 where clauses（只加有提供的 filter）
     const whereClauses: string[] = ['organization_id = $1'];
     const params: unknown[] = [orgId];
@@ -171,8 +172,33 @@ export class UsersService {
       whereClauses.push(`status = $${params.length}::user_status`);
     }
 
-    const limit = query.limit ?? 200;
-    params.push(limit);
+    // 2) cursor：若前端帶 cursor，代表要「接著上一頁往後翻」
+    // - users 的排序鍵：created_at DESC, id DESC
+    // - 因此下一頁條件是：(created_at, id) < (cursor.sort, cursor.id)
+    if (query.cursor) {
+      try {
+        const cursor = decodeCursorV1(query.cursor);
+        params.push(cursor.sort, cursor.id);
+        const sortParam = `$${params.length - 1}`;
+        const idParam = `$${params.length}`;
+        whereClauses.push(`(created_at, id) < (${sortParam}::timestamptz, ${idParam}::uuid)`);
+      } catch (error: any) {
+        throw new BadRequestException({
+          error: {
+            code: 'VALIDATION_ERROR',
+            message: 'Invalid cursor',
+            details: { reason: error?.message ?? String(error) },
+          },
+        });
+      }
+    }
+
+    // 3) limit：我們用「多抓 1 筆」來判斷是否還有下一頁
+    // - 若回傳 rows.length > pageSize：代表還有下一頁
+    // - next_cursor 用「本頁最後一筆」產生（前端下一次帶回來即可續查）
+    const pageSize = query.limit ?? 200;
+    const queryLimit = pageSize + 1;
+    params.push(queryLimit);
     const limitParam = `$${params.length}`;
 
     const result = await this.db.query<UserRow>(
@@ -180,13 +206,23 @@ export class UsersService {
       SELECT id, organization_id, external_id, name, role, org_unit, status, created_at, updated_at
       FROM users
       WHERE ${whereClauses.join(' AND ')}
-      ORDER BY created_at DESC
+      ORDER BY created_at DESC, id DESC
       LIMIT ${limitParam}
       `,
       params,
     );
 
-    return result.rows;
+    const rows = result.rows;
+
+    // 只回傳 pageSize 筆；第 pageSize+1 筆只用來判斷是否還有下一頁。
+    const items = rows.slice(0, pageSize);
+    const hasMore = rows.length > pageSize;
+
+    const last = items.at(-1) ?? null;
+    const next_cursor =
+      hasMore && last ? encodeCursorV1({ sort: normalizeSortToIso(last.created_at), id: last.id }) : null;
+
+    return { items, next_cursor };
   }
 
   async create(orgId: string, input: CreateUserInput): Promise<UserRow> {

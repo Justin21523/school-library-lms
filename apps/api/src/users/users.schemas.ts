@@ -54,14 +54,15 @@ export type CreateUserInput = z.infer<typeof createUserSchema>;
  * - role/status：精準篩選（避免搜尋結果太雜）
  *
  * 注意：
- * - 雖然 API-DRAFT 提到分頁/cursor，但目前 users 仍採 MVP 的「最多 200 筆」模式
- * - 先把常用 filter 做起來，讓 circulation/報表/稽核的操作更順手
+ * - 為了支援大量資料（scale seed）驗證，我們採用 cursor pagination（keyset）
+ * - cursor 由 API 回傳（next_cursor），前端在「載入更多」時帶回來
  */
 export const listUsersQuerySchema = z.object({
   query: z.string().trim().min(1).max(200).optional(),
   role: roleSchema.optional(),
   status: statusSchema.optional(),
   limit: intFromStringSchema.optional(),
+  cursor: z.string().trim().min(1).max(500).optional(),
 });
 
 export type ListUsersQuery = z.infer<typeof listUsersQuerySchema>;

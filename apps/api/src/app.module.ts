@@ -31,6 +31,7 @@ import { AuditModule } from './audit/audit.module';
 import { AuthModule } from './auth/auth.module';
 import { InventoryModule } from './inventory/inventory.module';
 import { MeModule } from './me/me.module';
+import { AuthorityModule } from './authority/authority.module';
 
 @Module({
   // imports：把子模組「掛進」AppModule，讓 NestJS 掃描它們的 controller/provider。
@@ -49,6 +50,7 @@ import { MeModule } from './me/me.module';
     InventoryModule,
     ReportsModule,
     AuditModule,
+    AuthorityModule,
     MeModule,
   ],
   controllers: [HealthController],
