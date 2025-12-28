@@ -20,8 +20,13 @@ import Link from 'next/link';
 import type { Organization } from '../../lib/api';
 import { getOrganization } from '../../lib/api';
 import { formatErrorMessage } from '../../lib/error';
+import { getOrgConsoleNav, type OrgConsoleNavItem, type OrgConsoleNavNode } from '../../lib/console-nav';
+import { useStaffSession } from '../../lib/use-staff-session';
 
 export default function OrgDashboardPage({ params }: { params: { orgId: string } }) {
+  // staff session：顯示「是否已登入」讓使用者少走一步（也能降低「為什麼一直 401」的困惑）
+  const { ready: staffReady, session: staffSession } = useStaffSession(params.orgId);
+
   // org：單一 organization 的資料（null 代表尚未載入）。
   const [org, setOrg] = useState<Organization | null>(null);
 
@@ -49,85 +54,121 @@ export default function OrgDashboardPage({ params }: { params: { orgId: string }
   }, [params.orgId]);
 
   return (
-    <section className="panel">
-      <h1 style={{ marginTop: 0 }}>Organization Dashboard</h1>
-
-      <p className="muted">
-        這頁對應 API：<code>GET /api/v1/orgs/:orgId</code>
-      </p>
-
-      {loading ? <p className="muted">載入中…</p> : null}
-      {error ? <p className="error">錯誤：{error}</p> : null}
-
-      {org ? (
-        <div className="stack">
-          <div>
-            <div className="muted">名稱</div>
-            <div style={{ fontWeight: 700 }}>{org.name}</div>
+    <div className="stack">
+      <section className="panel">
+        <div className="toolbar">
+          <div className="toolbarLeft">
+            <h1 style={{ margin: 0 }}>Dashboard</h1>
           </div>
-
-          <div>
-            <div className="muted">代碼</div>
-            <div>{org.code ?? '(no code)'}</div>
-          </div>
-
-          <div>
-            <div className="muted">orgId</div>
-            <div style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>
-              {org.id}
-            </div>
-          </div>
-
-          <hr style={{ border: 0, borderTop: '1px solid var(--border)', margin: '16px 0' }} />
-
-          {/* 快捷入口：把「最常需要點的面板」集中在 Dashboard，避免只靠側邊欄（也方便 demo 測試）。 */}
-          <div>
-            <div className="muted">快速入口（Web Console）</div>
-            <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 8 }}>
-              <Link href={`/orgs/${org.id}/login`}>Staff Login</Link>
-              <Link href={`/orgs/${org.id}/authority`}>Authority Control（主控入口）</Link>
-              <Link href={`/orgs/${org.id}/authority-terms`}>Authority Terms</Link>
-              <Link href={`/orgs/${org.id}/authority-terms/thesaurus`}>Thesaurus</Link>
-              <Link href={`/orgs/${org.id}/users`}>Users</Link>
-              <Link href={`/orgs/${org.id}/users/import`}>Users CSV Import</Link>
-              <Link href={`/orgs/${org.id}/circulation-policies`}>Policies</Link>
-              <Link href={`/orgs/${org.id}/bibs`}>Bibs</Link>
-              <Link href={`/orgs/${org.id}/bibs/import`}>Catalog CSV Import</Link>
-              <Link href={`/orgs/${org.id}/bibs/import-marc`}>MARC Import</Link>
-              <Link href={`/orgs/${org.id}/bibs/marc-editor`}>MARC21 編輯器</Link>
-              <Link href={`/orgs/${org.id}/items`}>Items</Link>
-              <Link href={`/orgs/${org.id}/inventory`}>Inventory</Link>
-              <Link href={`/orgs/${org.id}/circulation`}>Circulation</Link>
-              <Link href={`/orgs/${org.id}/holds`}>Holds</Link>
-              <Link href={`/orgs/${org.id}/loans`}>Loans</Link>
-            </div>
-          </div>
-
-          <div>
-            <div className="muted">快速入口（Reports / Maintenance / Audit）</div>
-            <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 8 }}>
-              <Link href={`/orgs/${org.id}/reports/overdue`}>Overdue</Link>
-              <Link href={`/orgs/${org.id}/reports/ready-holds`}>Ready Holds</Link>
-              <Link href={`/orgs/${org.id}/reports/top-circulation`}>Top Circulation</Link>
-              <Link href={`/orgs/${org.id}/reports/circulation-summary`}>Circulation Summary</Link>
-              <Link href={`/orgs/${org.id}/reports/zero-circulation`}>Zero Circulation</Link>
-              <Link href={`/orgs/${org.id}/holds/maintenance`}>Holds Maintenance</Link>
-              <Link href={`/orgs/${org.id}/loans/maintenance`}>Loans Maintenance</Link>
-              <Link href={`/orgs/${org.id}/audit-events`}>Audit Events</Link>
-            </div>
-          </div>
-
-          <div>
-            <div className="muted">快速入口（OPAC / 讀者端）</div>
-            <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 8 }}>
-              <Link href={`/opac/orgs/${org.id}`}>OPAC：搜尋與預約</Link>
-              <Link href={`/opac/orgs/${org.id}/login`}>OPAC Login</Link>
-              <Link href={`/opac/orgs/${org.id}/loans`}>OPAC：我的借閱</Link>
-              <Link href={`/opac/orgs/${org.id}/holds`}>OPAC：我的預約</Link>
-            </div>
+          <div className="toolbarRight">
+            {staffReady && !staffSession ? <Link href={`/orgs/${params.orgId}/login`}>Staff Login</Link> : null}
+            {staffReady && staffSession ? <Link href={`/orgs/${params.orgId}/logout`}>Logout</Link> : null}
           </div>
         </div>
-      ) : null}
-    </section>
+
+        <p className="muted" style={{ marginTop: 8 }}>
+          這頁對應 API：<code>GET /api/v1/orgs/:orgId</code> · 你也可以用 topbar 的「全域查詢」或 <code>Ctrl/Cmd + K</code> 快速跳轉功能。
+        </p>
+
+        {loading ? <p className="muted">載入中…</p> : null}
+        {error ? <p className="error">錯誤：{error}</p> : null}
+
+        {org ? (
+          <div className="grid3" style={{ marginTop: 12 }}>
+            <div className="callout">
+              <div className="muted">名稱</div>
+              <div style={{ fontWeight: 800 }}>{org.name}</div>
+            </div>
+            <div className="callout">
+              <div className="muted">代碼</div>
+              <div>{org.code ?? '(no code)'}</div>
+            </div>
+            <div className="callout">
+              <div className="muted">orgId</div>
+              <div style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>{org.id}</div>
+            </div>
+          </div>
+        ) : null}
+
+        <div className="callout" style={{ marginTop: 12 }}>
+          <div style={{ fontWeight: 800 }}>Staff Session</div>
+          {!staffReady ? <div className="muted">載入中…</div> : null}
+          {staffReady && staffSession ? (
+            <div className="muted">
+              已登入：{staffSession.user.name}（{staffSession.user.role}） · {staffSession.user.external_id}
+            </div>
+          ) : null}
+          {staffReady && !staffSession ? (
+            <div className="muted">
+              未登入：多數後台操作需要 staff token（否則 API 會回 <code>401</code>）。
+            </div>
+          ) : null}
+        </div>
+      </section>
+
+      <section className="panel">
+        <h2 style={{ marginTop: 0 }}>模組導覽（Taxonomy）</h2>
+        <p className="muted">
+          這裡把功能用「階層式分類」整理成清楚的入口；側邊欄也會用同一套分類（並支援收合/拖拉寬度/tooltip）。
+        </p>
+
+        <div className="cardGrid">
+          {getOrgConsoleNav(params.orgId)
+            .filter((g) => g.id !== 'overview')
+            .map((group) => {
+              const links = pickPreviewLinks(group.children).slice(0, 5);
+              return (
+                <div key={group.id} className="card">
+                  <div className="cardTitle">{group.label}</div>
+                  <div className="cardMeta">{describeGroup(group.id)}</div>
+                  <div className="cardLinks">
+                    {links.map((item) => (
+                      <Link key={item.id} href={item.href}>
+                        {item.label}
+                      </Link>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+        </div>
+      </section>
+    </div>
   );
+}
+
+function pickPreviewLinks(nodes: OrgConsoleNavNode[]): OrgConsoleNavItem[] {
+  // dashboard 的卡片只需要「最常點」的少量入口：
+  // - 我們用 DFS 取出 item（遇到 group 就往下走），並由呼叫端再 slice(0,n)
+  const items: OrgConsoleNavItem[] = [];
+  for (const n of nodes) {
+    if (n.type === 'item') {
+      items.push(n);
+      continue;
+    }
+    items.push(...pickPreviewLinks(n.children));
+  }
+  return items;
+}
+
+function describeGroup(groupId: string) {
+  // 這裡用「人類可讀」的摘要，讓 dashboard 卡片一眼看懂差異。
+  switch (groupId) {
+    case 'cataloging':
+      return '書目/編目、MARC、匯入、欄位字典、backfill';
+    case 'authority':
+      return '權威詞主檔、Thesaurus、品質檢查、視覺化治理';
+    case 'holdings':
+      return '冊（items）、館藏地點、盤點';
+    case 'circulation':
+      return '借閱、預約、政策、櫃台、維護工具';
+    case 'reports':
+      return '統計/報表（逾期、熱門、摘要…）';
+    case 'admin':
+      return '使用者、匯入、Bootstrap、稽核';
+    case 'opac':
+      return '讀者端（查詢/預約/我的借閱）';
+    default:
+      return '模組';
+  }
 }

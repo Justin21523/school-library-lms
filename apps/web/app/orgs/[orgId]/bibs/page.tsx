@@ -403,141 +403,168 @@ export default function BibsPage({ params }: { params: { orgId: string } }) {
           對應 API：<code>GET/POST /api/v1/orgs/:orgId/bibs</code>（支援 <code>?query=</code> /{' '}
           <code>?isbn=</code> / <code>?classification=</code>）
         </p>
-        <p className="muted">
-          匯入：<Link href={`/orgs/${params.orgId}/bibs/import`}>Catalog CSV Import</Link> ·{' '}
-          <Link href={`/orgs/${params.orgId}/bibs/import-marc`}>MARC Import</Link>
-        </p>
-
-        {/* 搜尋區 */}
-        <form onSubmit={onSearch} className="stack" style={{ marginTop: 16 }}>
-          <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr', gap: 12 }}>
-            <label>
-              query（關鍵字）
-              <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="例：哈利 / Rowling" />
-            </label>
-            <label>
-              isbn（精確）
-              <input value={isbn} onChange={(e) => setIsbn(e.target.value)} placeholder="例：9789573317248" />
-            </label>
-            <label>
-              classification（prefix）
-              <input value={classification} onChange={(e) => setClassification(e.target.value)} placeholder="例：823" />
-            </label>
+        <div className="toolbar" style={{ marginTop: 12 }}>
+          <div className="toolbarLeft muted">
+            匯入：
+            <Link href={`/orgs/${params.orgId}/bibs/import`}>Catalog CSV Import</Link> ·{' '}
+            <Link href={`/orgs/${params.orgId}/bibs/import-marc`}>MARC Import</Link>
           </div>
-
-          {/* term_id-driven filters（chips + 可選擇 thesaurus expand） */}
-          <div className="callout">
-            <div className="muted" style={{ marginBottom: 6 }}>
-              term_id-driven 檢索：用 authority terms 的 <code>id</code> 當過濾條件；可選擇是否用 thesaurus 展開（同義/上下位/相關）。
-            </div>
-
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 12 }}>
-              <label>
-                expand subject（650）
-                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                  <input type="checkbox" checked={expandSubjectFilter} onChange={(e) => setExpandSubjectFilter(e.target.checked)} />
-                  <span className="muted">含 self/variants/BT/NT/RT</span>
-                </div>
-              </label>
-              <label>
-                expand geographic（651）
-                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                  <input
-                    type="checkbox"
-                    checked={expandGeographicFilter}
-                    onChange={(e) => setExpandGeographicFilter(e.target.checked)}
-                  />
-                  <span className="muted">含 self/variants/BT/NT/RT</span>
-                </div>
-              </label>
-              <label>
-                expand genre（655）
-                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                  <input type="checkbox" checked={expandGenreFilter} onChange={(e) => setExpandGenreFilter(e.target.checked)} />
-                  <span className="muted">含 self/variants/BT/NT/RT</span>
-                </div>
-              </label>
-              <label>
-                depth（0..5）
-                <input value={expandFilterDepth} onChange={(e) => setExpandFilterDepth(e.target.value)} />
-              </label>
-            </div>
-
-            <div style={{ marginTop: 12 }}>
-              <TermMultiPicker
-                orgId={params.orgId}
-                kind="subject"
-                label="subject terms（650 filter）"
-                value={subjectFilterTerms}
-                onChange={setSubjectFilterTerms}
-                defaultVocabularyCode="builtin-zh"
-                enableBrowse
-                helpText={
-                  <>
-                    這裡是「base terms」多選；送到 API 時會依 expand 設定轉成 <code>subject_term_ids</code>（逗號分隔）。
-                  </>
-                }
-              />
-            </div>
-
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginTop: 12 }}>
-              <TermMultiPicker
-                orgId={params.orgId}
-                kind="geographic"
-                label="geographic terms（651 filter）"
-                value={geographicFilterTerms}
-                onChange={setGeographicFilterTerms}
-                defaultVocabularyCode="builtin-zh"
-                enableBrowse
-              />
-              <TermMultiPicker
-                orgId={params.orgId}
-                kind="genre"
-                label="genre terms（655 filter）"
-                value={genreFilterTerms}
-                onChange={setGenreFilterTerms}
-                defaultVocabularyCode="builtin-zh"
-                enableBrowse
-              />
-            </div>
+          <div className="toolbarRight">
+            <Link href={`/orgs/${params.orgId}/bibs/marc-dictionary`}>MARC 欄位字典</Link>
           </div>
+        </div>
 
-          <div style={{ display: 'flex', gap: 12 }}>
-            <button type="submit" disabled={loading}>
-              {loading ? '查詢中…' : '搜尋'}
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setQuery('');
-                setIsbn('');
-                setClassification('');
-                setExpandSubjectFilter(true);
-                setExpandGeographicFilter(false);
-                setExpandGenreFilter(false);
-                setExpandFilterDepth('1');
-                setSubjectFilterTerms([]);
-                setGeographicFilterTerms([]);
-                setGenreFilterTerms([]);
-                void refresh();
-              }}
-              disabled={loading}
-            >
-              清除
-            </button>
-          </div>
-        </form>
+        <details className="details" open>
+          <summary>
+            <span>查詢</span>
+            <span className="muted" style={{ fontWeight: 500, fontSize: 13 }}>
+              keyword / ISBN / 分類號 · term_id-driven filters（650/651/655）
+            </span>
+          </summary>
 
-        {/* 建立書目 */}
-        <hr style={{ border: 0, borderTop: '1px solid var(--border)', margin: '16px 0' }} />
+          <form onSubmit={onSearch} className="detailsBody">
+            <div className="grid3">
+              <label>
+                query（關鍵字）
+                <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="例：哈利 / Rowling" />
+              </label>
+              <label>
+                isbn（精確）
+                <input value={isbn} onChange={(e) => setIsbn(e.target.value)} placeholder="例：9789573317248" />
+              </label>
+              <label>
+                classification（prefix）
+                <input value={classification} onChange={(e) => setClassification(e.target.value)} placeholder="例：823" />
+              </label>
+            </div>
 
-        <form onSubmit={onCreate} className="stack">
+            {/* term_id-driven filters（chips + 可選擇 thesaurus expand） */}
+            <div className="callout">
+              <div className="muted" style={{ marginBottom: 6 }}>
+                term_id-driven 檢索：用 authority terms 的 <code>id</code> 當過濾條件；可選擇是否用 thesaurus 展開（同義/上下位/相關）。
+              </div>
+
+              <div className="grid4">
+                <label>
+                  expand subject（650）
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                    <input
+                      type="checkbox"
+                      checked={expandSubjectFilter}
+                      onChange={(e) => setExpandSubjectFilter(e.target.checked)}
+                    />
+                    <span className="muted">含 self/variants/BT/NT/RT</span>
+                  </div>
+                </label>
+                <label>
+                  expand geographic（651）
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                    <input
+                      type="checkbox"
+                      checked={expandGeographicFilter}
+                      onChange={(e) => setExpandGeographicFilter(e.target.checked)}
+                    />
+                    <span className="muted">含 self/variants/BT/NT/RT</span>
+                  </div>
+                </label>
+                <label>
+                  expand genre（655）
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                    <input
+                      type="checkbox"
+                      checked={expandGenreFilter}
+                      onChange={(e) => setExpandGenreFilter(e.target.checked)}
+                    />
+                    <span className="muted">含 self/variants/BT/NT/RT</span>
+                  </div>
+                </label>
+                <label>
+                  depth（0..5）
+                  <input value={expandFilterDepth} onChange={(e) => setExpandFilterDepth(e.target.value)} />
+                </label>
+              </div>
+
+              <div style={{ marginTop: 12 }}>
+                <TermMultiPicker
+                  orgId={params.orgId}
+                  kind="subject"
+                  label="subject terms（650 filter）"
+                  value={subjectFilterTerms}
+                  onChange={setSubjectFilterTerms}
+                  defaultVocabularyCode="builtin-zh"
+                  enableBrowse
+                  helpText={
+                    <>
+                      這裡是「base terms」多選；送到 API 時會依 expand 設定轉成 <code>subject_term_ids</code>（逗號分隔）。
+                    </>
+                  }
+                />
+              </div>
+
+              <div className="grid2" style={{ marginTop: 12 }}>
+                <TermMultiPicker
+                  orgId={params.orgId}
+                  kind="geographic"
+                  label="geographic terms（651 filter）"
+                  value={geographicFilterTerms}
+                  onChange={setGeographicFilterTerms}
+                  defaultVocabularyCode="builtin-zh"
+                  enableBrowse
+                />
+                <TermMultiPicker
+                  orgId={params.orgId}
+                  kind="genre"
+                  label="genre terms（655 filter）"
+                  value={genreFilterTerms}
+                  onChange={setGenreFilterTerms}
+                  defaultVocabularyCode="builtin-zh"
+                  enableBrowse
+                />
+              </div>
+            </div>
+
+            <div className="toolbarLeft">
+              <button type="submit" disabled={loading}>
+                {loading ? '查詢中…' : '搜尋'}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setQuery('');
+                  setIsbn('');
+                  setClassification('');
+                  setExpandSubjectFilter(true);
+                  setExpandGeographicFilter(false);
+                  setExpandGenreFilter(false);
+                  setExpandFilterDepth('1');
+                  setSubjectFilterTerms([]);
+                  setGeographicFilterTerms([]);
+                  setGenreFilterTerms([]);
+                  void refresh();
+                }}
+                disabled={loading}
+              >
+                清除
+              </button>
+            </div>
+          </form>
+        </details>
+
+        <details className="details" open={Boolean(created)}>
+          <summary>
+            <span>建立書目</span>
+            <span className="muted" style={{ fontWeight: 500, fontSize: 13 }}>
+              title 必填 · creators/subjects 走 term-based
+            </span>
+          </summary>
+
+          <form onSubmit={onCreate} className="detailsBody">
           <label>
             title（必填）
             <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="例：哈利波特：神秘的魔法石" />
           </label>
 
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+          <div className="grid2">
             <TermMultiPicker
               orgId={params.orgId}
               kind="name"
@@ -613,7 +640,7 @@ export default function BibsPage({ params }: { params: { orgId: string } }) {
             }
           />
 
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 12 }}>
+          <div className="grid4">
             <label>
               publisher（選填）
               <input value={publisher} onChange={(e) => setPublisher(e.target.value)} placeholder="例：皇冠" />
@@ -641,7 +668,7 @@ export default function BibsPage({ params }: { params: { orgId: string } }) {
             />
           </label>
 
-          <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+          <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
             <button type="submit" disabled={creating}>
               {creating ? '建立中…' : '建立書目'}
             </button>
@@ -651,7 +678,8 @@ export default function BibsPage({ params }: { params: { orgId: string } }) {
               </span>
             ) : null}
           </div>
-        </form>
+          </form>
+        </details>
 
         {error ? <p className="error">錯誤：{error}</p> : null}
       </section>
