@@ -1,29 +1,35 @@
-# K–12 Cloud Library System (Library System)
+# K–12 Cloud Library System (Lean School Library LMS)
 
 [繁體中文](README.md) | **English**
 
-This project aims to build a lean, cloud-ready Library Management System (LMS) for K–12 schools in Taiwan, optimized for **limited staffing** and **tight budgets**—while keeping the data model correct and extensible.
+![Main entry (Staff Console / OPAC)](docs/main_entry.png)
+
+This project builds a lean, cloud-ready Library Management System (LMS) for K–12 schools in Taiwan, optimized for **limited staffing** and **tight budgets**—while keeping cataloging/search/circulation correct and extensible.
 
 This repository contains:
 - **Domain references** (A–J: cataloging, classification, subject analysis, metadata, IR, collection management, circulation, users, information behavior, ethics/policy)
 - **MVP deliverables you can implement** (user stories, API draft, data dictionary, DB schema)
-- **A runnable code scaffold** (TypeScript monorepo: NestJS API + Next.js Web)
+- **A runnable MVP+ system** (TypeScript monorepo: NestJS API + Next.js Web + shared SSOT)
 
 > If you’re new to TypeScript/Next.js/NestJS, start with `docs/README.md`.
 
 ## Current Status
 - Docs are “implementation-ready”: `MVP-SPEC.md`, `USER-STORIES.md`, `API-DRAFT.md`, `DATA-DICTIONARY.md`, `db/schema.sql`
-- Code scaffold exists: `apps/api` exposes `/health`, `apps/web` has a starter page (core features not implemented yet)
+- End-to-end MVP+ is runnable: `apps/api` implements cataloging (CSV + MARC import), authority control (terms + thesaurus), advanced search (field selection + AND/OR/NOT), circulation/holds, inventory, reports, audit, and `/health`; `apps/web` ships a Staff Console (`/orgs`) and OPAC (`/opac`, including `/me`)
 - Architecture decisions and trade-offs are documented: `ARCHITECTURE.md`, `docs/design-rationale.md`
 
-## MVP Scope (What to Expect)
-The MVP focuses on making the core school workflows reliable:
+## MVP+ Scope (What You Can Do Today)
+The MVP+ focuses on making core school workflows reliable, while also covering the “day-1 cataloging/search” pain points:
 - CSV roster import: students/teachers, class grouping, deactivation (graduation/leave)
 - Bibliographic records + item copies: multiple copies, barcode, call number, location, status
-- OPAC search: keyword + field search (title/author/ISBN/subjects) with basic tolerance
-- Circulation: checkout, check-in, renewals, holds, overdue lists (no fines; blocks/reminders instead)
-- Reports (CSV): top circulation, circulation volume, overdue lists
+- MARC21: shared field dictionary (SSOT), MARC editor validation, MARC import (preview/apply)
+- Authority control: `authority_terms` + thesaurus relations (BT/RT/variants), including a visual editor
+- Search: fuzzy queries (name/title/barcode/call number/location), OPAC advanced search (field selection + AND/OR/NOT) + metadata filters
+- Circulation: checkout, check-in, renewals, holds, ready holds, expire-ready maintenance (sync or background job)
+- Inventory sessions: scanning workbench + diff lists + CSV exports
+- Reports (CSV/print): top circulation, overdue, ready holds, zero circulation
 - Audit trail: `audit_events` for checkout/check-in/import/status changes
+- OPAC account: patron login + `/me` (my loans / my holds)
 
 Default MVP policies are defined in `MVP-SPEC.md`.
 
@@ -33,7 +39,8 @@ We use a **Modular Monolith** approach: low ops overhead for MVP, with clear bou
 - Language: TypeScript (shared types across web+api)
 - Backend: NestJS (modules, DI, testability)
 - Frontend: Next.js (admin UI + OPAC; PWA-friendly)
-- Database: PostgreSQL (transactions + constraints; FTS; can later add a search engine)
+- Database: PostgreSQL (transactions + JSONB; trigram search; multi-tenant RLS; migrations for production)
+- Shared: `packages/shared` (SSOT for MARC21 field dictionary + authority linking rules)
 
 See `ARCHITECTURE.md` and `docs/design-rationale.md` for the reasoning and alternatives.
 
@@ -41,12 +48,14 @@ See `ARCHITECTURE.md` and `docs/design-rationale.md` for the reasoning and alter
 ```
 .
 ├─ apps/
-│  ├─ api/          # NestJS API (currently health endpoint only)
-│  └─ web/          # Next.js Web (starter page)
+│  ├─ api/          # NestJS API (/api/v1)
+│  └─ web/          # Next.js Web (Staff Console: /orgs, OPAC: /opac)
 ├─ packages/
-│  └─ shared/       # Shared TS types/utils (reserved)
+│  └─ shared/       # SSOT: MARC21 field dictionary, authority linking rules
 ├─ db/
-│  ├─ schema.sql    # PostgreSQL schema draft
+│  ├─ schema.sql       # Demo/dev: readable, idempotent
+│  ├─ migrations/      # Production: traceable migrations (schema_migrations)
+│  ├─ seed-demo.sql    # Demo seed (idempotent)
 │  └─ README.md     # DB notes
 ├─ reference-docs/  # A–J references/drafts
 └─ docs/            # How it works, primer, design rationale
@@ -58,6 +67,10 @@ See `ARCHITECTURE.md` and `docs/design-rationale.md` for the reasoning and alter
 - TypeScript/Next/Nest primer: `docs/typescript-nextjs-nestjs-primer.md`
 - Design trade-offs & roadmap: `docs/design-rationale.md`
 - “Source of truth” for implementation: `MVP-SPEC.md`, `USER-STORIES.md`, `API-DRAFT.md`, `DATA-DICTIONARY.md`, `db/schema.sql`
+- MARC21 SSOT + “quick-create” authority terms: `docs/implementation/0043-marc21-ssot-and-authority-quick-create.md`
+- Advanced search + blue UI refresh: `docs/implementation/0044-advanced-search-and-ui-blue-theme.md`
+- Playwright E2E: `docs/testing/playwright-e2e.md`
+- SSH + Docker Compose deployment: `docs/deployment/ssh-docker-compose.md`
 
 ## Local Development (from zero to running)
 Prerequisites:
@@ -107,6 +120,24 @@ REDIS_PORT=6380 POSTGRES_PORT=55432 API_HOST_PORT=3002 WEB_HOST_PORT=3003 npm ru
 npm run docker:seed
 ```
 
+### 2.5) (Optional) Load a large dataset (Scale seed)
+This creates/rebuilds an additional org (default `demo-lms-scale`) with lots of users/bibs/items/loans/holds/inventory/audit events, so you can validate list/search/report UI under “realistic” volume.
+
+```bash
+npm run docker:seed:scale
+```
+
+All-in-one (up + scale seed):
+```bash
+npm run docker:scale
+```
+
+Demo accounts (shared password `demo1234`):
+- Staff: admin `A0001` / librarian `L0001`
+- OPAC: teacher `T0001` / student `S1130123`
+
+> Security note: demo passwords are for local/dev only. If you expose the site (staging/prod), change passwords and set a strong `AUTH_TOKEN_SECRET`.
+
 ### 3) Run smoke tests (inside Docker network)
 ```bash
 npm run docker:smoke
@@ -126,6 +157,23 @@ Remove volumes too (deletes DB data):
 ```bash
 npm run docker:down:volumes
 ```
+
+## Automated Testing (Playwright)
+- One-command QA (build/up + scale seed + Playwright + summary): `npm run qa:e2e`
+- Run Playwright only: `npm run e2e`
+- Open HTML report: `npm run e2e:report`
+
+## Production DB Migrations
+For production (staging/prod), use `db/migrations/*` + `schema_migrations` (instead of directly applying `db/schema.sql`).
+
+Run:
+```bash
+npm run db:migrate
+```
+
+## Deployment (SSH + Docker Compose)
+- Guide: `docs/deployment/ssh-docker-compose.md`
+- Reverse proxy recommendation: route `/` to Web (3000), and route `/api/v1/*` + `/health` to API (3001)
 
 ## Turning Docs into Code (Recommended Workflow)
 1. Pick a story in `USER-STORIES.md` (e.g., US-040 checkout).

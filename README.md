@@ -1,29 +1,38 @@
-# 中小學雲端圖書館系統（Library System）
+# 中小學雲端圖書館系統（Lean School Library LMS）
 
 **繁體中文** | [English](README.en.md)
 
-本專案目標是打造一套適合台灣中小學、在**人力不足**與**預算有限**情境下可快速導入的雲端圖書館管理系統（LMS）。此倉庫同時包含：
+![系統入口（Staff Console / OPAC）](docs/main_entry.png)
+
+本專案目標是打造一套適合台灣中小學、在**人力不足**與**預算有限**情境下可快速導入的雲端圖書館管理系統（LMS）。目前已可在同一套系統內跑通：**編目（MARC21）→ 館藏 → 流通/預約 → 盤點 → 報表/稽核**。此倉庫同時包含：
 - **領域知識與參考資料**（A–J 章：編目、分類、主題分析、Metadata、檢索、館藏管理、流通、使用者、資訊行為、倫理政策）
 - **可直接落地的 MVP 規格**（user stories、API 草案、資料字典、DB schema）
-- **可跑起來的程式骨架**（TypeScript monorepo：NestJS API + Next.js Web）
+- **可直接跑起來的 MVP+ 程式**（TypeScript monorepo：NestJS API + Next.js Web + shared SSOT）
 
 > 如果你不熟 TypeScript/Next.js/NestJS，先從 `docs/README.md` 開始讀。
 
 ## 專案現況（目前做到了哪裡）
 - 文件已整理成「可開發」：`MVP-SPEC.md`、`USER-STORIES.md`、`API-DRAFT.md`、`DATA-DICTIONARY.md`、`db/schema.sql`
-- 程式已能端到端操作（MVP 版本）：`apps/api` 已落地主檔/使用者名冊匯入（CSV）/書目/冊/書目冊匯入（US-022）/借還/續借/借閱查詢/預約（holds）/預約到期處理（holds expire-ready maintenance）/取書架清單（ready holds report + CSV/列印）/逾期報表（overdue report）/熱門書與借閱量報表（US-050）/稽核查詢（audit events）/冊異常狀態（lost/repair/withdrawn）/盤點（Inventory sessions + 差異清單 + CSV）/逾期停權（policy enforcement）/Staff Auth（館員登入）+ Patron Auth（OPAC 登入）API（另有 `/health`），`apps/web` 已提供 Web Console（`/orgs`）與 OPAC（`/opac`）
+- 程式已能端到端操作（MVP+ 版本）：`apps/api` 已落地主檔/名冊 CSV 匯入/書目與冊管理/CSV + MARC 匯入（preview/apply）/MARC 編輯器驗證/權威控制（authority_terms + thesaurus）/進階搜尋（欄位多選 + AND/OR/NOT）/借還續借/預約與到期處理（含 background job）/盤點/報表/稽核/多租戶 RLS，`apps/web` 已提供 Staff Console（`/orgs`）與 OPAC（`/opac`，含 `/me`）
 - 架構決策已記錄（含擴充路線）：`ARCHITECTURE.md`、`docs/design-rationale.md`
 
-## MVP 功能範圍（你可以期待什麼）
-以「能在學校現場真的用起來」為目標，MVP 先把核心流程做對：
-- 使用者名冊匯入（CSV）：學生/教師、班級、停用（畢業/離校）
-- 書目（Bibliographic）與冊（Item/Copy）管理：多冊、條碼、索書號、位置、狀態
-- 檢索（OPAC）：關鍵字 + 欄位查詢（書名/作者/ISBN/主題）與基本容錯
-- 流通：借出、歸還、續借、預約、逾期清單（以停權/提醒取代罰款）
-- 盤點：盤點 session + 掃碼工作台 + 差異清單（missing/unexpected）+ CSV
-- 報表（CSV）：熱門書、借閱量、逾期清單（先做可匯出，避免被系統鎖死）
-- 稽核：借還/匯入/狀態異動的 audit events（可追溯）
-- OPAC Account：讀者登入（student/teacher）+ 我的借閱/我的預約（/me）
+## 目前功能（MVP+）
+以「能在學校現場真的用起來」為目標，先把核心流程做對，並補齊編目/檢索/權威控制的最小可用工具。
+
+### Staff Console（館員端 /orgs）
+- 名冊：學生/教師 CSV 匯入、查詢與停用（支援姓名/學號/班級模糊搜尋）
+- 編目：書目（bibs）與冊（items）管理、CSV 匯入、MARC 匯入（preview/apply）與 roundtrip
+- MARC21：欄位字典（SSOT）+ MARC 編輯器（欄位/子欄位驗證、authority linking helper、即時新增 term）
+- 權威控制：authority_terms（姓名/主題/地名/體裁…）+ thesaurus（BT/RT/variants）+ 視覺化編輯器/品質檢查
+- 查詢/檢索：書目/冊/借閱/預約支援 `query` 模糊搜尋；書目支援欄位多選 + AND/OR/NOT + metadata filters
+- 流通：借出/歸還/續借、預約（holds）建置/取消、取書架、到書未取到期處理（maintenance / background job）
+- 盤點：Inventory sessions + 掃碼工作台 + 差異清單 + CSV
+- 報表：熱門書、借閱量、逾期、取書架、零借閱…（CSV/列印）
+- 稽核：audit events（借還/匯入/狀態異動可追溯）
+
+### OPAC（讀者端 /opac）
+- 進階書目檢索：欄位多選 + AND/OR/NOT（must/should/must_not）+ ISBN/分類/出版年/語言/只顯示可借
+- OPAC Account：讀者登入（student/teacher）+ `/me`（我的借閱/我的預約）
 
 MVP 預設政策已定案（可調）：請見 `MVP-SPEC.md`。
 
@@ -33,7 +42,8 @@ MVP 預設政策已定案（可調）：請見 `MVP-SPEC.md`。
 - 語言：TypeScript（前後端共用型別，降低契約不一致）
 - 後端：NestJS（模組化、DI、可測試、適合逐步擴充）
 - 前端：Next.js（可做管理後台 + OPAC，也適合 PWA/行動裝置）
-- DB：PostgreSQL（交易一致性、constraint、可做 FTS；未來可擴到搜尋引擎）
+- DB：PostgreSQL（交易一致性、JSONB、trigram 容錯搜尋；多租戶 RLS；正式環境 migrations）
+- shared：`packages/shared`（SSOT：MARC21 欄位字典、authority linking 規則）
 
 完整理由與替代方案取捨：`docs/design-rationale.md`、`ARCHITECTURE.md`。
 
@@ -41,15 +51,16 @@ MVP 預設政策已定案（可調）：請見 `MVP-SPEC.md`。
 ```
 .
 ├─ apps/
-│  ├─ api/          # NestJS API（org/location/user/policy/bib/item/circulation）
-│  └─ web/          # Next.js Web Console（/orgs）
+│  ├─ api/          # NestJS API（/api/v1）
+│  └─ web/          # Next.js Web（Staff Console: /orgs、OPAC: /opac）
 ├─ packages/
-│  └─ shared/       # 共用型別/工具（預留）
+│  └─ shared/       # SSOT：MARC21 字典、authority linking 規則等
 ├─ db/
-│  ├─ schema.sql       # PostgreSQL schema 草案
+│  ├─ schema.sql       # Demo/開發：可重複套用、可讀性高
+│  ├─ migrations/      # 正式環境：migrations（schema_migrations）
 │  ├─ seed-demo.sql    # 本機 demo 假資料（可重複執行）
 │  └─ README.md        # DB 說明
-└─ docs/            # 新手友善：運作方式、入門、設計取捨
+└─ docs/            # 文件：運作方式、設計取捨、實作筆記、部署與測試
    └─ reference-docs/  # A–J 文獻與草案（含匯出完整版/摘要版）
 ```
 
@@ -61,6 +72,8 @@ MVP 預設政策已定案（可調）：請見 `MVP-SPEC.md`。
 - ER Diagram（資料模型全貌）：`docs/er-diagram.md`
 - 開發用「真相來源」：`MVP-SPEC.md`、`USER-STORIES.md`、`API-DRAFT.md`、`DATA-DICTIONARY.md`、`db/schema.sql`
 - MARC21 ↔ Controlled Vocabulary 對應規則（term_id / $0 / $2）：`docs/marc21-controlled-vocab-mapping.md`
+- MARC21 字典 SSOT + authority 即時新增：`docs/implementation/0043-marc21-ssot-and-authority-quick-create.md`
+- 進階搜尋（欄位多選 + AND/OR/NOT）+ 藍白 UI：`docs/implementation/0044-advanced-search-and-ui-blue-theme.md`
 - 實作說明（每次實作都會補）：`docs/implementation/0001-api-foundation-and-core-master-data.md`
 - Authority Control 主控入口 + shared MARC↔vocab 規則：`docs/implementation/0035-authority-control-home-and-shared-marc-mapping.md`
 - Bibs 檢索 term_id filters（chips + 多選 + expand）：`docs/implementation/0036-bibs-term-id-filters-chips-and-expand.md`
@@ -89,6 +102,7 @@ MVP 預設政策已定案（可調）：請見 `MVP-SPEC.md`。
 - Locations/Policies 治理 + Cursor Pagination + Item detail：`docs/implementation/0026-locations-policies-pagination-and-item-detail.md`
 - 補齊缺口 + /me cursor + Maintenance runner：`docs/implementation/0027-bootstrap-ui-users-edit-me-cursor-and-maintenance-runner.md`
 - Playwright E2E（真瀏覽器 UI 自動化）：`docs/testing/playwright-e2e.md`
+- SSH + Docker Compose 部署：`docs/deployment/ssh-docker-compose.md`
 - 註解與教學文件規範：`docs/commenting-guidelines.md`
 
 ## 本機開發（從 0 到跑起來）
@@ -179,6 +193,8 @@ npm run docker:scale
 - Staff：admin `A0001` / librarian `L0001`
 - OPAC：teacher `T0001` / student `S1130123`
 
+> 安全提醒：demo 密碼只供本機/測試。若站點對外（staging/prod），請立刻改密碼並設定強 `AUTH_TOKEN_SECRET`。
+
 ### 3) 端到端 smoke（在 Docker 內跑）
 ```bash
 npm run docker:smoke
@@ -208,6 +224,23 @@ npm run docker:down
 ```bash
 npm run docker:down:volumes
 ```
+
+## 自動化測試（Playwright）
+- 一鍵 QA（build/up + scale seed + Playwright + summary）：`npm run qa:e2e`
+- 只跑 Playwright：`npm run e2e`
+- 開啟報表：`npm run e2e:report`
+
+## 正式環境（migrations）
+正式環境（上線/擴校）建議用 `db/migrations/*` + `schema_migrations`（而不是直接套用 `db/schema.sql`）。
+
+執行：
+```bash
+npm run db:migrate
+```
+
+## 部署（SSH + Docker Compose）
+- 指南：`docs/deployment/ssh-docker-compose.md`
+- 反向代理建議：同一個 domain 下把 `/` 轉到 Web（3000）、把 `/api/v1/*` 與 `/health` 轉到 API（3001）
 
 ## 如何把文件變成程式（建議工作流）
 1. 從 `USER-STORIES.md` 選一個故事（例如 US-040 借出）。
