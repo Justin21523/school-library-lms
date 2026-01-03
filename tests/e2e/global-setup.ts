@@ -80,11 +80,36 @@ export default async function globalSetup(_config: FullConfig) {
       await page.getByLabel('external_id（員編）').fill(E2E.staffExternalId);
       await page.getByLabel('password').fill(E2E.staffPassword);
 
-      await Promise.all([
-        // 登入後會 setTimeout(300ms) 導回 dashboard；我們用 waitForURL 等待跳轉。
-        page.waitForURL(new RegExp(`/orgs/${org.id}$`), { timeout: 30_000 }),
-        page.getByRole('button', { name: '登入' }).click(),
-      ]);
+      // 登入成功的「真相」是 localStorage session 被寫入，而不是「一定會 redirect」：
+      // - Next.js 的 client-side navigation 在 docker/慢機器上可能延後或偶發不觸發
+      // - 但只要 token 已寫入，我們就能保存 storageState 供後續 spec 使用
+      await page.getByRole('button', { name: '登入', exact: true }).click();
+
+      // 等待：
+      // - 成功：localStorage staff session 出現
+      // - 失敗：頁面顯示「登入失敗」alert（避免只看到 timeout，不知道原因）
+      await page.waitForFunction(
+        (orgId: string) => {
+          const key = `library_system_staff_session:${orgId}`;
+          if (window.localStorage.getItem(key)) return true;
+          const alertText = document.querySelector('[role="alert"]')?.textContent ?? '';
+          return alertText.includes('登入失敗');
+        },
+        org.id,
+        { timeout: 30_000 },
+      );
+
+      const staffSessionRaw = await page.evaluate((orgId: string) => {
+        const key = `library_system_staff_session:${orgId}`;
+        return window.localStorage.getItem(key);
+      }, org.id);
+      if (!staffSessionRaw) {
+        const errorText = await page.evaluate(() => document.querySelector('[role="alert"]')?.textContent ?? '(no alert)');
+        throw new Error(`[e2e] staff login failed: ${errorText}`);
+      }
+
+      // 再手動導到 dashboard 做一次 sanity（確保 token 真的能用、且 UI 能載入）
+      await page.goto(`${webBase}/orgs/${org.id}`, { waitUntil: 'domcontentloaded' });
 
       // 基本 sanity：確保 dashboard 的主標題出現（代表頁面真的渲染起來）
       await page.getByRole('heading', { name: 'Organization Dashboard' }).waitFor({ timeout: 30_000 });
@@ -105,10 +130,29 @@ export default async function globalSetup(_config: FullConfig) {
       await page.getByLabel('external_id（學號/員編）').fill(E2E.patronExternalId);
       await page.getByLabel('password').fill(E2E.patronPassword);
 
-      await Promise.all([
-        page.waitForURL(new RegExp(`/opac/orgs/${org.id}$`), { timeout: 30_000 }),
-        page.getByRole('button', { name: '登入' }).click(),
-      ]);
+      await page.getByRole('button', { name: '登入', exact: true }).click();
+
+      await page.waitForFunction(
+        (orgId: string) => {
+          const key = `library_system_opac_session:${orgId}`;
+          if (window.localStorage.getItem(key)) return true;
+          const alertText = document.querySelector('[role="alert"]')?.textContent ?? '';
+          return alertText.includes('登入失敗') || alertText.includes('需要登入');
+        },
+        org.id,
+        { timeout: 30_000 },
+      );
+
+      const opacSessionRaw = await page.evaluate((orgId: string) => {
+        const key = `library_system_opac_session:${orgId}`;
+        return window.localStorage.getItem(key);
+      }, org.id);
+      if (!opacSessionRaw) {
+        const errorText = await page.evaluate(() => document.querySelector('[role="alert"]')?.textContent ?? '(no alert)');
+        throw new Error(`[e2e] patron login failed: ${errorText}`);
+      }
+
+      await page.goto(`${webBase}/opac/orgs/${org.id}`, { waitUntil: 'domcontentloaded' });
 
       await page.getByRole('heading', { name: 'OPAC：搜尋與預約' }).waitFor({ timeout: 30_000 });
 

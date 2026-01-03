@@ -98,7 +98,7 @@ function normalizeSuiteTitleForPath(suite) {
 }
 
 function extractDiagnosticsFromAttachments(attachments) {
-  const diag = { consoleErrors: [], pageErrors: [], requestFailures: [] };
+  const diag = { consoleErrors: [], pageErrors: [], requestFailures: [], httpErrors: [] };
 
   for (const att of attachments ?? []) {
     // 我們在 fixtures.ts/page.ts 中 attach 的命名是固定的。
@@ -115,9 +115,31 @@ function extractDiagnosticsFromAttachments(attachments) {
     if (att.name === 'request-failures.txt') {
       diag.requestFailures.push(...text.split(/\r?\n/).map((s) => s.trim()).filter(Boolean));
     }
+    if (att.name === 'http-errors.json') {
+      try {
+        const parsed = JSON.parse(text);
+        if (Array.isArray(parsed)) diag.httpErrors.push(...parsed);
+      } catch {
+        // ignore：壞掉的 json 不影響 summary 主體
+      }
+    }
   }
 
   return diag;
+}
+
+function normalizeUrlPath(rawUrl) {
+  // 讓 http errors 更「可分組」：
+  // - API 路徑內通常會帶 orgId / bibId / holdId（UUID）
+  // - 若不做正規化，summary 會被「每個 id 都不一樣」撕裂成很多行，反而看不出主要問題在哪
+  try {
+    const u = new URL(String(rawUrl));
+    const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    const segs = u.pathname.split('/').map((s) => (uuidRe.test(s) ? ':id' : s));
+    return segs.join('/');
+  } catch {
+    return safeOneLine(rawUrl);
+  }
 }
 
 function walkSuite(suite, rows, prefixTitles) {
@@ -178,6 +200,7 @@ async function main() {
   const allConsoleErrors = rows.flatMap((r) => r.diag?.consoleErrors ?? []);
   const allPageErrors = rows.flatMap((r) => r.diag?.pageErrors ?? []);
   const allRequestFailures = rows.flatMap((r) => r.diag?.requestFailures ?? []);
+  const allHttpErrors = rows.flatMap((r) => r.diag?.httpErrors ?? []);
 
   const abortedRequestFailures = allRequestFailures.filter((l) => /ERR_ABORTED|NS_BINDING_ABORTED/i.test(l));
   const nonAbortedRequestFailures = allRequestFailures.filter((l) => !/ERR_ABORTED|NS_BINDING_ABORTED/i.test(l));
@@ -212,6 +235,26 @@ async function main() {
   }
   lines.push('');
 
+  // 慢測試：在 UI E2E 世界，慢往往代表：
+  // - DB 查詢沒走 index / join 太重
+  // - 前端一次渲染太多（或資料列太胖）
+  // - API N+1 / 缺 pagination
+  //
+  // 把最慢的幾筆列出來，方便你優先抓「最該優化」的路徑。
+  const slowest = rows
+    .slice()
+    .sort((a, b) => (b.duration ?? 0) - (a.duration ?? 0))
+    .slice(0, 8);
+
+  lines.push('## Slowest Tests（Top）');
+  lines.push('');
+  lines.push('| Duration | Status | Title | File |');
+  lines.push('|---:|---|---|---|');
+  for (const r of slowest) {
+    lines.push(`| ${formatMs(r.duration)} | ${r.status} | ${safeOneLine(r.title)} | ${safeOneLine(r.file)} |`);
+  }
+  lines.push('');
+
   if (failed) {
     lines.push('## Failures');
     lines.push('');
@@ -231,6 +274,9 @@ async function main() {
   lines.push(`- page_errors：${allPageErrors.length}`);
   lines.push(
     `- request_failures：total=${allRequestFailures.length}, aborted=${abortedRequestFailures.length}, non_aborted=${nonAbortedRequestFailures.length}`,
+  );
+  lines.push(
+    `- http_errors：total=${allHttpErrors.length}, 4xx=${allHttpErrors.filter((e) => Number(e?.status ?? 0) >= 400 && Number(e?.status ?? 0) < 500).length}, 5xx=${allHttpErrors.filter((e) => Number(e?.status ?? 0) >= 500).length}`,
   );
   lines.push('');
 
@@ -289,6 +335,30 @@ async function main() {
     lines.push(
       `- aborted_total=${abortedRequestFailures.length}（多半是頁面切換/預抓被取消；通常不影響功能，但可用於追查偶發空白）`,
     );
+    lines.push('');
+  }
+
+  if (allHttpErrors.length) {
+    // 以「status + method + normalizedPath」分組，避免 UUID 導致每筆都不一樣
+    const byKey = new Map();
+    for (const e of allHttpErrors) {
+      const status = Number(e?.status ?? 0) || 0;
+      const method = safeOneLine(e?.method ?? 'GET') || 'GET';
+      const path = normalizeUrlPath(e?.url ?? '');
+      const key = `${status} ${method} ${path}`;
+      const entry = byKey.get(key) ?? { count: 0, example: e };
+      entry.count += 1;
+      if (!entry.example) entry.example = e;
+      byKey.set(key, entry);
+    }
+
+    const top = [...byKey.entries()].sort((a, b) => b[1].count - a[1].count).slice(0, 30);
+    lines.push('### HTTP Errors（API status >= 400, Top）');
+    lines.push('');
+    for (const [key, v] of top) {
+      const snippet = safeOneLine(v?.example?.bodySnippet ?? '') || '';
+      lines.push(`- (${v.count}x) ${key}${snippet ? ` — ${snippet}` : ''}`);
+    }
     lines.push('');
   }
 

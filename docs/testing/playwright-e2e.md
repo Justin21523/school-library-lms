@@ -44,20 +44,34 @@ npm run docker:e2e
 - `/orgs/:orgId/users` / `bibs` / `items` / `loans` / `holds`
 - 報表：`reports/overdue` / `ready-holds` / `top-circulation` / `circulation-summary` / `zero-circulation`
 - `inventory` / `audit-events`
+- 流程型（見 `tests/e2e/30-circulation-workflow.spec.ts` / `31-*.spec.ts` / `32-*.spec.ts`）
 
 ### OPAC（Patron）
 - `/opac/orgs/:orgId/login`（由 global-setup 建 session）
 - `/opac/orgs/:orgId`（搜尋 + 取書地點）
 - `/opac/orgs/:orgId/loans` / `holds`（/me/*）
 
+## 流程型覆蓋（你要求的「真操作」）
+本 repo 目前提供三支「端到端流程」測試（依賴 Scale seed 的 E2E 哨兵資料）：
+- `tests/e2e/30-circulation-workflow.spec.ts`：checkout → OPAC hold（queued）→ checkin（ready）→ fulfill → OPAC loans
+- `tests/e2e/31-marc-editor-authority-linking.spec.ts`：MARC editor 載入/新增欄位（650）→ authority quick create → marc_extras round-trip
+- `tests/e2e/32-authority-thesaurus.spec.ts`：Authority term detail 的 NT 清單 + expand（JSON）驗證（資訊素養 ↔ 媒體識讀/資訊倫理）
+
+哨兵資料（Scale seed 會固定建立）：
+- bib title：`【E2E】預約/借還流程測試書（請勿刪除）`
+- item barcode：`SCL-00000001`
+
 ## 產出物怎麼用（改善流程）
 - 先看 `test-results/playwright/qa-summary.md`：快速知道哪一頁壞、耗時是否異常
-  - 目前 `qa-summary.md` 也會附上 diagnostics 摘要（console/page/request failures 統計與 Top 分組），用來更快定位「體驗不佳」或「未來會變成 flaky」的徵兆
+  - `qa-summary.md` 會附上：
+    - diagnostics 摘要（console/page/request failures/http errors 的統計與 Top 分組）
+    - slowest tests top（幫你優先抓效能瓶頸）
 - 再打開 `playwright-report/index.html`：看失敗那筆的 trace / screenshot / console errors
 - 若看到：
   - `page-errors.txt`：代表前端有未捕捉的 runtime error（優先修）
   - `request-failures.txt`：多半是 API 打不到 / CORS / 網路 DNS 問題（先查環境/URL）
   - `console-errors.txt`：通常代表 UI 有潛在問題或錯誤處理不足（可視嚴重性決定是否要讓測試 fail）
+  - `http-errors.json`：代表 API 有回應但 status=4xx/5xx（常見真 bug：guard/validation/DB error）
 
 補充：若 diagnostics 裡 request failures 主要是 `net::ERR_ABORTED`，通常是 Next.js 頁面切換/預抓被取消造成，未必是 bug；但若出現 `ERR_CONNECTION_REFUSED`、`ERR_NAME_NOT_RESOLVED`、`Failed to fetch` 等，就應優先排查 API base / Docker network / proxy rewrite 設定。
 

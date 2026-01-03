@@ -30,8 +30,8 @@ test.describe('Staff Web Console（Scale org）', () => {
     await page.goto(`/orgs/${org.id}/users`, { waitUntil: 'domcontentloaded' });
     await expect(page.getByRole('heading', { name: 'Users' })).toBeVisible();
 
-    // 登入後應顯示 actor_user_id 已鎖定（代表 session 生效）
-    await expect(page.getByText('actor_user_id（操作者）已鎖定為：')).toBeVisible();
+    // 登入後應顯示「操作者（actor_user_id）」提示（代表 session 生效）
+    await expect(page.getByRole('status').filter({ hasText: '操作者（actor_user_id）' })).toBeVisible();
 
     // 列表行的辨識字串（避免誤抓到 input label）
     //
@@ -46,14 +46,19 @@ test.describe('Staff Web Console（Scale org）', () => {
   test('Bibs 列表可載入（大量資料）', async ({ page, org }, testInfo) => {
     await page.goto(`/orgs/${org.id}/bibs`, { waitUntil: 'domcontentloaded' });
     await expect(page.getByRole('heading', { name: 'Bibs' })).toBeVisible();
-    await expect(page.getByText('available_items=').first()).toBeVisible();
+    // Bibs 列表已改為 DataTable：用「表格存在 + 至少一筆資料列」作為成功判斷
+    const table = page.getByRole('table');
+    await expect(table.getByRole('columnheader', { name: 'title' })).toBeVisible();
+    await expect(table.locator('tbody tr').first()).toBeVisible();
     await saveFullPageScreenshot(page, testInfo, 'staff-bibs.png');
   });
 
   test('Items 列表可載入（大量資料）', async ({ page, org }, testInfo) => {
     await page.goto(`/orgs/${org.id}/items`, { waitUntil: 'domcontentloaded' });
     await expect(page.getByRole('heading', { name: 'Items' })).toBeVisible();
-    await expect(page.getByText('call_number=').first()).toBeVisible();
+    const table = page.getByRole('table');
+    await expect(table.getByRole('columnheader', { name: 'barcode' })).toBeVisible();
+    await expect(table.locator('tbody tr').first()).toBeVisible();
     await saveFullPageScreenshot(page, testInfo, 'staff-items.png');
   });
 
@@ -61,8 +66,10 @@ test.describe('Staff Web Console（Scale org）', () => {
     await page.goto(`/orgs/${org.id}/loans`, { waitUntil: 'domcontentloaded' });
     await expect(page.getByRole('heading', { name: 'Loans' })).toBeVisible();
 
-    // Loans 頁預設會載入 open loans；若沒有資料，通常代表 seed/關聯資料不足
-    await expect(page.getByText('loan_id=').first()).toBeVisible();
+    // Loans 已改為 DataTable：確認 table 有資料列（seed-scale 應該會產生 open loans）
+    const table = page.getByRole('table');
+    await expect(table.getByRole('columnheader', { name: 'status' })).toBeVisible();
+    await expect(table.locator('tbody tr').first()).toBeVisible();
     await saveFullPageScreenshot(page, testInfo, 'staff-loans.png');
   });
 
@@ -77,7 +84,9 @@ test.describe('Staff Web Console（Scale org）', () => {
     await page.goto(`/orgs/${org.id}/reports/overdue`, { waitUntil: 'domcontentloaded' });
     await expect(page.getByRole('heading', { name: 'Overdue Report' })).toBeVisible();
 
-    await page.getByRole('button', { name: '查詢' }).click();
+    // 同頁存在 topbar 的 Global Search「查詢」按鈕；需鎖定在 Content 區域避免 strict mode
+    const content = page.getByLabel('Content');
+    await content.getByRole('button', { name: '查詢' }).click();
     await expect(page.getByText('已載入逾期清單：')).toBeVisible();
 
     await saveFullPageScreenshot(page, testInfo, 'staff-report-overdue.png');
@@ -87,7 +96,8 @@ test.describe('Staff Web Console（Scale org）', () => {
     await page.goto(`/orgs/${org.id}/reports/ready-holds`, { waitUntil: 'domcontentloaded' });
     await expect(page.getByRole('heading', { name: 'Ready Holds' })).toBeVisible();
 
-    await page.getByRole('button', { name: '查詢' }).click();
+    const content = page.getByLabel('Content');
+    await content.getByRole('button', { name: '查詢' }).click();
     await expect(page.getByText('已載入取書架清單：')).toBeVisible();
 
     await saveFullPageScreenshot(page, testInfo, 'staff-report-ready-holds.png');
@@ -97,7 +107,8 @@ test.describe('Staff Web Console（Scale org）', () => {
     await page.goto(`/orgs/${org.id}/reports/top-circulation`, { waitUntil: 'domcontentloaded' });
     await expect(page.getByRole('heading', { name: 'Top Circulation' })).toBeVisible();
 
-    await page.getByRole('button', { name: '查詢' }).click();
+    const content = page.getByLabel('Content');
+    await content.getByRole('button', { name: '查詢' }).click();
     await expect(page.getByText('已載入熱門書排行：')).toBeVisible();
 
     await saveFullPageScreenshot(page, testInfo, 'staff-report-top-circulation.png');
@@ -108,7 +119,8 @@ test.describe('Staff Web Console（Scale org）', () => {
     await expect(page.getByRole('heading', { name: 'Circulation Summary' })).toBeVisible();
 
     // 預設 group_by=day，因此直接查詢即可
-    await page.getByRole('button', { name: '查詢' }).click();
+    const content = page.getByLabel('Content');
+    await content.getByRole('button', { name: '查詢' }).click();
     await expect(page.getByText('已載入借閱量彙總：')).toBeVisible();
 
     await saveFullPageScreenshot(page, testInfo, 'staff-report-circulation-summary.png');
@@ -118,7 +130,8 @@ test.describe('Staff Web Console（Scale org）', () => {
     await page.goto(`/orgs/${org.id}/reports/zero-circulation`, { waitUntil: 'domcontentloaded' });
     await expect(page.getByRole('heading', { name: 'Zero Circulation' })).toBeVisible();
 
-    await page.getByRole('button', { name: '查詢' }).click();
+    const content = page.getByLabel('Content');
+    await content.getByRole('button', { name: '查詢' }).click();
     await expect(page.getByText('已載入零借閱清單：')).toBeVisible();
 
     await saveFullPageScreenshot(page, testInfo, 'staff-report-zero-circulation.png');

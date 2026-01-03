@@ -226,6 +226,33 @@ class TextProvider:
     def classification(self) -> str:
         raise NotImplementedError
 
+    def geographic_terms(self, k: int) -> list[str]:
+        """
+        產生地理名稱（MARC 651 對應）。
+
+        設計提醒（對齊本 repo 的資料模型）：
+        - bibliographic_records.geographics 是「顯示/相容用」的 text[]
+        - 真正的治理/連結會逐步改以 bibliographic_geographic_terms（term_id）為準
+        """
+
+        raise NotImplementedError
+
+    def genre_terms(self, k: int) -> list[str]:
+        """
+        產生類型/體裁（MARC 655 對應）。
+
+        設計提醒：
+        - bibliographic_records.genres 是顯示/相容用
+        - 真正治理/連結以 bibliographic_genre_terms（term_id）為準
+        """
+
+        raise NotImplementedError
+
+    def language_code(self) -> str:
+        """產生語言代碼（MARC 041$a；目前先寬鬆，不嚴格限制 ISO 639）。"""
+
+        raise NotImplementedError
+
 
 class RulesTextProvider(TextProvider):
     """
@@ -255,29 +282,462 @@ class RulesTextProvider(TextProvider):
         "翰林出版",
         "聯經出版",
         "大塊文化",
+        "國語日報",
+        "小魯文化",
+        "幼獅文化",
+        "聚珍臺灣",
+        "蓋亞文化",
+        "圓神出版",
+        "天下文化",
     ]
 
     _SUBJECTS = [
+        # Library / LIS（館務/編目/治理）
         "閱讀推廣",
-        "資訊素養",
-        "圖書館管理",
-        "編目與分類",
         "校園閱讀",
-        "生命教育",
-        "環境教育",
+        "兒童閱讀",
+        "閱讀素養",
+        "閱讀策略",
+        "閱讀理解",
+        "圖書館管理",
+        "館藏發展",
+        "選書與採購",
+        "流通管理",
+        "盤點",
+        "汰舊",
+        "編目與分類",
+        "主題分析",
+        "權威控制",
+        "書目資料",
+        "MARC 21",
+        "RDA",
+        "Dublin Core",
+        # Digital literacy（資訊/媒體）
+        "資訊素養",
         "媒體識讀",
+        "假新聞辨識",
+        "來源評估",
         "資訊倫理",
+        "著作權",
+        "個人資料保護",
+        "資訊安全",
+        "密碼管理",
+        "網路釣魚",
+        # Curriculum / learning（課程/學習）
         "科普教育",
+        "科學探究",
+        "天文",
+        "物理",
+        "化學",
+        "生物",
+        "地球科學",
         "數學思維",
+        "統計入門",
         "語文表達",
+        "寫作技巧",
+        "英語學習",
         "歷史入門",
+        "臺灣史",
+        "世界史",
         "地理概念",
+        "地圖閱讀",
+        "公民教育",
+        "法律常識",
         "藝術欣賞",
         "音樂素養",
+        "視覺設計",
+        # CS / data（程式/資料）
         "程式設計",
+        "演算法",
+        "Scratch",
+        "Python",
         "AI 基礎",
+        "機器學習入門",
         "資料分析",
+        "資料視覺化",
+        # SEL / wellbeing（身心/生活）
+        "生命教育",
+        "品格教育",
+        "情緒管理",
+        "心理成長",
+        "環境教育",
+        "永續發展",
+        "氣候變遷",
+        "資源回收",
+        "健康教育",
+        "飲食教育",
+        "運動與健康",
         "親職教育",
+        "班級經營",
+        "多元文化教育",
+        "性別平等教育",
+        "人權教育",
+    ]
+
+    # _SUBJECT_VARIANTS：同義詞/別名（UF）
+    #
+    # 重要規則（避免 authority linking 變成模糊匹配）：
+    # - 任何 variant_label 不可等於任何其他 term 的 preferred_label（同 kind + vocab 下）
+    # - 不同 term 不可共享同一個 variant_label
+    #
+    # 否則：BibsService.resolveSubjectTermsForWrite 會遇到 label→多筆 term 的模糊情境而拒絕寫入。
+    _SUBJECT_VARIANTS: dict[str, list[str]] = {
+        "資訊素養": ["資訊能力", "資訊識讀", "Information literacy"],
+        "媒體識讀": ["媒體素養", "Media literacy", "媒體判讀"],
+        "假新聞辨識": ["辨識假訊息", "Fake news detection"],
+        "資訊倫理": ["數位倫理", "資訊道德", "Digital ethics"],
+        "資訊安全": ["網路安全", "Cybersecurity"],
+        "個人資料保護": ["個資保護", "Privacy", "Data privacy"],
+        "著作權": ["版權", "Copyright"],
+        "盤點": ["清點", "inventory"],
+        "汰舊": ["除籍", "撤架"],
+        "MARC 21": ["MARC21"],
+        "RDA": ["Resource Description and Access"],
+        "Dublin Core": ["DCMI"],
+        "臺灣史": ["台灣史"],
+        "程式設計": ["Coding", "Programming"],
+        "AI 基礎": ["人工智慧入門", "AI 入門"],
+        "資料分析": ["數據分析", "Data analytics"],
+        "資料視覺化": ["Data visualization"],
+        "Scratch": ["Scratch Jr."],
+    }
+
+    # _SUBJECT_BROADER_EDGES：用於 seed thesaurus（BT/NT）
+    # - 方向：narrower → broader（對齊 authority_term_relations.relation_type='broader' 的儲存方向）
+    # - 目的：不是建立「語意正確」的權威分類法，而是提供：
+    #   1) 可深度展開的樹（視覺化/瀏覽）
+    #   2) expand（檢索擴充）有真資料可跑
+    #   3) polyhierarchy（多重上位）有範例可測
+    _SUBJECT_BROADER_EDGES: list[tuple[str, str]] = [
+        # Digital literacy
+        ("媒體識讀", "資訊素養"),
+        ("資訊倫理", "資訊素養"),
+        ("資訊安全", "資訊素養"),
+        ("假新聞辨識", "媒體識讀"),
+        ("來源評估", "媒體識讀"),
+        ("著作權", "資訊倫理"),
+        ("個人資料保護", "資訊倫理"),
+        ("密碼管理", "資訊安全"),
+        ("網路釣魚", "資訊安全"),
+        # CS / data
+        ("Scratch", "程式設計"),
+        ("Python", "程式設計"),
+        ("演算法", "程式設計"),
+        ("AI 基礎", "程式設計"),
+        ("資料分析", "程式設計"),
+        ("資料視覺化", "資料分析"),
+        ("機器學習入門", "AI 基礎"),
+        # Polyhierarchy：資料分析 同時屬於程式/統計
+        ("資料分析", "統計入門"),
+        ("統計入門", "數學思維"),
+        # Reading / LIS
+        ("閱讀素養", "閱讀推廣"),
+        ("閱讀策略", "閱讀素養"),
+        ("閱讀理解", "閱讀素養"),
+        ("校園閱讀", "閱讀推廣"),
+        ("兒童閱讀", "閱讀推廣"),
+        ("館藏發展", "圖書館管理"),
+        ("選書與採購", "館藏發展"),
+        ("流通管理", "圖書館管理"),
+        ("盤點", "館藏發展"),
+        ("汰舊", "館藏發展"),
+        ("主題分析", "編目與分類"),
+        ("權威控制", "編目與分類"),
+        ("書目資料", "編目與分類"),
+        ("MARC 21", "編目與分類"),
+        ("RDA", "編目與分類"),
+        ("Dublin Core", "編目與分類"),
+        # Curriculum
+        ("科學探究", "科普教育"),
+        ("天文", "科普教育"),
+        ("物理", "科普教育"),
+        ("化學", "科普教育"),
+        ("生物", "科普教育"),
+        ("地球科學", "科普教育"),
+        ("臺灣史", "歷史入門"),
+        ("世界史", "歷史入門"),
+        ("地圖閱讀", "地理概念"),
+        ("法律常識", "公民教育"),
+        ("音樂素養", "藝術欣賞"),
+        # SEL / wellbeing
+        ("品格教育", "生命教育"),
+        ("情緒管理", "生命教育"),
+        ("心理成長", "生命教育"),
+        ("永續發展", "環境教育"),
+        ("氣候變遷", "環境教育"),
+        ("資源回收", "環境教育"),
+        ("飲食教育", "健康教育"),
+        ("運動與健康", "健康教育"),
+    ]
+
+    _SUBJECT_RELATED_EDGES: list[tuple[str, str]] = [
+        ("資訊素養", "閱讀素養"),
+        ("程式設計", "數學思維"),
+    ]
+
+    _GEOGRAPHICS_ALL = [
+        # 以臺灣常見地名為主（繁中），並補一些「階層節點」（region）讓 thesaurus/tree 有深度。
+        "臺灣",
+        "北部",
+        "中部",
+        "南部",
+        "東部",
+        "離島",
+        "臺北市",
+        "新北市",
+        "桃園市",
+        "臺中市",
+        "臺南市",
+        "高雄市",
+        "基隆市",
+        "新竹市",
+        "新竹縣",
+        "苗栗縣",
+        "彰化縣",
+        "南投縣",
+        "雲林縣",
+        "嘉義市",
+        "嘉義縣",
+        "屏東縣",
+        "宜蘭縣",
+        "花蓮縣",
+        "臺東縣",
+        "澎湖縣",
+        "金門縣",
+        "連江縣",
+        # 國外（roots，先不建更細層級）
+        "中國",
+        "香港",
+        "新加坡",
+        "馬來西亞",
+        "越南",
+        "泰國",
+        "澳洲",
+        "紐西蘭",
+        "日本",
+        "韓國",
+        "美國",
+        "加拿大",
+        "英國",
+        "法國",
+        "德國",
+    ]
+
+    # _GEOGRAPHICS：給書目隨機指派用（避免把「北部/中部」這類階層節點寫進 bib）
+    _GEOGRAPHICS = [
+        "臺灣",
+        "臺北市",
+        "新北市",
+        "桃園市",
+        "臺中市",
+        "臺南市",
+        "高雄市",
+        "基隆市",
+        "新竹市",
+        "新竹縣",
+        "苗栗縣",
+        "彰化縣",
+        "南投縣",
+        "雲林縣",
+        "嘉義市",
+        "嘉義縣",
+        "屏東縣",
+        "宜蘭縣",
+        "花蓮縣",
+        "臺東縣",
+        "澎湖縣",
+        "金門縣",
+        "連江縣",
+        "中國",
+        "香港",
+        "新加坡",
+        "馬來西亞",
+        "越南",
+        "泰國",
+        "澳洲",
+        "紐西蘭",
+        "日本",
+        "韓國",
+        "美國",
+        "加拿大",
+        "英國",
+        "法國",
+        "德國",
+    ]
+
+    _GEOGRAPHIC_VARIANTS: dict[str, list[str]] = {
+        "臺灣": ["台灣", "Taiwan"],
+        "臺北市": ["台北市", "Taipei"],
+        "新北市": ["台北縣", "New Taipei"],
+        "臺中市": ["台中市", "Taichung"],
+        "臺南市": ["台南市", "Tainan"],
+        "高雄市": ["高雄", "Kaohsiung"],
+        "花蓮縣": ["花蓮", "Hualien"],
+        "臺東縣": ["台東", "Taitung"],
+        "日本": ["Japan"],
+        "韓國": ["Korea"],
+        "美國": ["USA", "United States"],
+        "英國": ["UK", "United Kingdom"],
+        "中國": ["中國大陸", "China"],
+        "香港": ["Hong Kong"],
+        "新加坡": ["Singapore"],
+        "澳洲": ["Australia"],
+    }
+
+    _GEOGRAPHIC_BROADER_EDGES: list[tuple[str, str]] = [
+        # depth=2：市/縣 → region → 臺灣
+        ("北部", "臺灣"),
+        ("中部", "臺灣"),
+        ("南部", "臺灣"),
+        ("東部", "臺灣"),
+        ("離島", "臺灣"),
+        ("臺北市", "北部"),
+        ("新北市", "北部"),
+        ("桃園市", "北部"),
+        ("基隆市", "北部"),
+        ("新竹市", "北部"),
+        ("新竹縣", "北部"),
+        ("宜蘭縣", "北部"),
+        ("苗栗縣", "中部"),
+        ("臺中市", "中部"),
+        ("彰化縣", "中部"),
+        ("南投縣", "中部"),
+        ("雲林縣", "中部"),
+        ("嘉義市", "南部"),
+        ("嘉義縣", "南部"),
+        ("臺南市", "南部"),
+        ("高雄市", "南部"),
+        ("屏東縣", "南部"),
+        ("花蓮縣", "東部"),
+        ("臺東縣", "東部"),
+        ("澎湖縣", "離島"),
+        ("金門縣", "離島"),
+        ("連江縣", "離島"),
+    ]
+
+    _GEOGRAPHIC_RELATED_EDGES: list[tuple[str, str]] = [
+        ("臺北市", "新北市"),
+        ("金門縣", "連江縣"),
+    ]
+
+    _GENRES_ALL = [
+        # 這裡不追求完全對齊 LCGFT，只要「足夠真實且可擴充」。
+        "文學",
+        "兒童讀物",
+        "非虛構",
+        "小說",
+        "推理小說",
+        "科幻小說",
+        "奇幻小說",
+        "歷史小說",
+        "校園小說",
+        "少年小說",
+        "散文",
+        "詩",
+        "戲劇",
+        "圖畫書",
+        "繪本",
+        "童話",
+        "橋樑書",
+        "故事集",
+        "傳記",
+        "科普",
+        "百科",
+        "工具書",
+        "手冊",
+        "教學參考書",
+        "練習題",
+        "研究報告",
+        "期刊",
+        "漫畫",
+        "圖像小說",
+    ]
+
+    # _GENRES：給書目隨機指派用（偏 leaf / 常見體裁）
+    _GENRES = [
+        "圖畫書",
+        "繪本",
+        "童話",
+        "小說",
+        "推理小說",
+        "科幻小說",
+        "奇幻小說",
+        "歷史小說",
+        "校園小說",
+        "少年小說",
+        "散文",
+        "詩",
+        "傳記",
+        "科普",
+        "百科",
+        "教學參考書",
+        "練習題",
+        "漫畫",
+        "期刊",
+        "研究報告",
+        "手冊",
+        "圖像小說",
+        "橋樑書",
+        "故事集",
+        "工具書",
+    ]
+
+    _GENRE_VARIANTS: dict[str, list[str]] = {
+        "推理小說": ["偵探小說", "Mystery fiction"],
+        "科幻小說": ["科學幻想小說", "Science fiction"],
+        "奇幻小說": ["魔幻小說", "Fantasy fiction"],
+        "少年小說": ["青少年小說", "YA novel"],
+        "繪本": ["Picture book"],
+        "科普": ["科學普及", "Popular science"],
+        "百科": ["Encyclopedia"],
+        "傳記": ["Biography"],
+        "漫畫": ["Comics"],
+        "圖像小說": ["Graphic novel"],
+    }
+
+    _GENRE_BROADER_EDGES: list[tuple[str, str]] = [
+        ("小說", "文學"),
+        ("推理小說", "小說"),
+        ("科幻小說", "小說"),
+        ("奇幻小說", "小說"),
+        ("歷史小說", "小說"),
+        ("校園小說", "小說"),
+        ("少年小說", "小說"),
+        ("散文", "文學"),
+        ("詩", "文學"),
+        ("戲劇", "文學"),
+        ("圖畫書", "兒童讀物"),
+        ("繪本", "圖畫書"),
+        ("童話", "兒童讀物"),
+        ("橋樑書", "兒童讀物"),
+        ("故事集", "兒童讀物"),
+        ("科普", "非虛構"),
+        ("百科", "非虛構"),
+        ("傳記", "非虛構"),
+        ("工具書", "非虛構"),
+        ("手冊", "非虛構"),
+        ("教學參考書", "非虛構"),
+        ("練習題", "非虛構"),
+        ("研究報告", "非虛構"),
+        ("期刊", "非虛構"),
+        ("漫畫", "文學"),
+        ("圖像小說", "漫畫"),
+    ]
+
+    _GENRE_RELATED_EDGES: list[tuple[str, str]] = [
+        ("科普", "百科"),
+        ("漫畫", "圖畫書"),
+    ]
+
+    _LANGUAGES = [
+        # 常見語言代碼（MVP 先寬鬆；用於 UI filter / MARC 041）
+        "zh-TW",
+        "zh",
+        "en",
+        "ja",
+        "ko",
+        "vi",
+        "id",
     ]
 
     _TITLE_TEMPLATES = [
@@ -291,6 +751,10 @@ class RulesTextProvider(TextProvider):
         "學校行政與{subject}：制度、流程與工具",
         "孩子的{subject}練習：從小學到國中",
         "{subject}專題研究：方法與實作",
+        "用{subject}理解{subject2}：給初學者的 30 堂課",
+        "{subject} × {subject2}：跨領域素養讀本",
+        "圖書館的{subject}：案例、表單與SOP",
+        "{subject}教學備課包：評量、活動與延伸閱讀",
     ]
 
     _CLASSIFICATIONS = [
@@ -305,6 +769,9 @@ class RulesTextProvider(TextProvider):
         "900",  # 歷史地理
         "158.2",  # 心理/成長
         "004",  # 電腦/資訊
+        "005.1",  # 程式設計
+        "028.7",  # 閱讀推廣/讀者服務（示意）
+        "363.7",  # 環境議題（示意）
     ]
 
     def __init__(self, rng: random.Random):
@@ -332,6 +799,36 @@ class RulesTextProvider(TextProvider):
 
     def classification(self) -> str:
         return self.rng.choice(self._CLASSIFICATIONS)
+
+    def geographic_terms(self, k: int) -> list[str]:
+        # sample：允許 k=0（代表本筆書目沒有地理名稱）
+        k = max(0, min(k, len(self._GEOGRAPHICS)))
+        if k == 0:
+            return []
+        return self.rng.sample(self._GEOGRAPHICS, k=k)
+
+    def genre_terms(self, k: int) -> list[str]:
+        k = max(0, min(k, len(self._GENRES)))
+        if k == 0:
+            return []
+        return self.rng.sample(self._GENRES, k=k)
+
+    def language_code(self) -> str:
+        # 語言分布：以 zh-TW 為主，少量混入其他語言（讓 UI 更像真實館藏）。
+        r = self.rng.random()
+        if r < 0.80:
+            return "zh-TW"
+        if r < 0.88:
+            return "zh"
+        if r < 0.94:
+            return "en"
+        if r < 0.965:
+            return "ja"
+        if r < 0.98:
+            return "ko"
+        if r < 0.99:
+            return "vi"
+        return "id"
 
 
 class HuggingFaceTextProvider(TextProvider):
@@ -370,11 +867,129 @@ class HuggingFaceTextProvider(TextProvider):
     def classification(self) -> str:
         raise NotImplementedError
 
+    def geographic_terms(self, k: int) -> list[str]:
+        raise NotImplementedError
+
+    def genre_terms(self, k: int) -> list[str]:
+        raise NotImplementedError
+
+    def language_code(self) -> str:
+        raise NotImplementedError
+
 
 def make_text_provider(cfg: ScaleConfig, rng: random.Random) -> TextProvider:
     if cfg.text_provider == "rules":
         return RulesTextProvider(rng)
     return HuggingFaceTextProvider(rng)
+
+
+def validate_rules_vocab() -> None:
+    """
+    validate_rules_vocab：對 rules provider 的「內建詞彙庫」做防呆驗證。
+
+    為什麼要驗證？
+    - authority_terms.variant_labels（UF）若與其他 preferred_label 撞名，或跨 term 重複，
+      會造成「label → 多筆 term」的模糊匹配，進而讓 API 寫入/治理流程不穩（BibsService 會拒絕）。
+    - thesaurus edges 若引用不存在的 term，UI 會變成「看起來沒資料」或卡在奇怪的 orphan 節點。
+    - broader edges 若不小心形成 cycle，seed 直接寫 DB 不會觸發 API 的 cycle check，
+      但後續 UI/expand/ancestors 會出現不可預期行為。
+    """
+
+    def assert_unique_preferred(kind: str, labels: list[str]) -> set[str]:
+        seen: set[str] = set()
+        for label in labels:
+            s = str(label).strip()
+            if not s:
+                raise SystemExit(f"[seed-scale] rules vocab {kind}: empty preferred_label found")
+            if s in seen:
+                raise SystemExit(f"[seed-scale] rules vocab {kind}: duplicate preferred_label={s!r}")
+            seen.add(s)
+        return seen
+
+    def assert_variant_mapping(kind: str, preferred: set[str], mapping: dict[str, list[str]]) -> None:
+        used_variants: dict[str, str] = {}  # variant_label -> preferred_label（反查用）
+        for pref, variants in mapping.items():
+            if pref not in preferred:
+                raise SystemExit(f"[seed-scale] rules vocab {kind}: variants map key not in preferred_labels: {pref!r}")
+            for v in variants:
+                vv = str(v).strip()
+                if not vv:
+                    raise SystemExit(f"[seed-scale] rules vocab {kind}: empty variant_label under {pref!r}")
+                if vv == pref:
+                    raise SystemExit(f"[seed-scale] rules vocab {kind}: variant_label equals preferred_label: {pref!r}")
+                if vv in preferred:
+                    raise SystemExit(
+                        f"[seed-scale] rules vocab {kind}: variant_label conflicts with another preferred_label: variant={vv!r}"
+                    )
+                owner = used_variants.get(vv)
+                if owner and owner != pref:
+                    raise SystemExit(
+                        f"[seed-scale] rules vocab {kind}: variant_label used by multiple terms: variant={vv!r} owners={owner!r},{pref!r}"
+                    )
+                used_variants[vv] = pref
+
+    def assert_edges_exist(kind: str, preferred: set[str], broader_edges: list[tuple[str, str]], related_edges: list[tuple[str, str]]) -> None:
+        for child, parent in broader_edges:
+            if child not in preferred:
+                raise SystemExit(f"[seed-scale] rules vocab {kind}: broader edge child not found: {child!r}")
+            if parent not in preferred:
+                raise SystemExit(f"[seed-scale] rules vocab {kind}: broader edge parent not found: {parent!r}")
+            if child == parent:
+                raise SystemExit(f"[seed-scale] rules vocab {kind}: broader edge self-loop: {child!r}")
+        for a, b in related_edges:
+            if a not in preferred:
+                raise SystemExit(f"[seed-scale] rules vocab {kind}: related edge term not found: {a!r}")
+            if b not in preferred:
+                raise SystemExit(f"[seed-scale] rules vocab {kind}: related edge term not found: {b!r}")
+            if a == b:
+                raise SystemExit(f"[seed-scale] rules vocab {kind}: related edge self-loop: {a!r}")
+
+    def assert_acyclic(kind: str, broader_edges: list[tuple[str, str]]) -> None:
+        graph: dict[str, list[str]] = {}
+        for child, parent in broader_edges:
+            graph.setdefault(child, []).append(parent)
+
+        visiting: set[str] = set()
+        visited: set[str] = set()
+
+        def dfs(node: str, path: list[str]) -> None:
+            if node in visiting:
+                cycle = " → ".join(path + [node])
+                raise SystemExit(f"[seed-scale] rules vocab {kind}: broader edges contains cycle: {cycle}")
+            if node in visited:
+                return
+            visiting.add(node)
+            for nxt in graph.get(node, []):
+                dfs(nxt, path + [node])
+            visiting.remove(node)
+            visited.add(node)
+
+        for node in graph.keys():
+            dfs(node, [])
+
+    # subjects
+    subject_pref = assert_unique_preferred("subject", RulesTextProvider._SUBJECTS)
+    assert_variant_mapping("subject", subject_pref, RulesTextProvider._SUBJECT_VARIANTS)
+    assert_edges_exist("subject", subject_pref, RulesTextProvider._SUBJECT_BROADER_EDGES, RulesTextProvider._SUBJECT_RELATED_EDGES)
+    assert_acyclic("subject", RulesTextProvider._SUBJECT_BROADER_EDGES)
+
+    # geographics（注意：authority 用 _GEOGRAPHICS_ALL；書目指派用 _GEOGRAPHICS）
+    geo_pref = assert_unique_preferred("geographic", RulesTextProvider._GEOGRAPHICS_ALL)
+    for label in RulesTextProvider._GEOGRAPHICS:
+        if label not in geo_pref:
+            raise SystemExit(f"[seed-scale] rules vocab geographic: _GEOGRAPHICS contains label not in _GEOGRAPHICS_ALL: {label!r}")
+    assert_variant_mapping("geographic", geo_pref, RulesTextProvider._GEOGRAPHIC_VARIANTS)
+    assert_edges_exist("geographic", geo_pref, RulesTextProvider._GEOGRAPHIC_BROADER_EDGES, RulesTextProvider._GEOGRAPHIC_RELATED_EDGES)
+    assert_acyclic("geographic", RulesTextProvider._GEOGRAPHIC_BROADER_EDGES)
+
+    # genres（注意：authority 用 _GENRES_ALL；書目指派用 _GENRES）
+    genre_pref = assert_unique_preferred("genre", RulesTextProvider._GENRES_ALL)
+    for label in RulesTextProvider._GENRES:
+        if label not in genre_pref:
+            raise SystemExit(f"[seed-scale] rules vocab genre: _GENRES contains label not in _GENRES_ALL: {label!r}")
+    assert_variant_mapping("genre", genre_pref, RulesTextProvider._GENRE_VARIANTS)
+    assert_edges_exist("genre", genre_pref, RulesTextProvider._GENRE_BROADER_EDGES, RulesTextProvider._GENRE_RELATED_EDGES)
+    assert_acyclic("genre", RulesTextProvider._GENRE_BROADER_EDGES)
 
 
 # ----------------------------
@@ -406,6 +1021,40 @@ def pg_array(values: list[str] | None) -> str:
         s = s.replace("\\", "\\\\").replace('"', '\\"')
         escaped.append(f'"{s}"')
     return "{" + ",".join(escaped) + "}"
+
+
+def jsonb(value: object) -> str:
+    """
+    產生 JSONB 欄位的字串內容（給 psql \\copy 用）。
+
+    注意：
+    - 我們用 ensure_ascii=False 保留 UTF-8（繁中不變成 \\uXXXX）
+    - \\copy (FORMAT csv) 會把欄位視為 text，再由 Postgres cast 成 jsonb
+    """
+
+    return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+
+
+def marc_control_field(tag: str, value: str) -> dict[str, object]:
+    # JSON-friendly MARC shape（對齊 apps/api/src/common/marc.ts 與 apps/api/src/bibs/bibs.schemas.ts）
+    return {"tag": tag, "value": value}
+
+
+def marc_data_field(
+    tag: str,
+    *,
+    ind1: str = " ",
+    ind2: str = " ",
+    subfields: list[tuple[str, str]],
+) -> dict[str, object]:
+    # - subfields 以 (code, value) 表示 → 寫入時轉成 [{code,value}, ...]
+    # - 指標若為空白，仍用 ' '（與 MARC 21 慣例一致）
+    return {
+        "tag": tag,
+        "ind1": ind1[:1] if ind1 else " ",
+        "ind2": ind2[:1] if ind2 else " ",
+        "subfields": [{"code": code, "value": value} for (code, value) in subfields],
+    }
 
 
 def uuid5(ns: uuid.UUID, name: str) -> str:
@@ -500,6 +1149,8 @@ def main() -> None:
     # 2) RNG：整支腳本的「可重現核心」
     rng = random.Random(cfg.seed)
     text = make_text_provider(cfg, rng)
+    if cfg.text_provider == "rules":
+        validate_rules_vocab()
 
     # 3) namespace：所有 ID 都用 uuid5 生成（可重現且不依賴 DB gen_random_uuid）
     ns = uuid.UUID("7b4a3b9d-9a55-4f03-9d9e-7d9edb1c5f6b")
@@ -576,6 +1227,11 @@ def main() -> None:
     teacher_login_id = add_user("T0001", "陳老師（可登入）", "teacher", "教務處", "active")
     student_login_id = add_user("S1130123", "王小明（可登入）", "student", "501", "active")
 
+    # 測試/示範用「登入帳號」清單：
+    # - 我們會避免把大量 open loans / queued holds 隨機塞到這些帳號
+    # - 讓 E2E 測試能穩定建立新借閱/新預約（不會一進去就撞 max_loans/max_holds）
+    login_user_ids = {teacher_login_id, student_login_id}
+
     # 其餘 teachers：外觀/搜尋用，名稱全繁中
     for i in range(2, cfg.teachers + 1):
         ext = f"T{i:04d}"
@@ -623,22 +1279,143 @@ def main() -> None:
     # - name：書目作者（隨機繁中姓名）會很多，但這正好用來壓力測試「大量權威款目」的管理頁與 autocomplete
     authority_subject_terms: set[str] = set()
     authority_name_terms: set[str] = set()
+    authority_geographic_terms: set[str] = set()
+    authority_genre_terms: set[str] = set()
+
+    # bibliographic_name_terms / geographic_terms / genre_terms（term_id linking）
+    bib_name_terms_rows: list[dict[str, str]] = []
+    bib_geographic_terms_rows: list[dict[str, str]] = []
+    bib_genre_terms_rows: list[dict[str, str]] = []
+
+    # E2E/QA 的「哨兵書目」：提供穩定可搜尋的標題 + 穩定可驗證的狀態
+    # - sentinel_available：預設維持 available（讓 checkout/place hold/checkin/fulfill 流程可預期）
+    # - sentinel_unavailable：預設維持「全部不可借」（用來測 available_only 這類 filter 的正確性）
+    #
+    # 注意：cfg.bibs 若小於 2，sentinel_unavailable 會自然不存在（但一般 scale seed 會遠大於 2）。
+    sentinel_bib_index = 1  # 1-based（對齊 bib loop）
+    sentinel_bib_title = "【E2E】預約/借還流程測試書（請勿刪除）"
+    sentinel_unavailable_bib_index = 2
+    sentinel_unavailable_bib_title = "【E2E】全部借出（不可借）測試書（請勿刪除）"
     for i in range(1, cfg.bibs + 1):
         bib_id = uuid5(ns, f"{cfg.org_code}:bib:{i:06d}")
-        creators = [text.person_name()]
-        if rng.random() < 0.35:
-            creators.append(text.person_name())
+        # 讓第一筆 bib 成為「哨兵」：標題可用關鍵字一搜就中，且有較完整的 MARC extras 例子。
+        if i == sentinel_bib_index:
+            title = sentinel_bib_title
+            creators = ["測試作者甲"]
+            contributors = ["測試作者乙"]
+            subjects = ["閱讀推廣", "資訊素養"]
+            geographics = ["臺灣", "臺北市"]
+            genres = ["科普", "手冊"]
+            language = "zh-TW"
+            publisher = "臺灣教育出版社"
+            published_year = "2024"
+            isbn = "9780000000001"
+            classification = "028.5"
 
-        subjects = text.subject_terms(k=rng.randint(1, 3))
-        title = text.bib_title()
+            # marc_extras：放「表單未覆蓋」但實務常見的欄位，供你測試 editor/匯出 merge。
+            # - 避免 001/005：系統管理欄位（字典會擋）
+            # - 避免直接塞 245$a/264$b 這種「表單會覆蓋」的子欄位，否則使用者會以為改了卻沒生效
+            marc_extras = [
+                marc_data_field("246", ind1="3", ind2="0", subfields=[("a", "預約與借還操作手冊")]),
+                marc_data_field("500", subfields=[("a", "本書目為自動化測試用示範資料。")]),
+                marc_data_field(
+                    "520",
+                    subfields=[
+                        (
+                            "a",
+                            "示範 OPAC 預約、後台借還、以及 MARC extras 編輯/匯出的完整流程。",
+                        )
+                    ],
+                ),
+                marc_data_field(
+                    "856",
+                    ind1="4",
+                    ind2="0",
+                    subfields=[("u", "https://example.com/e2e-sentinel"), ("y", "相關資源")],
+                ),
+            ]
+        elif i == sentinel_unavailable_bib_index:
+            title = sentinel_unavailable_bib_title
+            creators = ["測試作者丙"]
+            contributors = ["測試作者丁"]
+            subjects = ["閱讀推廣"]
+            geographics = ["臺灣"]
+            genres = ["手冊"]
+            language = "zh-TW"
+            publisher = "臺灣教育出版社"
+            published_year = "2023"
+            isbn = "9780000000002"
+            classification = "028.6"
+
+            # 這筆不需要放太多 MARC extras；重點是「狀態不可借」可被 available_only 正確排除。
+            marc_extras = [marc_data_field("500", subfields=[("a", "本書目用於測試 available_only（不可借）。")])]
+        else:
+            title = text.bib_title()
+
+            creators = [text.person_name()]
+            if rng.random() < 0.35:
+                creators.append(text.person_name())
+
+            # contributors：讓 700$a 有資料（也讓 bibliographic_name_terms 更像真實）
+            contributors: list[str] = []
+            if rng.random() < 0.55:
+                contributors.append(text.person_name())
+            if rng.random() < 0.20:
+                contributors.append(text.person_name())
+
+            # subjects：維持至少 1 個（讓 OPAC/後台的主題檢索更有感）
+            subjects = text.subject_terms(k=rng.randint(1, 3))
+
+            # geographics/genres：允許為空（更貼近真實館藏）
+            geographics = text.geographic_terms(k=(rng.randint(1, 2) if rng.random() < 0.35 else 0))
+            genres = text.genre_terms(k=(rng.randint(1, 2) if rng.random() < 0.30 else 0))
+
+            language = text.language_code()
+            publisher = text.publisher()
+            published_year = str(rng.randint(1995, 2025))
+            isbn = f"978{rng.randint(1000000000, 9999999999)}"
+            classification = text.classification()
+
+            # marc_extras：大多數 bib 先留空（[]），少量放一些常見 note（讓 editor 有東西可看）
+            marc_extras = []
+            if rng.random() < 0.08:
+                marc_extras = [
+                    marc_data_field("500", subfields=[("a", "含插圖，適合國小閱讀。")]),
+                    marc_data_field(
+                        "520",
+                        subfields=[("a", "以案例帶領讀者理解主題核心概念。")],
+                    ),
+                ]
+
+        # 去重（保序）：避免 junction table 因重複值造成 PK/position 衝突
+        def dedupe_keep_order(values: list[str]) -> list[str]:
+            seen: set[str] = set()
+            out: list[str] = []
+            for v in values:
+                s = str(v).strip()
+                if not s:
+                    continue
+                if s in seen:
+                    continue
+                seen.add(s)
+                out.append(s)
+            return out
+
+        creators = dedupe_keep_order(creators)
+        contributors = dedupe_keep_order(contributors)
+        geographics = dedupe_keep_order(geographics)
+        genres = dedupe_keep_order(genres)
 
         for c in creators:
             authority_name_terms.add(c)
+        for c in contributors:
+            authority_name_terms.add(c)
         for s in subjects:
             authority_subject_terms.add(s)
-
-        # ISBN：demo 用，不追求真實校驗碼；但保持 13 位數字外觀
-        isbn = f"978{rng.randint(1000000000, 9999999999)}"
+        for g in geographics:
+            authority_geographic_terms.add(g)
+        for g in genres:
+            authority_genre_terms.add(g)
 
         # authority linking（subjects）：
         # - term_id 與 authority_terms 的 UUID5 規則一致（可重現）
@@ -654,31 +1431,100 @@ def main() -> None:
                 }
             )
 
+        # authority linking（names）：
+        # - role=creator：對應主作者/其他作者（MARC 100/700）
+        # - role=contributor：對應貢獻者（MARC 700）
+        for pos, name in enumerate(creators, start=1):
+            term_id = uuid5(ns, f"{cfg.org_code}:authority:name:local:{name}")
+            bib_name_terms_rows.append(
+                {
+                    "organization_id": org_id,
+                    "bibliographic_id": bib_id,
+                    "role": "creator",
+                    "term_id": term_id,
+                    "position": str(pos),
+                }
+            )
+        for pos, name in enumerate(contributors, start=1):
+            term_id = uuid5(ns, f"{cfg.org_code}:authority:name:local:{name}")
+            bib_name_terms_rows.append(
+                {
+                    "organization_id": org_id,
+                    "bibliographic_id": bib_id,
+                    "role": "contributor",
+                    "term_id": term_id,
+                    "position": str(pos),
+                }
+            )
+
+        # authority linking（geographic / genre）：
+        # - vocabulary_code：我們把 rules provider 的地名/體裁字庫視為 builtin-zh（可與 subject 一致）
+        for pos, label in enumerate(geographics, start=1):
+            term_id = uuid5(ns, f"{cfg.org_code}:authority:geographic:builtin-zh:{label}")
+            bib_geographic_terms_rows.append(
+                {
+                    "organization_id": org_id,
+                    "bibliographic_id": bib_id,
+                    "term_id": term_id,
+                    "position": str(pos),
+                }
+            )
+        for pos, label in enumerate(genres, start=1):
+            term_id = uuid5(ns, f"{cfg.org_code}:authority:genre:builtin-zh:{label}")
+            bib_genre_terms_rows.append(
+                {
+                    "organization_id": org_id,
+                    "bibliographic_id": bib_id,
+                    "term_id": term_id,
+                    "position": str(pos),
+                }
+            )
+
         bibs.append(
             {
                 "id": bib_id,
                 "organization_id": org_id,
                 "title": title,
                 "creators": pg_array(creators),
-                "contributors": pg_array(None),
-                "publisher": text.publisher(),
-                "published_year": str(rng.randint(1995, 2025)),
-                "language": "zh-TW",
+                "contributors": pg_array(contributors),
+                "publisher": publisher,
+                "published_year": published_year,
+                "language": language,
                 "subjects": pg_array(subjects),
+                "geographics": pg_array(geographics),
+                "genres": pg_array(genres),
                 "isbn": isbn,
-                "classification": text.classification(),
+                "classification": classification,
+                "marc_extras": jsonb(marc_extras),
             }
         )
 
     # ----------------------------
+    # 3.5.0 補齊 builtin vocab（避免「剛好沒抽到」導致 thesaurus 沒資料）
+    # ----------------------------
+    #
+    # 這支腳本的目標是 UI/E2E 可用性，而不是「只匯入被用到的最小集合」：
+    # - 若 authority_terms 只從 bibs 反推，某些 term 可能因隨機抽樣沒命中而不存在
+    # - 結果會讓 thesaurus/tree 看起來像壞掉（其實只是資料缺席）
+    #
+    # 因此我們在 scale seed 階段，直接把 rules provider 的內建詞彙庫全量放進 authority_terms：
+    # - subject：RulesTextProvider._SUBJECTS（builtin-zh）
+    # - geographic：RulesTextProvider._GEOGRAPHICS_ALL（builtin-zh）
+    # - genre：RulesTextProvider._GENRES_ALL（builtin-zh）
+    authority_subject_terms.update(RulesTextProvider._SUBJECTS)
+    authority_geographic_terms.update(RulesTextProvider._GEOGRAPHICS_ALL)
+    authority_genre_terms.update(RulesTextProvider._GENRES_ALL)
+
+    # ----------------------------
     # 3.5.1 authority_terms（權威控制款目 / 內建詞彙庫）
     # - 由上面累積的 set 產生（可重現）
-    # - 目前不填 variant_labels/note（後續可用 UI/匯入器補）
+    # - v1.5 起：內建詞彙庫會帶少量 variant_labels（UF），讓搜尋/expand/治理可測
     # ----------------------------
     authority_terms: list[dict[str, str]] = []
 
     for term in sorted(authority_subject_terms):
         term_id = uuid5(ns, f"{cfg.org_code}:authority:subject:builtin-zh:{term}")
+        variants = RulesTextProvider._SUBJECT_VARIANTS.get(term)
         authority_terms.append(
             {
                 "id": term_id,
@@ -686,7 +1532,7 @@ def main() -> None:
                 "kind": "subject",
                 "vocabulary_code": "builtin-zh",
                 "preferred_label": term,
-                "variant_labels": pg_null(),
+                "variant_labels": pg_array(variants) if variants else pg_null(),
                 "note": pg_null(),
                 "source": "seed-scale",
                 "status": "active",
@@ -709,6 +1555,134 @@ def main() -> None:
             }
         )
 
+    for term in sorted(authority_geographic_terms):
+        term_id = uuid5(ns, f"{cfg.org_code}:authority:geographic:builtin-zh:{term}")
+        variants = RulesTextProvider._GEOGRAPHIC_VARIANTS.get(term)
+        authority_terms.append(
+            {
+                "id": term_id,
+                "organization_id": org_id,
+                "kind": "geographic",
+                "vocabulary_code": "builtin-zh",
+                "preferred_label": term,
+                "variant_labels": pg_array(variants) if variants else pg_null(),
+                "note": pg_null(),
+                "source": "seed-scale",
+                "status": "active",
+            }
+        )
+
+    for term in sorted(authority_genre_terms):
+        term_id = uuid5(ns, f"{cfg.org_code}:authority:genre:builtin-zh:{term}")
+        variants = RulesTextProvider._GENRE_VARIANTS.get(term)
+        authority_terms.append(
+            {
+                "id": term_id,
+                "organization_id": org_id,
+                "kind": "genre",
+                "vocabulary_code": "builtin-zh",
+                "preferred_label": term,
+                "variant_labels": pg_array(variants) if variants else pg_null(),
+                "note": pg_null(),
+                "source": "seed-scale",
+                "status": "active",
+            }
+        )
+
+    # ----------------------------
+    # 3.5.2 authority_term_relations（thesaurus：BT/NT/RT）
+    # - 不是為了「語意正確」的分類法，而是為了讓 UI/檢索擴充功能有真資料可跑
+    # - 僅建立少量 deterministic 關係（避免產生 cycle）
+    # ----------------------------
+    authority_relations: list[dict[str, str]] = []
+    rel_keys: set[tuple[str, str, str]] = set()  # (from_term_id, relation_type, to_term_id)
+
+    def try_add_broader(kind: str, vocab: str, narrower_label: str, broader_label: str) -> None:
+        if not narrower_label or not broader_label:
+            return
+        if narrower_label == broader_label:
+            return
+
+        # 只有兩端都存在於本次 seed 的 authority set，才建立關係（避免小型資料集時引用不存在）。
+        if kind == "subject":
+            if narrower_label not in authority_subject_terms or broader_label not in authority_subject_terms:
+                return
+        if kind == "geographic":
+            if narrower_label not in authority_geographic_terms or broader_label not in authority_geographic_terms:
+                return
+        if kind == "genre":
+            if narrower_label not in authority_genre_terms or broader_label not in authority_genre_terms:
+                return
+
+        from_id = uuid5(ns, f"{cfg.org_code}:authority:{kind}:{vocab}:{narrower_label}")
+        to_id = uuid5(ns, f"{cfg.org_code}:authority:{kind}:{vocab}:{broader_label}")
+        key = (from_id, "broader", to_id)
+        if key in rel_keys:
+            return
+        rel_keys.add(key)
+        authority_relations.append(
+            {
+                "id": uuid5(ns, f"{cfg.org_code}:relation:{from_id}:broader:{to_id}"),
+                "organization_id": org_id,
+                "from_term_id": from_id,
+                "relation_type": "broader",
+                "to_term_id": to_id,
+            }
+        )
+
+    def try_add_related(kind: str, vocab: str, a_label: str, b_label: str) -> None:
+        if not a_label or not b_label:
+            return
+        if a_label == b_label:
+            return
+
+        # 同上：只在兩端 term 都存在時才建。
+        if kind == "subject":
+            if a_label not in authority_subject_terms or b_label not in authority_subject_terms:
+                return
+        if kind == "geographic":
+            if a_label not in authority_geographic_terms or b_label not in authority_geographic_terms:
+                return
+        if kind == "genre":
+            if a_label not in authority_genre_terms or b_label not in authority_genre_terms:
+                return
+
+        a_id = uuid5(ns, f"{cfg.org_code}:authority:{kind}:{vocab}:{a_label}")
+        b_id = uuid5(ns, f"{cfg.org_code}:authority:{kind}:{vocab}:{b_label}")
+        # related：存一筆即可（固定排序避免 A↔B 兩筆）
+        from_id, to_id = (a_id, b_id) if a_id < b_id else (b_id, a_id)
+        key = (from_id, "related", to_id)
+        if key in rel_keys:
+            return
+        rel_keys.add(key)
+        authority_relations.append(
+            {
+                "id": uuid5(ns, f"{cfg.org_code}:relation:{from_id}:related:{to_id}"),
+                "organization_id": org_id,
+                "from_term_id": from_id,
+                "relation_type": "related",
+                "to_term_id": to_id,
+            }
+        )
+
+    # subjects：BT/RT（由 rules provider 的 deterministic edges 產生）
+    for child, parent in RulesTextProvider._SUBJECT_BROADER_EDGES:
+        try_add_broader("subject", "builtin-zh", child, parent)
+    for a, b in RulesTextProvider._SUBJECT_RELATED_EDGES:
+        try_add_related("subject", "builtin-zh", a, b)
+
+    # geographics：depth=2（市/縣 → region → 臺灣）
+    for child, parent in RulesTextProvider._GEOGRAPHIC_BROADER_EDGES:
+        try_add_broader("geographic", "builtin-zh", child, parent)
+    for a, b in RulesTextProvider._GEOGRAPHIC_RELATED_EDGES:
+        try_add_related("geographic", "builtin-zh", a, b)
+
+    # genres：BT/RT（leaf→category；不追求嚴格 LCGFT，但保持可讀與可擴充）
+    for child, parent in RulesTextProvider._GENRE_BROADER_EDGES:
+        try_add_broader("genre", "builtin-zh", child, parent)
+    for a, b in RulesTextProvider._GENRE_RELATED_EDGES:
+        try_add_related("genre", "builtin-zh", a, b)
+
     # ----------------------------
     # 3.6 item_copies（冊）
     # - 每本書目 1..max_copies_per_bib 冊（用 RNG 決定）
@@ -717,6 +1691,12 @@ def main() -> None:
     # ----------------------------
     items: list[dict[str, str]] = []
     barcode_counter = 1
+
+    # E2E 哨兵冊資訊（用於後續「避開隨機分配」與輸出提示）
+    sentinel_available_item_index = None
+    sentinel_available_item_barcode = None
+    sentinel_unavailable_item_index = None
+    sentinel_unavailable_item_barcode = None
 
     def pick_location_id() -> str:
         x = rng.random()
@@ -729,7 +1709,14 @@ def main() -> None:
         return loc_storage
 
     for i, bib in enumerate(bibs, start=1):
-        copies = rng.randint(1, cfg.max_copies_per_bib)
+        # E2E 哨兵書目：固定只有 1 冊
+        # - sentinel_available：讓「checkout → place hold → checkin → fulfill」可完全可預期
+        # - sentinel_unavailable：讓 available_only filter 有穩定的「應被排除」案例
+        copies = (
+            1
+            if i in (sentinel_bib_index, sentinel_unavailable_bib_index)
+            else rng.randint(1, cfg.max_copies_per_bib)
+        )
         for c in range(1, copies + 1):
             item_id = uuid5(ns, f"{cfg.org_code}:item:{barcode_counter:08d}")
             barcode = f"SCL-{barcode_counter:08d}"
@@ -737,7 +1724,12 @@ def main() -> None:
 
             classification = bib["classification"]
             call_number = f"{classification} {i:04d}-{c}"
-            location_id = pick_location_id()
+            # 哨兵冊固定放 MAIN（避免被隨機分到 CLASSROOM/STORAGE 造成取書點/工作台測試不穩）
+            location_id = (
+                loc_main
+                if i in (sentinel_bib_index, sentinel_unavailable_bib_index)
+                else pick_location_id()
+            )
 
             acquired_at = now_utc() - dt.timedelta(days=rng.randint(0, 3650))
 
@@ -761,6 +1753,14 @@ def main() -> None:
                 }
             )
 
+            # 記錄哨兵冊的位置（items list index / barcode）
+            if i == sentinel_bib_index and c == 1:
+                sentinel_available_item_index = len(items) - 1
+                sentinel_available_item_barcode = barcode
+            if i == sentinel_unavailable_bib_index and c == 1:
+                sentinel_unavailable_item_index = len(items) - 1
+                sentinel_unavailable_item_barcode = barcode
+
     # ----------------------------
     # 3.7 分配 item status（與 loans/holds 對齊）
     # - checked_out：一定會有 open loan
@@ -773,8 +1773,21 @@ def main() -> None:
             f"[seed-scale] SCALE_OPEN_LOANS too large; items={len(item_ids_all)} open_loans={cfg.open_loans}"
         )
 
-    # 我們用 index 取樣，比直接 sample dict 更快
-    idx_all = list(range(len(items)))
+    # 我們用 index 取樣，比直接 sample dict 更快。
+    #
+    # 但要先保留「E2E 哨兵冊」不被隨機分配成 checked_out/on_hold：
+    # - sentinel_available：必須維持 available（讓流程測試穩定）
+    # - sentinel_unavailable：我們會手動設為 checked_out（讓 available_only 測試穩定）
+    sentinel_item_indexes: set[int] = set()
+    if sentinel_available_item_index is not None:
+        sentinel_item_indexes.add(int(sentinel_available_item_index))
+    if sentinel_unavailable_item_index is not None:
+        sentinel_item_indexes.add(int(sentinel_unavailable_item_index))
+
+    forced_checked_out_indexes: set[int] = set()
+    if sentinel_unavailable_item_index is not None:
+        forced_checked_out_indexes.add(int(sentinel_unavailable_item_index))
+    idx_all = [i for i in range(len(items)) if i not in sentinel_item_indexes]
     rng.shuffle(idx_all)
 
     # 小比例異常狀態（總共約 2%）
@@ -788,7 +1801,9 @@ def main() -> None:
 
     remaining = [i for i in idx_all if i not in lost_idx and i not in repair_idx and i not in withdrawn_idx]
 
-    open_loan_idx = set(remaining[: cfg.open_loans])
+    # open loans：除了隨機取樣外，還要保留「強制 checked_out」的哨兵冊名額
+    open_loan_target = max(0, cfg.open_loans - len(forced_checked_out_indexes))
+    open_loan_idx = set(remaining[:open_loan_target])
     remaining2 = [i for i in remaining if i not in open_loan_idx]
 
     ready_hold_idx = set(remaining2[: cfg.ready_holds])
@@ -804,6 +1819,10 @@ def main() -> None:
             it["status"] = "checked_out"
         elif i in ready_hold_idx:
             it["status"] = "on_hold"
+
+    # 手動套用哨兵冊狀態（確保可預期）
+    for i in forced_checked_out_indexes:
+        items[i]["status"] = "checked_out"
 
     # ----------------------------
     # 3.8 circulation_policies（學生/教師）
@@ -846,9 +1865,16 @@ def main() -> None:
     # - open loans：對應 checked_out items（returned_at=NULL）
     # - closed loans：歷史資料（returned_at 非 NULL）
     # ----------------------------
-    borrowers_active = [u for u in users if u["role"] in ("student", "teacher") and u["status"] == "active"]
+    borrowers_active = [
+        u for u in users if u["role"] in ("student", "teacher") and u["status"] == "active"
+    ]
     if not borrowers_active:
         raise SystemExit("[seed-scale] no active borrowers; check SCALE_STUDENTS/SCALE_TEACHERS")
+
+    # bulk 分配用 borrowers：避免把 login accounts 撐爆（讓 E2E 更穩）
+    borrowers_bulk = [u for u in borrowers_active if u["id"] not in login_user_ids]
+    if not borrowers_bulk:
+        borrowers_bulk = borrowers_active
 
     items_checked_out = [it for it in items if it["status"] == "checked_out"]
 
@@ -856,7 +1882,7 @@ def main() -> None:
     loans: list[dict[str, str]] = []
     for it in items_checked_out:
         loan_id = uuid5(ns, f"{cfg.org_code}:loan:open:{it['id']}")
-        borrower = rng.choice(borrowers_active)
+        borrower = rng.choice(borrowers_bulk)
         checked_out_at = now_utc() - dt.timedelta(days=rng.randint(0, 60))
         loan_days = 28 if borrower["role"] == "teacher" else 14
         due_at = checked_out_at + dt.timedelta(days=loan_days)
@@ -882,7 +1908,7 @@ def main() -> None:
     # closed loans：大量歷史（用來測 reports/top-circulation / circulation-summary）
     for i in range(1, cfg.closed_loans + 1):
         loan_id = uuid5(ns, f"{cfg.org_code}:loan:closed:{i:07d}")
-        borrower = rng.choice(borrowers_active)
+        borrower = rng.choice(borrowers_bulk)
         item = rng.choice(items)
 
         checked_out_at = now_utc() - dt.timedelta(days=rng.randint(0, 365))
@@ -917,7 +1943,7 @@ def main() -> None:
     ready_items = [it for it in items if it["status"] == "on_hold"]
     for it in ready_items:
         bib_id = it["bibliographic_id"]
-        user = rng.choice(borrowers_active)
+        user = rng.choice(borrowers_bulk)
         key = (user["id"], bib_id)
         if key in active_hold_keys:
             continue
@@ -949,11 +1975,13 @@ def main() -> None:
         )
 
     # queued holds：隨機書目（不指派冊）
-    bib_ids = [b["id"] for b in bibs]
+    # queued holds：避免把哨兵書目排隊（讓 E2E 能穩定 place hold）
+    sentinel_bib_id = uuid5(ns, f"{cfg.org_code}:bib:{sentinel_bib_index:06d}")
+    bib_ids = [b["id"] for b in bibs if b["id"] != sentinel_bib_id]
     for i in range(1, cfg.queued_holds + 1):
         hold_id = uuid5(ns, f"{cfg.org_code}:hold:queued:{i:07d}")
         bib_id = rng.choice(bib_ids)
-        user = rng.choice(borrowers_active)
+        user = rng.choice(borrowers_bulk)
         key = (user["id"], bib_id)
         if key in active_hold_keys:
             continue
@@ -1160,6 +2188,20 @@ def main() -> None:
     )
 
     write_csv(
+        cfg.workdir / "authority_term_relations.csv",
+        [
+            [
+                r["id"],
+                r["organization_id"],
+                r["from_term_id"],
+                r["relation_type"],
+                r["to_term_id"],
+            ]
+            for r in authority_relations
+        ],
+    )
+
+    write_csv(
         cfg.workdir / "bibs.csv",
         [
             [
@@ -1172,8 +2214,11 @@ def main() -> None:
                 b["published_year"],
                 b["language"],
                 b["subjects"],
+                b["geographics"],
+                b["genres"],
                 b["isbn"],
                 b["classification"],
+                b["marc_extras"],
             ]
             for b in bibs
         ],
@@ -1189,6 +2234,46 @@ def main() -> None:
                 r["position"],
             ]
             for r in bib_subject_terms_rows
+        ],
+    )
+
+    write_csv(
+        cfg.workdir / "bibliographic_name_terms.csv",
+        [
+            [
+                r["organization_id"],
+                r["bibliographic_id"],
+                r["role"],
+                r["term_id"],
+                r["position"],
+            ]
+            for r in bib_name_terms_rows
+        ],
+    )
+
+    write_csv(
+        cfg.workdir / "bibliographic_geographic_terms.csv",
+        [
+            [
+                r["organization_id"],
+                r["bibliographic_id"],
+                r["term_id"],
+                r["position"],
+            ]
+            for r in bib_geographic_terms_rows
+        ],
+    )
+
+    write_csv(
+        cfg.workdir / "bibliographic_genre_terms.csv",
+        [
+            [
+                r["organization_id"],
+                r["bibliographic_id"],
+                r["term_id"],
+                r["position"],
+            ]
+            for r in bib_genre_terms_rows
         ],
     )
 
@@ -1338,15 +2423,28 @@ def main() -> None:
         "\n".join(
             [
                 "BEGIN;",
+                # RLS（Row Level Security）注意：
+                # - schema.sql 對 org-scoped tables 啟用/強制 RLS（FORCE ROW LEVEL SECURITY）
+                # - 因此：
+                #   1) 清掉舊 org 時（DELETE organizations ... ON DELETE CASCADE）必須先把 app.org_id 設成「舊 org 的 id」
+                #   2) 匯入新資料時（COPY 到 locations/users/...）必須把 app.org_id 設成「新 org 的 id」
+                #
+                # 這裡用 set_config(..., true) 讓設定只在「這個交易」內有效（BEGIN..COMMIT）。
+                f"SELECT set_config('app.org_id', COALESCE((SELECT id::text FROM organizations WHERE code = '{cfg.org_code}'), ''), true);",
                 f"DELETE FROM organizations WHERE code = '{cfg.org_code}';",
+                f"SELECT set_config('app.org_id', '{org_id}', true);",
                 "",
                 f"\\copy organizations (id, name, code) FROM '{cfg.workdir / 'organizations.csv'}' WITH (FORMAT csv, NULL '{null}')",
                 f"\\copy locations (id, organization_id, code, name, area, shelf_code, status) FROM '{cfg.workdir / 'locations.csv'}' WITH (FORMAT csv, NULL '{null}')",
                 f"\\copy users (id, organization_id, external_id, name, role, org_unit, status) FROM '{cfg.workdir / 'users.csv'}' WITH (FORMAT csv, NULL '{null}')",
                 f"\\copy user_credentials (user_id, password_salt, password_hash, algorithm) FROM '{cfg.workdir / 'user_credentials.csv'}' WITH (FORMAT csv, NULL '{null}')",
                 f"\\copy authority_terms (id, organization_id, kind, vocabulary_code, preferred_label, variant_labels, note, source, status) FROM '{cfg.workdir / 'authority_terms.csv'}' WITH (FORMAT csv, NULL '{null}')",
-                f"\\copy bibliographic_records (id, organization_id, title, creators, contributors, publisher, published_year, language, subjects, isbn, classification) FROM '{cfg.workdir / 'bibs.csv'}' WITH (FORMAT csv, NULL '{null}')",
+                f"\\copy authority_term_relations (id, organization_id, from_term_id, relation_type, to_term_id) FROM '{cfg.workdir / 'authority_term_relations.csv'}' WITH (FORMAT csv, NULL '{null}')",
+                f"\\copy bibliographic_records (id, organization_id, title, creators, contributors, publisher, published_year, language, subjects, geographics, genres, isbn, classification, marc_extras) FROM '{cfg.workdir / 'bibs.csv'}' WITH (FORMAT csv, NULL '{null}')",
                 f"\\copy bibliographic_subject_terms (organization_id, bibliographic_id, term_id, position) FROM '{cfg.workdir / 'bibliographic_subject_terms.csv'}' WITH (FORMAT csv, NULL '{null}')",
+                f"\\copy bibliographic_name_terms (organization_id, bibliographic_id, role, term_id, position) FROM '{cfg.workdir / 'bibliographic_name_terms.csv'}' WITH (FORMAT csv, NULL '{null}')",
+                f"\\copy bibliographic_geographic_terms (organization_id, bibliographic_id, term_id, position) FROM '{cfg.workdir / 'bibliographic_geographic_terms.csv'}' WITH (FORMAT csv, NULL '{null}')",
+                f"\\copy bibliographic_genre_terms (organization_id, bibliographic_id, term_id, position) FROM '{cfg.workdir / 'bibliographic_genre_terms.csv'}' WITH (FORMAT csv, NULL '{null}')",
                 f"\\copy item_copies (id, organization_id, bibliographic_id, barcode, call_number, location_id, status, acquired_at, last_inventory_at, notes) FROM '{cfg.workdir / 'items.csv'}' WITH (FORMAT csv, NULL '{null}')",
                 f"\\copy circulation_policies (id, organization_id, code, name, audience_role, loan_days, max_loans, max_renewals, max_holds, hold_pickup_days, overdue_block_days, is_active) FROM '{cfg.workdir / 'policies.csv'}' WITH (FORMAT csv, NULL '{null}')",
                 f"\\copy loans (id, organization_id, item_id, user_id, checked_out_at, due_at, returned_at, renewed_count, status) FROM '{cfg.workdir / 'loans.csv'}' WITH (FORMAT csv, NULL '{null}')",
@@ -1382,6 +2480,17 @@ def main() -> None:
     print(f"  密碼（共用）：{cfg.password}")
     print("  Staff：admin A0001 / librarian L0001")
     print("  OPAC：teacher T0001 / student S1130123")
+    print("")
+    print("[seed-scale] E2E 哨兵資料（穩定可用）")
+    print(f"  bib_title (available): {sentinel_bib_title}")
+    print(
+        f"  item_barcode (available): {sentinel_available_item_barcode or 'SCL-00000001'}（預設維持 available，且不會被隨機排隊/借出）"
+    )
+    if sentinel_unavailable_item_barcode:
+        print(f"  bib_title (unavailable): {sentinel_unavailable_bib_title}")
+        print(
+            f"  item_barcode (unavailable): {sentinel_unavailable_item_barcode}（預設維持 checked_out，用於測 available_only filter）"
+        )
 
 
 if __name__ == "__main__":
