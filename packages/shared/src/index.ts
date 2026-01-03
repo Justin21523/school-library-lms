@@ -16,3 +16,4 @@ export type LoanId = string;
 export type HoldId = string;
 
 export * from './marc21-authority-linking';
+export * from './marc21-bib-field-dictionary';

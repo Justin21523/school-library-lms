@@ -1,12 +1,23 @@
 {
   "name": "@library-system/shared",
+  "version": "0.0.0",
   "private": true,
   "type": "commonjs",
   "main": "./dist/index.js",
+  "module": "./dist/esm/index.js",
   "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "require": "./dist/index.js",
+      "import": "./dist/esm/index.js"
+    }
+  },
   "scripts": {
-    "dev": "tsc -w -p tsconfig.json",
-    "build": "tsc -p tsconfig.json"
+    "dev": "node ./scripts/write-esm-package-json.cjs && concurrently -n cjs,esm \"tsc -w -p tsconfig.json\" \"tsc -w -p tsconfig.esm.json\"",
+    "build": "npm run build:cjs && npm run build:esm && node ./scripts/write-esm-package-json.cjs",
+    "build:cjs": "tsc -p tsconfig.json",
+    "build:esm": "tsc -p tsconfig.esm.json"
   },
   "devDependencies": {
     "typescript": "^5.6.3"
