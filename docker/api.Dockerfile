@@ -32,7 +32,7 @@ COPY apps ./apps
 COPY packages ./packages
 
 # build API（輸出到 apps/api/dist）
-RUN npm run build -w @library-system/api
+RUN npm run build -w @library-system/shared && npm run build -w @library-system/api
 
 FROM node:20-bookworm-slim AS runtime
 
@@ -42,10 +42,10 @@ ENV NODE_ENV=production
 
 # runtime 只需要：node_modules + compiled dist
 COPY --from=deps /workspace/node_modules ./node_modules
+COPY --from=build /workspace/packages/shared ./packages/shared
 COPY --from=build /workspace/apps/api/dist ./apps/api/dist
 
 # 讓 Dockerfile 本身文件化：API 預設 3001（實際以 docker-compose.yml port mapping 為準）
 EXPOSE 3001
 
 CMD ["node", "apps/api/dist/main.js"]
-

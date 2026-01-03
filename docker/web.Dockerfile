@@ -34,7 +34,7 @@ COPY packages ./packages
 ARG NEXT_PUBLIC_API_BASE_URL=http://localhost:3001
 ENV NEXT_PUBLIC_API_BASE_URL=${NEXT_PUBLIC_API_BASE_URL}
 
-RUN npm run build -w @library-system/web
+RUN npm run build -w @library-system/shared && npm run build -w @library-system/web
 
 FROM node:20-bookworm-slim AS runtime
 
@@ -45,6 +45,7 @@ ENV NODE_ENV=production
 # Next start 需要 node_modules + apps/web（含 .next 產物）
 COPY --from=deps /workspace/node_modules ./node_modules
 COPY --from=build /workspace/package.json ./package.json
+COPY --from=build /workspace/packages/shared ./packages/shared
 COPY --from=build /workspace/apps/web ./apps/web
 
 EXPOSE 3000
