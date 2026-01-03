@@ -21,6 +21,9 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 
 import { patronLogin } from '../../../../lib/api';
+import { Alert } from '../../../../components/ui/alert';
+import { Field, Form, FormActions, FormSection } from '../../../../components/ui/form';
+import { PageHeader } from '../../../../components/ui/page-header';
 import { formatErrorMessage } from '../../../../lib/error';
 import { saveOpacSession } from '../../../../lib/opac-session';
 
@@ -78,54 +81,67 @@ export default function OpacLoginPage({ params }: { params: { orgId: string } })
 
   return (
     <div className="stack">
-      <section className="panel">
-        <h1 style={{ marginTop: 0 }}>OPAC Login</h1>
-
-        <p className="muted">
-          你正在登入 organization：<code>{params.orgId}</code>
-        </p>
-
-        <p className="muted">
-          登入後系統會把 <code>Authorization: Bearer</code> token 存在瀏覽器（localStorage），用於存取{' '}
-          <code>/me/*</code>（我的借閱/我的預約）。
-        </p>
-
-        <form onSubmit={onSubmit} className="stack" style={{ marginTop: 12 }}>
-          <label>
-            external_id（學號/員編）
-            <input value={externalId} onChange={(e) => setExternalId(e.target.value)} placeholder="例：S1130123" />
-          </label>
-
-          <label>
-            password
-            <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
-          </label>
-
-          <button type="submit" disabled={loading}>
-            {loading ? '登入中…' : '登入'}
-          </button>
-        </form>
-
+      <PageHeader
+        title="OPAC Login"
+        description={
+          <>
+            你正在登入 organization：<code>{params.orgId}</code>。登入後系統會把 <code>Authorization: Bearer</code>{' '}
+            token 存在瀏覽器（localStorage），用於存取 <code>/me/*</code>（我的借閱/我的預約）。
+          </>
+        }
+      >
         {error ? (
-          <p className="error">
-            錯誤：{error}
+          <Alert variant="danger" title="登入失敗">
+            {error}
             {error.includes('PASSWORD_NOT_SET') ? (
               <>
                 <br />
-                <span className="muted">
-                  提示：此帳號尚未設定密碼；請請館員到 Web Console → Users 使用「設定/重設密碼」先設定。
-                </span>
+                <span className="muted">提示：此帳號尚未設定密碼；請請館員到 Web Console → Users 使用「設定/重設密碼」先設定。</span>
               </>
             ) : null}
-          </p>
+          </Alert>
         ) : null}
-        {success ? <p className="success">{success}</p> : null}
 
-        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 12 }}>
-          <Link href={`/opac/orgs/${params.orgId}`}>回到搜尋</Link>
-          <Link href="/opac/orgs">切換學校</Link>
-        </div>
-      </section>
+        {success ? (
+          <Alert variant="success" title="登入成功" role="status">
+            {success}
+          </Alert>
+        ) : null}
+
+        <Form onSubmit={onSubmit}>
+          <FormSection title="登入" description="使用讀者帳號（student/teacher）登入 OPAC。">
+            <div className="grid2">
+              <Field label="external_id（學號/員編）" htmlFor="opac_external_id">
+                <input
+                  id="opac_external_id"
+                  value={externalId}
+                  onChange={(e) => setExternalId(e.target.value)}
+                  placeholder="例：S1130123"
+                  autoComplete="username"
+                />
+              </Field>
+
+              <Field label="password" htmlFor="opac_password">
+                <input
+                  id="opac_password"
+                  type="password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  autoComplete="current-password"
+                />
+              </Field>
+            </div>
+
+            <FormActions>
+              <button type="submit" className="btnPrimary" disabled={loading}>
+                {loading ? '登入中…' : '登入'}
+              </button>
+              <Link href={`/opac/orgs/${params.orgId}`}>回到搜尋</Link>
+              <Link href="/opac/orgs">切換學校</Link>
+            </FormActions>
+          </FormSection>
+        </Form>
+      </PageHeader>
     </div>
   );
 }

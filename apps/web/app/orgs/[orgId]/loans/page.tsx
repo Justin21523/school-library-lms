@@ -27,6 +27,13 @@ import Link from 'next/link';
 
 import type { LoanWithDetails, RenewResult } from '../../../lib/api';
 import { listLoans, renewLoan } from '../../../lib/api';
+import { Alert } from '../../../components/ui/alert';
+import { CursorPagination } from '../../../components/ui/cursor-pagination';
+import { DataTable } from '../../../components/ui/data-table';
+import { EmptyState } from '../../../components/ui/empty-state';
+import { Field, Form, FormActions, FormSection } from '../../../components/ui/form';
+import { PageHeader, SectionHeader } from '../../../components/ui/page-header';
+import { SkeletonTable } from '../../../components/ui/skeleton';
 import { formatErrorMessage } from '../../../lib/error';
 import { useStaffSession } from '../../../lib/use-staff-session';
 
@@ -41,6 +48,7 @@ export default function LoansPage({ params }: { params: { orgId: string } }) {
   const [loans, setLoans] = useState<LoanWithDetails[] | null>(null);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [appliedFilters, setAppliedFilters] = useState<{
+    query?: string;
     status?: 'open' | 'closed' | 'all';
     user_external_id?: string;
     item_barcode?: string;
@@ -51,6 +59,7 @@ export default function LoansPage({ params }: { params: { orgId: string } }) {
 
   // filters（對應 API query params）
   const [status, setStatus] = useState<'open' | 'closed' | 'all'>('open');
+  const [query, setQuery] = useState('');
   const [userExternalId, setUserExternalId] = useState('');
   const [itemBarcode, setItemBarcode] = useState('');
   const [limit, setLimit] = useState('200');
@@ -63,23 +72,40 @@ export default function LoansPage({ params }: { params: { orgId: string } }) {
   const [success, setSuccess] = useState<string | null>(null);
   const [lastRenewResult, setLastRenewResult] = useState<RenewResult | null>(null);
 
-  async function refreshLoans(overrides?: Partial<{ status: 'open' | 'closed' | 'all' }>) {
+  async function refreshLoans(
+    overrides?: Partial<{
+      status: 'open' | 'closed' | 'all';
+      query: string;
+      userExternalId: string;
+      itemBarcode: string;
+      limit: string;
+    }>,
+  ) {
     setLoadingLoans(true);
     setError(null);
     setSuccess(null);
 
     try {
+      // 允許呼叫端用 overrides 暫時覆蓋 filters：
+      // - 典型情境：按下「清除」時，setState 尚未生效，但我們希望用預設條件立即刷新
+      const effectiveStatus = overrides?.status ?? status;
+      const effectiveQuery = overrides?.query ?? query;
+      const effectiveUserExternalId = overrides?.userExternalId ?? userExternalId;
+      const effectiveItemBarcode = overrides?.itemBarcode ?? itemBarcode;
+      const effectiveLimit = overrides?.limit ?? limit;
+
       // limit：空字串視為未提供；否則轉 int。
-      const trimmedLimit = limit.trim();
+      const trimmedLimit = effectiveLimit.trim();
       const limitNumber = trimmedLimit ? Number.parseInt(trimmedLimit, 10) : undefined;
       if (trimmedLimit && !Number.isFinite(limitNumber)) {
         throw new Error('limit 必須是整數');
       }
 
       const filters = {
-        status: overrides?.status ?? status,
-        user_external_id: userExternalId.trim() || undefined,
-        item_barcode: itemBarcode.trim() || undefined,
+        status: effectiveStatus,
+        query: effectiveQuery.trim() || undefined,
+        user_external_id: effectiveUserExternalId.trim() || undefined,
+        item_barcode: effectiveItemBarcode.trim() || undefined,
         limit: limitNumber,
       };
 
@@ -160,10 +186,7 @@ export default function LoansPage({ params }: { params: { orgId: string } }) {
   if (!sessionReady) {
     return (
       <div className="stack">
-        <section className="panel">
-          <h1 style={{ marginTop: 0 }}>Loans</h1>
-          <p className="muted">載入登入狀態中…</p>
-        </section>
+        <PageHeader title="Loans" description="載入登入狀態中…" />
       </div>
     );
   }
@@ -171,170 +194,268 @@ export default function LoansPage({ params }: { params: { orgId: string } }) {
   if (!session) {
     return (
       <div className="stack">
-        <section className="panel">
-          <h1 style={{ marginTop: 0 }}>Loans</h1>
-          <p className="error">
+        <PageHeader title="Loans">
+          <Alert variant="danger" title="需要登入">
             這頁需要 staff 登入才能查詢/續借。請先前往 <Link href={`/orgs/${params.orgId}/login`}>/login</Link>。
-          </p>
-        </section>
+          </Alert>
+        </PageHeader>
       </div>
     );
   }
 
+  function loanStatusBadgeVariant(s: LoanWithDetails['status']): 'info' | 'success' {
+    // open/closed 對館員來說是「流程狀態」，用顏色讓掃描更快：
+    // - open：借出中（藍）
+    // - closed：已歸還（綠）
+    return s === 'closed' ? 'success' : 'info';
+  }
+
+  function itemStatusBadgeVariant(s: LoanWithDetails['item_status']): 'success' | 'info' | 'danger' | 'warning' {
+    // 與 Items 頁一致：同一狀態在不同頁要呈現一致的 cue，避免學習成本。
+    if (s === 'available') return 'success';
+    if (s === 'lost' || s === 'withdrawn') return 'danger';
+    if (s === 'repair') return 'warning';
+    return 'info';
+  }
+
   return (
     <div className="stack">
-      <section className="panel">
-        <h1 style={{ marginTop: 0 }}>Loans</h1>
+      <PageHeader
+        title="Loans"
+        description={
+          <>
+            查詢對應 API：<code>GET /api/v1/orgs/:orgId/loans</code>；續借對應 API：<code>POST /api/v1/orgs/:orgId/circulation/renew</code>
+          </>
+        }
+      >
         <p className="muted">
-          查詢對應 API：<code>GET /api/v1/orgs/:orgId/loans</code>；續借對應 API：
-          <code>POST /api/v1/orgs/:orgId/circulation/renew</code>
+          借閱歷史保存期限（US-061）屬於系統管理作業：請到 <Link href={`/orgs/${params.orgId}/loans/maintenance`}>Loans Maintenance</Link> 先預覽（preview）再套用（apply），並可在{' '}
+          <Link href={`/orgs/${params.orgId}/audit-events`}>Audit Events</Link> 用 action <code>loan.purge_history</code> 追溯清理紀錄。
         </p>
 
         <p className="muted">
-          借閱歷史保存期限（US-061）屬於系統管理作業：請到{' '}
-          <Link href={`/orgs/${params.orgId}/loans/maintenance`}>Loans Maintenance</Link> 先預覽（preview）再套用（apply），
-          並可在 <Link href={`/orgs/${params.orgId}/audit-events`}>Audit Events</Link> 用 action{' '}
-          <code>loan.purge_history</code> 追溯清理紀錄。
+          actor_user_id（操作者）已鎖定為：<code>{session.user.id}</code>（{session.user.name} / {session.user.role}）
         </p>
 
-        <p className="muted">
-          actor_user_id（操作者）已鎖定為：<code>{session.user.id}</code>（{session.user.name} /{' '}
-          {session.user.role}）
-        </p>
-
-        {error ? <p className="error">錯誤：{error}</p> : null}
-        {success ? <p className="success">{success}</p> : null}
-        {lastRenewResult ? (
-          <p className="muted">
-            renew 結果：loan_id={lastRenewResult.loan_id} · renewed_count={lastRenewResult.renewed_count} · due_at=
-            {lastRenewResult.due_at}
-          </p>
+        {error ? (
+          <Alert variant="danger" title="操作失敗">
+            {error}
+          </Alert>
         ) : null}
 
-        <hr style={{ border: 0, borderTop: '1px solid var(--border)', margin: '16px 0' }} />
+        {success ? (
+          <Alert variant="success" title={success} role="status" />
+        ) : null}
 
-        <form onSubmit={onSearch} className="stack">
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
-            <label>
-              status
-              <select
-                value={status}
-                onChange={(e) => setStatus(e.target.value as 'open' | 'closed' | 'all')}
+        {lastRenewResult ? (
+          <Alert variant="info" title="renew 結果" role="status">
+            loan_id=<code>{lastRenewResult.loan_id}</code> · renewed_count=<code>{lastRenewResult.renewed_count}</code> ·
+            due_at=<code>{lastRenewResult.due_at}</code>
+          </Alert>
+        ) : null}
+
+        <Form onSubmit={onSearch}>
+          <FormSection title="查詢" description="支援 query（模糊）與 user_external_id/item_barcode（精確）；未提供時預設 status=open。">
+            <div className="grid4">
+              <Field label="query（姓名/學號/條碼/書名）" htmlFor="loans_query">
+                <input
+                  id="loans_query"
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder="例：王小明 / S1130123 / SCL- / 哈利波特"
+                />
+              </Field>
+              <Field label="status" htmlFor="loans_status">
+                <select
+                  id="loans_status"
+                  value={status}
+                  onChange={(e) => setStatus(e.target.value as 'open' | 'closed' | 'all')}
+                >
+                  <option value="open">open（未歸還）</option>
+                  <option value="closed">closed（已歸還）</option>
+                  <option value="all">all（全部）</option>
+                </select>
+              </Field>
+
+              <Field label="user_external_id（精確）" htmlFor="loans_user_external_id">
+                <input
+                  id="loans_user_external_id"
+                  value={userExternalId}
+                  onChange={(e) => setUserExternalId(e.target.value)}
+                  placeholder="例：S1130123"
+                />
+              </Field>
+
+              <Field label="item_barcode（精確）" htmlFor="loans_item_barcode">
+                <input
+                  id="loans_item_barcode"
+                  value={itemBarcode}
+                  onChange={(e) => setItemBarcode(e.target.value)}
+                  placeholder="例：LIB-00001234"
+                />
+              </Field>
+            </div>
+
+            <Field label="limit（預設 200）" htmlFor="loans_limit" hint="建議 50–200；避免一次拉太多造成 UI 卡頓。">
+              <input id="loans_limit" value={limit} onChange={(e) => setLimit(e.target.value)} />
+            </Field>
+
+            <FormActions>
+              <button type="submit" className="btnPrimary" disabled={loadingLoans}>
+                {loadingLoans ? '查詢中…' : '查詢'}
+              </button>
+              <button
+                type="button"
+                className="btnSmall"
+                onClick={() => {
+                  setStatus('open');
+                  setQuery('');
+                  setUserExternalId('');
+                  setItemBarcode('');
+                  setLimit('200');
+                  void refreshLoans({
+                    status: 'open',
+                    query: '',
+                    userExternalId: '',
+                    itemBarcode: '',
+                    limit: '200',
+                  });
+                }}
+                disabled={loadingLoans}
               >
-                <option value="open">open（未歸還）</option>
-                <option value="closed">closed（已歸還）</option>
-                <option value="all">all（全部）</option>
-              </select>
-            </label>
-
-            <label>
-              user_external_id（精確）
-              <input
-                value={userExternalId}
-                onChange={(e) => setUserExternalId(e.target.value)}
-                placeholder="例：S1130123"
-              />
-            </label>
-
-            <label>
-              item_barcode（精確）
-              <input
-                value={itemBarcode}
-                onChange={(e) => setItemBarcode(e.target.value)}
-                placeholder="例：LIB-00001234"
-              />
-            </label>
-          </div>
-
-          <label style={{ maxWidth: 240 }}>
-            limit（預設 200）
-            <input value={limit} onChange={(e) => setLimit(e.target.value)} />
-          </label>
-
-          <div style={{ display: 'flex', gap: 12 }}>
-            <button type="submit" disabled={loadingLoans}>
-              {loadingLoans ? '查詢中…' : '查詢'}
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setStatus('open');
-                setUserExternalId('');
-                setItemBarcode('');
-                setLimit('200');
-                void refreshLoans({ status: 'open' });
-              }}
-              disabled={loadingLoans}
-            >
-              清除
-            </button>
-          </div>
-        </form>
-      </section>
+                清除
+              </button>
+            </FormActions>
+          </FormSection>
+        </Form>
+      </PageHeader>
 
       <section className="panel">
-        <h2 style={{ marginTop: 0 }}>結果</h2>
-        {loadingLoans ? <p className="muted">載入中…</p> : null}
-        {!loadingLoans && loans && loans.length === 0 ? <p className="muted">沒有符合條件的 loans。</p> : null}
+        <SectionHeader title="結果" />
+        {loadingLoans && !loans ? <SkeletonTable columns={7} rows={8} /> : null}
 
-        {!loadingLoans && loans && loans.length > 0 ? (
-          <div className="stack">
-            <ul>
-              {loans.map((l) => (
-                <li key={l.id} style={{ marginBottom: 14 }}>
-                  <div style={{ display: 'grid', gap: 4 }}>
-                    <div>
-                      <Link href={`/orgs/${params.orgId}/bibs/${l.bibliographic_id}`}>
-                        <span style={{ fontWeight: 700 }}>{l.bibliographic_title}</span>
-                      </Link>{' '}
-                      <span className="muted">({l.status})</span>
-                    </div>
-
-                    <div className="muted">
-                      borrower：{l.user_name} · external_id={l.user_external_id} · role={l.user_role}
-                    </div>
-
-                    <div className="muted">
-                      item：{' '}
-                      <Link href={`/orgs/${params.orgId}/items/${l.item_id}`}>{l.item_barcode}</Link> · status=
-                      {l.item_status} · call_number={l.item_call_number}
-                    </div>
-
-                    <div className={l.is_overdue ? 'error' : 'muted'}>
-                      due_at={l.due_at}
-                      {l.is_overdue ? '（逾期）' : ''}
-                      {' · '}
-                      renewed_count={l.renewed_count}
-                    </div>
-
-                    <div className="muted" style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>
-                      loan_id={l.id}
-                    </div>
-
-                    {/* 只有 open loans 才顯示續借按鈕 */}
-                    {l.returned_at === null ? (
-                      <div>
-                        <button
-                          type="button"
-                          onClick={() => void onRenew(l.id)}
-                          disabled={renewingLoanId === l.id}
-                        >
-                          {renewingLoanId === l.id ? '續借中…' : '續借'}
-                        </button>
-                      </div>
-                    ) : (
-                      <div className="muted">returned_at={l.returned_at}</div>
-                    )}
-                  </div>
-                </li>
-              ))}
-            </ul>
-
-            {nextCursor ? (
-              <button type="button" onClick={() => void loadMoreLoans()} disabled={loadingMore || loadingLoans}>
-                {loadingMore ? '載入中…' : '載入更多'}
+        {!loadingLoans && !loans ? (
+          <EmptyState
+            title="尚無資料"
+            description="目前沒有 loans 可顯示（可能是查詢失敗或尚未產生借閱）。"
+            actions={
+              <button type="button" className="btnPrimary" onClick={() => void refreshLoans()}>
+                重試載入
               </button>
-            ) : null}
+            }
+          />
+        ) : null}
+
+        {!loadingLoans && loans && loans.length === 0 ? (
+          <EmptyState title="沒有符合條件的 loans" description="你可以調整查詢條件或清除條件後再試一次。" />
+        ) : null}
+
+        {loans && loans.length > 0 ? (
+          <div className="stack">
+            <DataTable
+              rows={loans}
+              getRowKey={(l) => l.id}
+              density="compact"
+              initialSort={{ columnId: 'due_at', direction: 'asc' }}
+              sortHint="排序僅影響目前已載入資料（cursor pagination）。"
+              getRowHref={(l) => `/orgs/${params.orgId}/bibs/${l.bibliographic_id}`}
+              rowActionsHeader="actions"
+              rowActionsWidth={140}
+              rowActions={(l) =>
+                l.returned_at === null ? (
+                  <button
+                    type="button"
+                    className={['btnSmall', 'btnPrimary'].join(' ')}
+                    onClick={() => void onRenew(l.id)}
+                    disabled={renewingLoanId === l.id}
+                  >
+                    {renewingLoanId === l.id ? '續借中…' : '續借'}
+                  </button>
+                ) : (
+                  <span className="muted">—</span>
+                )
+              }
+              columns={[
+                {
+                  id: 'status',
+                  header: 'status',
+                  cell: (l) => <span className={['badge', `badge--${loanStatusBadgeVariant(l.status)}`].join(' ')}>{l.status}</span>,
+                  sortValue: (l) => l.status,
+                  width: 120,
+                },
+                {
+                  id: 'bibliographic_title',
+                  header: 'bib',
+                  cell: (l) => (
+                    <Link href={`/orgs/${params.orgId}/bibs/${l.bibliographic_id}`}>
+                      <span style={{ fontWeight: 700 }}>{l.bibliographic_title}</span>
+                    </Link>
+                  ),
+                  sortValue: (l) => l.bibliographic_title,
+                },
+                {
+                  id: 'borrower',
+                  header: 'borrower',
+                  cell: (l) => (
+                    <div style={{ display: 'grid', gap: 2 }}>
+                      <div>{l.user_name}</div>
+                      <div className="muted">
+                        <code>{l.user_external_id}</code> · {l.user_role}
+                      </div>
+                    </div>
+                  ),
+                  sortValue: (l) => l.user_external_id,
+                  width: 220,
+                },
+                {
+                  id: 'item',
+                  header: 'item',
+                  cell: (l) => (
+                    <div style={{ display: 'grid', gap: 2 }}>
+                      <div>
+                        <Link href={`/orgs/${params.orgId}/items/${l.item_id}`}>{l.item_barcode}</Link>
+                      </div>
+                      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+                        <span className={['badge', `badge--${itemStatusBadgeVariant(l.item_status)}`].join(' ')}>
+                          {l.item_status}
+                        </span>
+                        <span className="muted">{l.item_call_number}</span>
+                      </div>
+                    </div>
+                  ),
+                  sortValue: (l) => l.item_barcode,
+                  width: 240,
+                },
+                {
+                  id: 'due_at',
+                  header: 'due_at',
+                  cell: (l) => (
+                    <div style={{ display: 'grid', gap: 4 }}>
+                      <code className={l.is_overdue ? 'error' : undefined}>{l.due_at}</code>
+                      {l.is_overdue ? <span className="badge badge--danger">逾期</span> : <span className="muted">—</span>}
+                    </div>
+                  ),
+                  sortValue: (l) => l.due_at,
+                  width: 190,
+                },
+                {
+                  id: 'renewed_count',
+                  header: 'renewed',
+                  cell: (l) => <code>{l.renewed_count}</code>,
+                  sortValue: (l) => l.renewed_count,
+                  align: 'right',
+                  width: 120,
+                },
+              ]}
+            />
+
+            <CursorPagination
+              showing={loans.length}
+              nextCursor={nextCursor}
+              loadingMore={loadingMore}
+              loading={loadingLoans}
+              onLoadMore={() => void loadMoreLoans()}
+            />
           </div>
         ) : null}
       </section>

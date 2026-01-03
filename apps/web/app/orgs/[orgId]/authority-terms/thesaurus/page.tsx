@@ -26,6 +26,11 @@ import type { ThesaurusChildrenPage, ThesaurusNodeSummary, ThesaurusRelationsImp
 import { exportThesaurusRelationsCsv, importThesaurusRelations, listThesaurusChildren, listThesaurusRoots } from '../../../../lib/api';
 import { formatErrorMessage } from '../../../../lib/error';
 import { useStaffSession } from '../../../../lib/use-staff-session';
+import { Alert } from '../../../../components/ui/alert';
+import { EmptyState } from '../../../../components/ui/empty-state';
+import { Field, Form, FormActions, FormSection } from '../../../../components/ui/form';
+import { PageHeader, SectionHeader } from '../../../../components/ui/page-header';
+import { SkeletonText } from '../../../../components/ui/skeleton';
 
 function downloadText(filename: string, content: string, contentType: string) {
   const blob = new Blob([content], { type: contentType });
@@ -331,10 +336,7 @@ export default function ThesaurusBrowserPage({ params }: { params: { orgId: stri
   if (!sessionReady) {
     return (
       <div className="stack">
-        <section className="panel">
-          <h1 style={{ marginTop: 0 }}>Thesaurus Browser</h1>
-          <p className="muted">載入登入狀態中…</p>
-        </section>
+        <PageHeader title="Thesaurus Browser" description="載入登入狀態中…" />
       </div>
     );
   }
@@ -342,104 +344,135 @@ export default function ThesaurusBrowserPage({ params }: { params: { orgId: stri
   if (!session) {
     return (
       <div className="stack">
-        <section className="panel">
-          <h1 style={{ marginTop: 0 }}>Thesaurus Browser</h1>
-          <p className="muted">
-            這頁需要 staff 登入。請先前往 <Link href={`/orgs/${params.orgId}/login`}>/login</Link>。
-          </p>
-        </section>
+        <PageHeader title="Thesaurus Browser" description="這頁需要 staff 登入才能操作 thesaurus。">
+          <Alert variant="danger" title="需要登入">
+            請先前往 <Link href={`/orgs/${params.orgId}/login`}>/login</Link>。
+          </Alert>
+        </PageHeader>
       </div>
     );
   }
 
   return (
     <div className="stack">
-      <section className="panel">
-        <h1 style={{ marginTop: 0 }}>Thesaurus Browser（polyhierarchy）</h1>
-        <p className="muted">
-          roots → children lazy-load；支援幾萬 terms 時不會一次拉爆。建議先選定 <code>vocabulary_code</code> 再瀏覽。
-        </p>
-
-        <div className="muted" style={{ display: 'grid', gap: 4, marginTop: 8 }}>
+      <PageHeader
+        title="Thesaurus Browser（polyhierarchy）"
+        description={
+          <>
+            roots → children lazy-load；支援幾萬 terms 時不會一次拉爆。建議先選定 <code>vocabulary_code</code> 再瀏覽。
+          </>
+        }
+        actions={
+          <>
+            <Link className="btnSmall" href={`/orgs/${params.orgId}/authority`}>
+              Authority 主控
+            </Link>
+            <Link className="btnSmall" href={`/orgs/${params.orgId}/authority-terms`}>
+              Terms
+            </Link>
+            <Link
+              className="btnSmall"
+              href={`/orgs/${params.orgId}/authority-terms/thesaurus/quality?kind=${encodeURIComponent(
+                kind,
+              )}&vocabulary_code=${encodeURIComponent(vocabularyCode.trim() || 'builtin-zh')}`}
+            >
+              Quality
+            </Link>
+            <Link
+              className="btnSmall"
+              href={`/orgs/${params.orgId}/authority-terms/thesaurus/visual?kind=${encodeURIComponent(
+                kind,
+              )}&vocabulary_code=${encodeURIComponent(vocabularyCode.trim() || 'builtin-zh')}`}
+            >
+              Visual
+            </Link>
+          </>
+        }
+      >
+        <div className="muted" style={{ display: 'grid', gap: 4 }}>
           <div>
             orgId：<code>{params.orgId}</code>
           </div>
+          <div>
+            kind：<code>{kind}</code> · vocabulary_code：<code>{vocabularyCode.trim() || '—'}</code> · status：
+            <code>{status}</code>
+          </div>
         </div>
 
-        {error ? <p className="error">錯誤：{error}</p> : null}
-        {success ? <p className="success">{success}</p> : null}
+        {error ? (
+          <Alert variant="danger" title="操作失敗">
+            {error}
+          </Alert>
+        ) : null}
+        {success ? (
+          <Alert variant="success" title="已完成" role="status">
+            {success}
+          </Alert>
+        ) : null}
+      </PageHeader>
 
-        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 12 }}>
-          <Link href={`/orgs/${params.orgId}/authority`}>Authority Control（主控入口）</Link>
-          <Link href={`/orgs/${params.orgId}/authority-terms`}>回到 Authority Terms</Link>
-          <Link
-            href={`/orgs/${params.orgId}/authority-terms/thesaurus/visual?kind=${encodeURIComponent(
-              kind,
-            )}&vocabulary_code=${encodeURIComponent(vocabularyCode.trim() || 'builtin-zh')}`}
-          >
-            Thesaurus Visual Editor
-          </Link>
-          <Link
-            href={`/orgs/${params.orgId}/authority-terms/thesaurus/quality?kind=${encodeURIComponent(
-              kind,
-            )}&vocabulary_code=${encodeURIComponent(vocabularyCode.trim() || 'builtin-zh')}`}
-          >
-            Thesaurus Quality
-          </Link>
-        </div>
+      <section className="panel">
+        <SectionHeader
+          title="Filters"
+          description="roots 的入口條件：kind/vocabulary/status/query/limit（更新後會自動刷新 roots）。"
+          actions={
+            <>
+              <button type="button" className="btnSmall" onClick={() => void refreshRoots()} disabled={loadingRoots}>
+                {loadingRoots ? '載入中…' : '重新整理'}
+              </button>
+              <button type="button" className="btnSmall" onClick={() => void onExportRelations()} disabled={exporting}>
+                {exporting ? '匯出中…' : '匯出 relations CSV'}
+              </button>
+            </>
+          }
+        />
+
+        <Form onSubmit={(e) => e.preventDefault()}>
+          <FormSection title="Roots filters" description="query 只會過濾 roots（children 仍依節點展開才載入）。">
+            <div className="grid3">
+              <Field label="kind" htmlFor="thesaurus_kind">
+                <select id="thesaurus_kind" value={kind} onChange={(e) => setKind(e.target.value as any)}>
+                  <option value="subject">subject（650）</option>
+                  <option value="geographic">geographic（651）</option>
+                  <option value="genre">genre（655）</option>
+                </select>
+              </Field>
+
+              <Field label="vocabulary_code（必填）" htmlFor="thesaurus_vocab" hint="例如 builtin-zh / local">
+                <input id="thesaurus_vocab" value={vocabularyCode} onChange={(e) => setVocabularyCode(e.target.value)} />
+              </Field>
+
+              <Field label="status" htmlFor="thesaurus_status">
+                <select id="thesaurus_status" value={status} onChange={(e) => setStatus(e.target.value as any)}>
+                  <option value="active">active（只看啟用）</option>
+                  <option value="inactive">inactive（只看停用）</option>
+                  <option value="all">all（全部）</option>
+                </select>
+              </Field>
+            </div>
+
+            <div className="grid2">
+              <Field label="query（只過濾 roots；模糊搜尋 label + variants）" htmlFor="thesaurus_query">
+                <input
+                  id="thesaurus_query"
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder="例如：盤點 / 汰舊 / 魔法"
+                />
+              </Field>
+
+              <Field label="limit（1..500）" htmlFor="thesaurus_limit">
+                <input id="thesaurus_limit" value={limit} onChange={(e) => setLimit(e.target.value)} />
+              </Field>
+            </div>
+          </FormSection>
+        </Form>
       </section>
 
       <section className="panel">
-        <h2 style={{ marginTop: 0 }}>Filters</h2>
-
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
-          <label>
-            kind
-            <select value={kind} onChange={(e) => setKind(e.target.value as any)}>
-              <option value="subject">subject（650）</option>
-              <option value="geographic">geographic（651）</option>
-              <option value="genre">genre（655）</option>
-            </select>
-          </label>
-          <label>
-            vocabulary_code（必填；例如 builtin-zh / local）
-            <input value={vocabularyCode} onChange={(e) => setVocabularyCode(e.target.value)} />
-          </label>
-          <label>
-            status
-            <select value={status} onChange={(e) => setStatus(e.target.value as any)}>
-              <option value="active">active（只看啟用）</option>
-              <option value="inactive">inactive（只看停用）</option>
-              <option value="all">all（全部）</option>
-            </select>
-          </label>
-        </div>
-
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginTop: 12 }}>
-          <label>
-            query（只過濾 roots；模糊搜尋 label + variants）
-            <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="例如：盤點 / 汰舊 / 魔法" />
-          </label>
-          <label>
-            limit（1..500）
-            <input value={limit} onChange={(e) => setLimit(e.target.value)} />
-          </label>
-        </div>
-
-        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 12 }}>
-          <button type="button" onClick={() => void refreshRoots()} disabled={loadingRoots}>
-            {loadingRoots ? '載入中…' : '重新整理'}
-          </button>
-          <button type="button" onClick={() => void onExportRelations()} disabled={exporting}>
-            {exporting ? '匯出中…' : '匯出 relations CSV'}
-          </button>
-        </div>
-      </section>
-
-      <section className="panel">
-        <h2 style={{ marginTop: 0 }}>Roots（Top terms）</h2>
-        {loadingRoots ? <p className="muted">載入中…</p> : null}
-        {!loadingRoots && roots && roots.items.length === 0 ? <p className="muted">（沒有 roots）</p> : null}
+        <SectionHeader title="Roots（Top terms）" description="展開節點時才 lazy-load children；可支援大量詞彙與 polyhierarchy。" />
+        {loadingRoots ? <SkeletonText lines={4} /> : null}
+        {!loadingRoots && roots && roots.items.length === 0 ? <EmptyState title="沒有 roots" description="請調整 filters，或先建立/啟用詞彙。" /> : null}
 
         {roots && roots.items.length > 0 ? (
           <div className="stack">
@@ -452,7 +485,7 @@ export default function ThesaurusBrowserPage({ params }: { params: { orgId: stri
             </ul>
 
             {roots.next_cursor ? (
-              <button type="button" onClick={() => void loadMoreRoots()} disabled={loadingMoreRoots || loadingRoots}>
+              <button type="button" className="btnSmall" onClick={() => void loadMoreRoots()} disabled={loadingMoreRoots || loadingRoots}>
                 {loadingMoreRoots ? '載入中…' : '載入更多 roots'}
               </button>
             ) : null}
@@ -461,66 +494,81 @@ export default function ThesaurusBrowserPage({ params }: { params: { orgId: stri
       </section>
 
       <section className="panel">
-        <h2 style={{ marginTop: 0 }}>Relations CSV Import</h2>
-        <p className="muted">
-          建議先用「匯出 relations CSV」取得欄位模板，再修改後回匯。v1.1 匯入會做 unique 去重與 cycle 檢查（broader）。
-        </p>
+        <SectionHeader
+          title="Relations CSV Import"
+          description="建議先匯出取得模板，再修改後回匯；匯入會做 unique 去重與 cycle 檢查（broader）。"
+        />
 
-        <div style={{ display: 'grid', gap: 12 }}>
-          <label>
-            選擇 CSV 檔案（可選）
-            <input type="file" accept=".csv,text/csv" onChange={(e) => void onPickImportFile(e.target.files?.[0] ?? null)} />
-            {importFilename ? <div className="muted">已選：{importFilename}</div> : null}
-          </label>
+        <Form onSubmit={(e) => e.preventDefault()}>
+          <FormSection title="匯入" description="Preview 不寫入；Apply 會建立/更新 thesaurus relations。">
+            <Field
+              label="選擇 CSV 檔案（可選）"
+              htmlFor="thesaurus_import_file"
+              hint={importFilename ? <>已選：{importFilename}</> : '可不選，直接貼上 csv_text'}
+            >
+              <input
+                id="thesaurus_import_file"
+                type="file"
+                accept=".csv,text/csv"
+                onChange={(e) => void onPickImportFile(e.target.files?.[0] ?? null)}
+              />
+            </Field>
 
-          <label>
-            csv_text（可直接貼上；20MB 上限）
-            <textarea value={importCsvText} onChange={(e) => setImportCsvText(e.target.value)} rows={8} />
-          </label>
+            <Field label="csv_text（可直接貼上；20MB 上限）" htmlFor="thesaurus_import_csv_text">
+              <textarea
+                id="thesaurus_import_csv_text"
+                value={importCsvText}
+                onChange={(e) => setImportCsvText(e.target.value)}
+                rows={8}
+              />
+            </Field>
 
-          <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-            <button type="button" onClick={() => void runImport('preview')} disabled={importing}>
-              {importing && importMode === 'preview' ? 'Preview 中…' : 'Preview'}
-            </button>
-            <button type="button" onClick={() => void runImport('apply')} disabled={importing}>
-              {importing && importMode === 'apply' ? 'Apply 中…' : 'Apply'}
-            </button>
-          </div>
+            <FormActions>
+              <button type="button" className="btnSmall" onClick={() => void runImport('preview')} disabled={importing}>
+                {importing && importMode === 'preview' ? 'Preview 中…' : 'Preview'}
+              </button>
+              <button type="button" className="btnDanger" onClick={() => void runImport('apply')} disabled={importing}>
+                {importing && importMode === 'apply' ? 'Apply 中…' : 'Apply'}
+              </button>
+            </FormActions>
 
-          {importResult ? (
-            <details open>
-              <summary>Import result</summary>
-              <div className="muted" style={{ marginTop: 8 }}>
-                summary：total={importResult.summary.total_rows} create={importResult.summary.create_count} skip_existing=
-                {importResult.summary.skip_existing_count} errors={importResult.summary.error_count}
-              </div>
+            {importing ? <SkeletonText lines={3} /> : null}
 
-              {'rows' in importResult ? (
-                <div style={{ marginTop: 12 }}>
-                  <div style={{ fontWeight: 700 }}>Errors / Skips（前 50 筆）</div>
-                  <ul style={{ marginTop: 8 }}>
-                    {importResult.rows
-                      .filter((r) => r.status !== 'create')
-                      .slice(0, 50)
-                      .map((r) => (
-                        <li key={r.row_number} style={{ marginBottom: 6 }}>
-                          <span>
-                            row {r.row_number}：{r.status}
-                            {r.error ? (
-                              <>
-                                {' '}
-                                · {r.error.code}：{r.error.message}
-                              </>
-                            ) : null}
-                          </span>
-                        </li>
-                      ))}
-                  </ul>
+            {importResult ? (
+              <details open>
+                <summary>Import result</summary>
+                <div className="muted" style={{ marginTop: 8 }}>
+                  summary：total={importResult.summary.total_rows} · create={importResult.summary.create_count} · skip_existing=
+                  {importResult.summary.skip_existing_count} · errors={importResult.summary.error_count}
                 </div>
-              ) : null}
-            </details>
-          ) : null}
-        </div>
+
+                {'rows' in importResult ? (
+                  <div style={{ marginTop: 12 }}>
+                    <div style={{ fontWeight: 800 }}>Errors / Skips（前 50 筆）</div>
+                    <ul style={{ marginTop: 8 }}>
+                      {importResult.rows
+                        .filter((r) => r.status !== 'create')
+                        .slice(0, 50)
+                        .map((r) => (
+                          <li key={r.row_number} style={{ marginBottom: 6 }}>
+                            <span>
+                              row {r.row_number}：{r.status}
+                              {r.error ? (
+                                <>
+                                  {' '}
+                                  · {r.error.code}：{r.error.message}
+                                </>
+                              ) : null}
+                            </span>
+                          </li>
+                        ))}
+                    </ul>
+                  </div>
+                ) : null}
+              </details>
+            ) : null}
+          </FormSection>
+        </Form>
       </section>
     </div>
   );
@@ -564,7 +612,7 @@ function TreeNode(props: {
       {expanded ? (
         <div style={{ marginTop: 6 }}>
           {childrenState?.loading ? <div className="muted">children 載入中…</div> : null}
-          {childrenState?.error ? <div className="error">children 錯誤：{childrenState.error}</div> : null}
+          {childrenState?.error ? <div className="fieldError">children 錯誤：{childrenState.error}</div> : null}
 
           {childrenItems.length > 0 ? (
             <ul style={{ marginTop: 8 }}>

@@ -31,6 +31,10 @@ import {
   applyUsersCsvImport,
   previewUsersCsvImport,
 } from '../../../../lib/api';
+import { Alert } from '../../../../components/ui/alert';
+import { DataTable } from '../../../../components/ui/data-table';
+import { EmptyState } from '../../../../components/ui/empty-state';
+import { Field, Form, FormActions, FormSection } from '../../../../components/ui/form';
 import { formatErrorMessage } from '../../../../lib/error';
 import { useStaffSession } from '../../../../lib/use-staff-session';
 
@@ -261,7 +265,7 @@ export default function UsersImportPage({ params }: { params: { orgId: string } 
       <div className="stack">
         <section className="panel">
           <h1 style={{ marginTop: 0 }}>Users CSV Import</h1>
-          <p className="muted">載入登入狀態中…</p>
+          <Alert variant="info" title="載入登入狀態中…" role="status" />
         </section>
       </div>
     );
@@ -272,9 +276,9 @@ export default function UsersImportPage({ params }: { params: { orgId: string } 
       <div className="stack">
         <section className="panel">
           <h1 style={{ marginTop: 0 }}>Users CSV Import</h1>
-          <p className="error">
+          <Alert variant="danger" title="需要登入">
             這頁需要 staff 登入才能匯入名冊。請先前往 <Link href={`/orgs/${params.orgId}/login`}>/login</Link>。
-          </p>
+          </Alert>
         </section>
       </div>
     );
@@ -295,149 +299,203 @@ export default function UsersImportPage({ params }: { params: { orgId: string } 
           <code>user.import_csv</code> 查追溯。
         </p>
 
-        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-          <Link href={`/orgs/${params.orgId}/users`}>← 回 Users</Link>
-          <button type="button" onClick={onDownloadTemplate}>
-            下載範例 CSV
-          </button>
+        <div className="toolbar">
+          <div className="toolbarLeft">
+            <Link href={`/orgs/${params.orgId}/users`}>← 回 Users</Link>
+          </div>
+          <div className="toolbarRight">
+            <button type="button" className="btnSmall" onClick={onDownloadTemplate} disabled={previewing || applying}>
+              下載範例 CSV
+            </button>
+          </div>
         </div>
 
-        <hr style={{ border: 0, borderTop: '1px solid var(--border)', margin: '16px 0' }} />
+        <hr className="divider" />
 
         <p className="muted">
           actor_user_id（操作者）已鎖定為：<code>{session.user.id}</code>（{session.user.name} /{' '}
           {session.user.role}）
         </p>
 
-        <div style={{ display: 'grid', gap: 12, marginTop: 12 }}>
-          <label>
-            上傳 CSV 檔案（UTF-8）
-            <input
-              type="file"
-              accept=".csv,text/csv"
-              onChange={(e) => void onPickFile(e.target.files?.[0] ?? null)}
-            />
-          </label>
+        <Form onSubmit={(e) => e.preventDefault()} style={{ marginTop: 12 }}>
+          <FormSection title="來源" description="你可以上傳檔案，或直接貼上 CSV 文字（建議 UTF-8）。">
+            <Field label="上傳 CSV 檔案（UTF-8）" htmlFor="users_import_file">
+              <input
+                id="users_import_file"
+                type="file"
+                accept=".csv,text/csv"
+                onChange={(e) => void onPickFile(e.target.files?.[0] ?? null)}
+                disabled={previewing || applying}
+              />
+            </Field>
 
-          <label>
-            或貼上 CSV 文字（header + data rows）
-            <textarea
-              value={csvText}
-              onChange={(e) => {
-                setCsvText(e.target.value);
-                setPreview(null);
-                setApplyingResult(null);
-              }}
-              rows={10}
-              placeholder="external_id,name,role,org_unit,status\nS1130123,王小明,student,501,active\n..."
-              style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}
-            />
-          </label>
+            <Field
+              label="或貼上 CSV 文字（header + data rows）"
+              htmlFor="users_import_csv_text"
+              hint="例：external_id,name,role,org_unit,status"
+            >
+              <textarea
+                id="users_import_csv_text"
+                value={csvText}
+                onChange={(e) => {
+                  setCsvText(e.target.value);
+                  setPreview(null);
+                  setApplyingResult(null);
+                  setImportErrors(null);
+                }}
+                rows={10}
+                placeholder="external_id,name,role,org_unit,status\nS1130123,王小明,student,501,active\n..."
+                style={{ fontFamily: 'var(--font-mono)' }}
+                disabled={previewing || applying}
+              />
+            </Field>
 
-          <div className="muted">
-            目前檔名：{sourceFilename ?? '（未選擇）'} · 內容長度：{csvText.length.toLocaleString()} 字元
-          </div>
-        </div>
+            <div className="muted">
+              目前檔名：{sourceFilename ?? '（未選擇）'} · 內容長度：{csvText.length.toLocaleString()} 字元
+            </div>
+          </FormSection>
 
-        <hr style={{ border: 0, borderTop: '1px solid var(--border)', margin: '16px 0' }} />
+          <FormSection title="匯入選項" description="default_role 只在 CSV 沒有 role 欄位或該列 role 為空時使用。">
+            <div className="grid2">
+              <Field label="default_role（當 CSV 沒有 role 欄位時必填）" htmlFor="users_import_default_role">
+                <select
+                  id="users_import_default_role"
+                  value={defaultRole}
+                  onChange={(e) => {
+                    setDefaultRole(e.target.value as any);
+                    setPreview(null);
+                    setApplyingResult(null);
+                  }}
+                  disabled={previewing || applying}
+                >
+                  <option value="">（不指定；要求 CSV 內含 role 欄）</option>
+                  <option value="student">student（學生）</option>
+                  <option value="teacher">teacher（教師）</option>
+                </select>
+              </Field>
 
-        <div style={{ display: 'grid', gap: 12 }}>
-          <label>
-            default_role（當 CSV 沒有 role 欄位時必填）
-            <select value={defaultRole} onChange={(e) => setDefaultRole(e.target.value as any)}>
-              <option value="">（不指定；要求 CSV 內含 role 欄）</option>
-              <option value="student">student（學生）</option>
-              <option value="teacher">teacher（教師）</option>
-            </select>
-          </label>
-
-          <label>
-            source_note（操作備註；寫入 audit；選填）
-            <input
-              value={sourceNote}
-              onChange={(e) => setSourceNote(e.target.value)}
-              placeholder="例：113-1 學期名冊（學生）"
-            />
-          </label>
-
-          <div className="panel" style={{ background: 'var(--bgSubtle)' }}>
-            <div style={{ display: 'grid', gap: 8 }}>
-              <label style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <Field label="source_note（選填；寫入 audit）" htmlFor="users_import_source_note" hint="例：113-1 學期名冊（學生）">
                 <input
+                  id="users_import_source_note"
+                  value={sourceNote}
+                  onChange={(e) => {
+                    setSourceNote(e.target.value);
+                    setPreview(null);
+                    setApplyingResult(null);
+                  }}
+                  placeholder="例：113-1 學期名冊（學生）"
+                  disabled={previewing || applying}
+                />
+              </Field>
+            </div>
+          </FormSection>
+
+          <FormSection title="Roster sync（停用未出現在 CSV 的使用者）" description="建議只在你上傳「完整名冊清單」時開啟，避免誤停用。">
+            <Field label="deactivate_missing" htmlFor="users_import_deactivate_missing">
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                <input
+                  id="users_import_deactivate_missing"
                   type="checkbox"
                   checked={deactivateMissing}
-                  onChange={(e) => setDeactivateMissing(e.target.checked)}
+                  onChange={(e) => {
+                    setDeactivateMissing(e.target.checked);
+                    setPreview(null);
+                    setApplyingResult(null);
+                  }}
+                  disabled={previewing || applying}
                 />
-                停用未出現在 CSV 的使用者（roster sync；畢業/轉出）
-              </label>
-
-              <div className="muted" style={{ marginLeft: 24 }}>
-                <div>建議：只在你上傳「完整名冊清單」時開啟，避免誤停用。</div>
+                <span className="muted">停用未出現在 CSV 的使用者（畢業/轉出）</span>
               </div>
+            </Field>
 
-              <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginLeft: 24 }}>
-                <label style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <div className="grid2">
+              <Field label="包含 student（學生）" htmlFor="users_import_deactivate_student">
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                   <input
+                    id="users_import_deactivate_student"
                     type="checkbox"
                     checked={deactivateStudent}
-                    onChange={(e) => setDeactivateStudent(e.target.checked)}
-                    disabled={!deactivateMissing}
+                    onChange={(e) => {
+                      setDeactivateStudent(e.target.checked);
+                      setPreview(null);
+                      setApplyingResult(null);
+                    }}
+                    disabled={!deactivateMissing || previewing || applying}
                   />
-                  student（學生）
-                </label>
-                <label style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                  <span className="muted">student</span>
+                </div>
+              </Field>
+
+              <Field label="包含 teacher（教師）" htmlFor="users_import_deactivate_teacher">
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                   <input
+                    id="users_import_deactivate_teacher"
                     type="checkbox"
                     checked={deactivateTeacher}
-                    onChange={(e) => setDeactivateTeacher(e.target.checked)}
-                    disabled={!deactivateMissing}
+                    onChange={(e) => {
+                      setDeactivateTeacher(e.target.checked);
+                      setPreview(null);
+                      setApplyingResult(null);
+                    }}
+                    disabled={!deactivateMissing || previewing || applying}
                   />
-                  teacher（教師）
-                </label>
-              </div>
-
-              {deactivateMissingRolesWarning ? <div className="error">{deactivateMissingRolesWarning}</div> : null}
+                  <span className="muted">teacher</span>
+                </div>
+              </Field>
             </div>
-          </div>
 
-          <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-            <button type="button" onClick={() => void runPreview()} disabled={previewing}>
-              {previewing ? '預覽中…' : '預覽'}
-            </button>
+            {deactivateMissingRolesWarning ? <Alert variant="warning" title={deactivateMissingRolesWarning} /> : null}
+          </FormSection>
 
-            <button
-              type="button"
-              onClick={() => void runApply()}
-              disabled={applying || !preview || preview.errors.length > 0}
-            >
-              {applying ? '套用中…' : '套用（Apply）'}
-            </button>
+          <FormSection title="Preview / Apply" description="建議先預覽 → 修正錯誤 → 再套用；套用後可到 Audit Events 查追溯。">
+            <FormActions>
+              <button type="button" className="btnSmall" onClick={() => void runPreview()} disabled={previewing || applying || !csvText.trim()}>
+                {previewing ? '預覽中…' : '預覽'}
+              </button>
 
-            <button
-              type="button"
-              onClick={() => {
-                setCsvText('');
-                setSourceFilename(null);
-                setDefaultRole('');
-                setDeactivateMissing(false);
-                setDeactivateStudent(true);
-                setDeactivateTeacher(false);
-                setSourceNote('');
-                setPreview(null);
-                setApplyingResult(null);
-                setError(null);
-                setSuccess(null);
-                setImportErrors(null);
-              }}
-              disabled={previewing || applying}
-            >
-              清除
-            </button>
-          </div>
+              <button
+                type="button"
+                className="btnDanger"
+                onClick={() => void runApply()}
+                disabled={applying || previewing || !preview || preview.errors.length > 0}
+              >
+                {applying ? '套用中…' : '套用（Apply）'}
+              </button>
 
-          {error ? <p className="error">錯誤：{error}</p> : null}
-          {success ? <p className="success">{success}</p> : null}
-        </div>
+              <button
+                type="button"
+                className="btnSmall"
+                onClick={() => {
+                  setCsvText('');
+                  setSourceFilename(null);
+                  setDefaultRole('');
+                  setDeactivateMissing(false);
+                  setDeactivateStudent(true);
+                  setDeactivateTeacher(false);
+                  setSourceNote('');
+                  setPreview(null);
+                  setApplyingResult(null);
+                  setError(null);
+                  setSuccess(null);
+                  setImportErrors(null);
+                }}
+                disabled={previewing || applying}
+              >
+                清除
+              </button>
+            </FormActions>
+
+            {previewing ? <Alert variant="info" title="預覽中…" role="status" /> : null}
+            {applying ? <Alert variant="info" title="套用中…" role="status" /> : null}
+
+            {error ? (
+              <Alert variant="danger" title="操作失敗">
+                {error}
+              </Alert>
+            ) : null}
+            {success ? <Alert variant="success" title={success} role="status" /> : null}
+          </FormSection>
+        </Form>
       </section>
 
       {/* preview 結果 */}
@@ -445,100 +503,93 @@ export default function UsersImportPage({ params }: { params: { orgId: string } 
         <section className="panel">
           <h2 style={{ marginTop: 0 }}>Preview 結果</h2>
 
-          <div className="muted" style={{ display: 'grid', gap: 6 }}>
+          <div className="stack">
+            <Alert variant="info" title="CSV" role="status">
+              <div>
+                csv_sha256：<code>{preview.csv.sha256}</code>
+              </div>
+              <div style={{ marginTop: 6 }}>
+                header：<code>{preview.csv.header.join(', ')}</code>
+              </div>
+            </Alert>
+
+            <Alert variant="info" title="summary" role="status">
+              <div>
+                total_rows=<code>{preview.summary.total_rows}</code> · valid=<code>{preview.summary.valid_rows}</code> · invalid=
+                <code>{preview.summary.invalid_rows}</code>
+              </div>
+              <div style={{ marginTop: 6 }}>
+                新增=<code>{preview.summary.to_create}</code> · 更新=<code>{preview.summary.to_update}</code> · 不變=
+                <code>{preview.summary.unchanged}</code> · 將停用=<code>{preview.summary.to_deactivate}</code>
+              </div>
+            </Alert>
+
+            {preview.errors.length > 0 ? (
+              <Alert variant="danger" title={`錯誤（${preview.errors.length}；請先修正再套用）`}>
+                <details className="details">
+                  <summary>
+                    檢視錯誤（前 <code>{Math.min(200, preview.errors.length)}</code> 筆）
+                  </summary>
+                  <ul style={{ margin: 0, padding: '12px 18px' }}>
+                    {preview.errors.slice(0, 200).map((e, idx) => (
+                      <li key={`${e.row_number}-${e.code}-${idx}`}>
+                        row {e.row_number} · {e.field ?? '-'} · {e.code} · {e.message}
+                      </li>
+                    ))}
+                  </ul>
+                  {preview.errors.length > 200 ? <div className="muted" style={{ padding: '0 12px 12px' }}>（只顯示前 200 筆錯誤）</div> : null}
+                </details>
+              </Alert>
+            ) : (
+              <Alert variant="success" title="預覽沒有錯誤，可套用" role="status" />
+            )}
+
             <div>
-              csv_sha256：<code>{preview.csv.sha256}</code>
+              <h3 style={{ marginTop: 0 }}>Rows（前 {preview.rows.length} 筆）</h3>
+              {preview.rows.length === 0 ? (
+                <EmptyState title="Rows 為空" description="請確認 CSV 是否有資料列（不含 header）。" />
+              ) : (
+                <DataTable
+                  rows={preview.rows}
+                  getRowKey={(r) => `${r.row_number}-${r.external_id}`}
+                  initialSort={{ columnId: 'row_number', direction: 'asc' }}
+                  columns={[
+                    { id: 'row_number', header: 'row', sortValue: (r) => r.row_number, cell: (r) => r.row_number, width: 80 },
+                    { id: 'external_id', header: 'external_id', sortValue: (r) => r.external_id, cell: (r) => <code>{r.external_id}</code>, width: 160 },
+                    { id: 'name', header: 'name', sortValue: (r) => r.name, cell: (r) => r.name, width: 180 },
+                    { id: 'role', header: 'role', sortValue: (r) => r.role, cell: (r) => r.role, width: 120 },
+                    { id: 'org_unit', header: 'org_unit', sortValue: (r) => (r.org_unit === undefined ? '(skip)' : r.org_unit ?? ''), cell: (r) => (r.org_unit === undefined ? '（不更新）' : r.org_unit ?? ''), width: 140 },
+                    { id: 'status', header: 'status', sortValue: (r) => (r.status === undefined ? '(skip)' : r.status), cell: (r) => (r.status === undefined ? '（不更新）' : r.status), width: 140 },
+                    { id: 'action', header: 'action', sortValue: (r) => r.action, cell: (r) => r.action, width: 120 },
+                    { id: 'changes', header: 'changes', sortValue: (r) => r.changes.join(', '), cell: (r) => r.changes.join(', ') },
+                  ]}
+                />
+              )}
             </div>
-            <div>
-              header：<code>{preview.csv.header.join(', ')}</code>
-            </div>
-          </div>
-
-          <hr style={{ border: 0, borderTop: '1px solid var(--border)', margin: '16px 0' }} />
-
-          <div style={{ display: 'grid', gap: 6 }}>
-            <div>
-              共有 <strong>{preview.summary.total_rows}</strong> 列資料（不含 header）
-            </div>
-            <div className="muted">
-              valid={preview.summary.valid_rows} · invalid={preview.summary.invalid_rows}
-            </div>
-            <div className="muted">
-              新增={preview.summary.to_create} · 更新={preview.summary.to_update} · 不變={preview.summary.unchanged} ·
-              將停用={preview.summary.to_deactivate}
-            </div>
-          </div>
-
-          {preview.errors.length > 0 ? (
-            <>
-              <hr style={{ border: 0, borderTop: '1px solid var(--border)', margin: '16px 0' }} />
-              <h3 style={{ marginTop: 0 }}>錯誤（請先修正再套用）</h3>
-              <ul>
-                {preview.errors.slice(0, 200).map((e, idx) => (
-                  <li key={`${e.row_number}-${e.code}-${idx}`}>
-                    row {e.row_number} · {e.field ?? '-'} · {e.code} · {e.message}
-                  </li>
-                ))}
-              </ul>
-              {preview.errors.length > 200 ? <p className="muted">（只顯示前 200 筆錯誤）</p> : null}
-            </>
-          ) : (
-            <p className="success">預覽沒有錯誤，可套用。</p>
-          )}
-
-          <hr style={{ border: 0, borderTop: '1px solid var(--border)', margin: '16px 0' }} />
-
-          <h3 style={{ marginTop: 0 }}>Rows（前 {preview.rows.length} 筆）</h3>
-          <div style={{ overflowX: 'auto' }}>
-            <table>
-              <thead>
-                <tr>
-                  <th>row</th>
-                  <th>external_id</th>
-                  <th>name</th>
-                  <th>role</th>
-                  <th>org_unit</th>
-                  <th>status</th>
-                  <th>action</th>
-                  <th>changes</th>
-                </tr>
-              </thead>
-              <tbody>
-                {preview.rows.map((r) => (
-                  <tr key={`${r.row_number}-${r.external_id}`}>
-                    <td>{r.row_number}</td>
-                    <td>{r.external_id}</td>
-                    <td>{r.name}</td>
-                    <td>{r.role}</td>
-                    <td>{r.org_unit === undefined ? '（不更新）' : r.org_unit ?? ''}</td>
-                    <td>{r.status === undefined ? '（不更新）' : r.status}</td>
-                    <td>{r.action}</td>
-                    <td>{r.changes.join(', ')}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
 
           {preview.options.deactivate_missing ? (
             <>
-              <hr style={{ border: 0, borderTop: '1px solid var(--border)', margin: '16px 0' }} />
-              <h3 style={{ marginTop: 0 }}>
-                將停用的使用者（前 {preview.to_deactivate_preview.length} 筆）
-              </h3>
-              {preview.to_deactivate_preview.length === 0 ? (
-                <p className="muted">（沒有將被停用的使用者）</p>
-              ) : (
-                <ul>
-                  {preview.to_deactivate_preview.map((u) => (
-                    <li key={u.id}>
-                      {u.external_id} · {u.name} · {u.role} · {u.status}
-                    </li>
-                  ))}
-                </ul>
-              )}
+              <div>
+                <h3 style={{ marginTop: 0 }}>將停用的使用者（前 {preview.to_deactivate_preview.length} 筆）</h3>
+                {preview.to_deactivate_preview.length === 0 ? (
+                  <EmptyState title="沒有將被停用的使用者" description="代表這次名冊沒有命中任何「需要停用」的使用者。" />
+                ) : (
+                  <DataTable
+                    rows={preview.to_deactivate_preview}
+                    getRowKey={(r) => r.id}
+                    initialSort={{ columnId: 'external_id', direction: 'asc' }}
+                    columns={[
+                      { id: 'external_id', header: 'external_id', sortValue: (r) => r.external_id, cell: (r) => <code>{r.external_id}</code>, width: 160 },
+                      { id: 'name', header: 'name', sortValue: (r) => r.name, cell: (r) => r.name, width: 180 },
+                      { id: 'role', header: 'role', sortValue: (r) => r.role, cell: (r) => r.role, width: 120 },
+                      { id: 'status', header: 'status', sortValue: (r) => r.status, cell: (r) => r.status, width: 140 },
+                    ]}
+                  />
+                )}
+              </div>
             </>
           ) : null}
+          </div>
         </section>
       ) : null}
 
@@ -547,18 +598,18 @@ export default function UsersImportPage({ params }: { params: { orgId: string } 
         <section className="panel">
           <h2 style={{ marginTop: 0 }}>Apply 結果</h2>
 
-          <p className="success">
-            已完成匯入：audit_event_id=<code>{applyingResult.audit_event_id}</code>
-          </p>
-          <p className="muted">
-            新增={applyingResult.summary.to_create} · 更新={applyingResult.summary.to_update} · 不變=
-            {applyingResult.summary.unchanged} · 已停用={applyingResult.summary.to_deactivate}
-          </p>
+          <Alert variant="success" title="已完成匯入" role="status">
+            audit_event_id：<Link href={`/orgs/${params.orgId}/audit-events`}>{applyingResult.audit_event_id}</Link>
+          </Alert>
 
-          <p>
-            → 到 <Link href={`/orgs/${params.orgId}/audit-events`}>Audit Events</Link> 用 action{' '}
-            <code>user.import_csv</code> 查追溯
-          </p>
+          <Alert variant="info" title="summary" role="status">
+            新增=<code>{applyingResult.summary.to_create}</code> · 更新=<code>{applyingResult.summary.to_update}</code> · 不變=
+            <code>{applyingResult.summary.unchanged}</code> · 已停用=<code>{applyingResult.summary.to_deactivate}</code>
+          </Alert>
+
+          <div className="muted">
+            → 到 <Link href={`/orgs/${params.orgId}/audit-events`}>Audit Events</Link> 用 action <code>user.import_csv</code> 查追溯
+          </div>
         </section>
       ) : null}
 
@@ -566,14 +617,21 @@ export default function UsersImportPage({ params }: { params: { orgId: string } 
       {importErrors && importErrors.length > 0 ? (
         <section className="panel">
           <h2 style={{ marginTop: 0 }}>API 回傳的匯入錯誤</h2>
-          <ul>
-            {importErrors.slice(0, 200).map((e, idx) => (
-              <li key={`${e.row_number}-${e.code}-${idx}`}>
-                row {e.row_number} · {e.field ?? '-'} · {e.code} · {e.message}
-              </li>
-            ))}
-          </ul>
-          {importErrors.length > 200 ? <p className="muted">（只顯示前 200 筆錯誤）</p> : null}
+          <Alert variant="danger" title={`errors=${importErrors.length}`}>
+            <details className="details">
+              <summary>
+                檢視錯誤（前 <code>{Math.min(200, importErrors.length)}</code> 筆）
+              </summary>
+              <ul style={{ margin: 0, padding: '12px 18px' }}>
+                {importErrors.slice(0, 200).map((e, idx) => (
+                  <li key={`${e.row_number}-${e.code}-${idx}`}>
+                    row {e.row_number} · {e.field ?? '-'} · {e.code} · {e.message}
+                  </li>
+                ))}
+              </ul>
+              {importErrors.length > 200 ? <div className="muted" style={{ padding: '0 12px 12px' }}>（只顯示前 200 筆錯誤）</div> : null}
+            </details>
+          </Alert>
         </section>
       ) : null}
     </div>

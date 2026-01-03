@@ -13,15 +13,20 @@
 // 這頁會呼叫 API 抓 org 詳細資料，因此使用 Client Component。
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
 import Link from 'next/link';
 
 import type { Organization } from '../../lib/api';
 import { getOrganization } from '../../lib/api';
 import { formatErrorMessage } from '../../lib/error';
-import { getOrgConsoleNav, type OrgConsoleNavItem, type OrgConsoleNavNode } from '../../lib/console-nav';
 import { useStaffSession } from '../../lib/use-staff-session';
+
+import { NavIcon } from '../../components/layout/nav-icons';
+import { Alert } from '../../components/ui/alert';
+import { NavTile } from '../../components/ui/nav-tile';
+import { PageHeader, SectionHeader } from '../../components/ui/page-header';
+import { SkeletonText } from '../../components/ui/skeleton';
 
 export default function OrgDashboardPage({ params }: { params: { orgId: string } }) {
   // staff session：顯示「是否已登入」讓使用者少走一步（也能降低「為什麼一直 401」的困惑）
@@ -53,31 +58,100 @@ export default function OrgDashboardPage({ params }: { params: { orgId: string }
     void run();
   }, [params.orgId]);
 
+  const categories = useMemo(
+    () => [
+      {
+        id: 'catalog',
+        href: `/orgs/${params.orgId}/catalog`,
+        icon: 'catalog' as const,
+        title: '編目與目錄',
+        description: '書目/編目、MARC 工具、匯入匯出、backfill',
+      },
+      {
+        id: 'authority',
+        href: `/orgs/${params.orgId}/authority`,
+        icon: 'authority' as const,
+        title: '權威控制（Authority）',
+        description: '主檔、Thesaurus、品質檢查、視覺化治理',
+      },
+      {
+        id: 'holdings',
+        href: `/orgs/${params.orgId}/holdings`,
+        icon: 'holdings' as const,
+        title: '館藏管理',
+        description: 'Items / Locations / Inventory',
+      },
+      {
+        id: 'circulation',
+        href: `/orgs/${params.orgId}/circulation/home`,
+        icon: 'circulation' as const,
+        title: '流通服務',
+        description: '櫃台、借閱、預約、政策、維護工具',
+      },
+      {
+        id: 'reports',
+        href: `/orgs/${params.orgId}/reports`,
+        icon: 'reports' as const,
+        title: '報表與分析',
+        description: '逾期、熱門、摘要、可取書預約…',
+      },
+      {
+        id: 'admin',
+        href: `/orgs/${params.orgId}/admin`,
+        icon: 'admin' as const,
+        title: '系統管理',
+        description: 'Users、匯入、稽核、啟用流程',
+      },
+      {
+        id: 'opac',
+        href: `/opac/orgs/${params.orgId}`,
+        icon: 'opac' as const,
+        title: '讀者端（OPAC）',
+        description: '查詢/預約/我的借閱（供館員快速切換驗證）',
+      },
+    ],
+    [params.orgId],
+  );
+
   return (
     <div className="stack">
-      <section className="panel">
-        <div className="toolbar">
-          <div className="toolbarLeft">
-            <h1 style={{ margin: 0 }}>Dashboard</h1>
-          </div>
-          <div className="toolbarRight">
-            {staffReady && !staffSession ? <Link href={`/orgs/${params.orgId}/login`}>Staff Login</Link> : null}
-            {staffReady && staffSession ? <Link href={`/orgs/${params.orgId}/logout`}>Logout</Link> : null}
-          </div>
-        </div>
-
-        <p className="muted" style={{ marginTop: 8 }}>
-          這頁對應 API：<code>GET /api/v1/orgs/:orgId</code> · 你也可以用 topbar 的「全域查詢」或 <code>Ctrl/Cmd + K</code> 快速跳轉功能。
-        </p>
-
-        {loading ? <p className="muted">載入中…</p> : null}
-        {error ? <p className="error">錯誤：{error}</p> : null}
+      <PageHeader
+        title="Organization Dashboard"
+        description={
+          <>
+            以「模組 Hub pages」做導覽：先進入分區首頁（卡片/段落），再進入具體功能頁。完整索引在 <code>/index</code>。
+          </>
+        }
+        actions={
+          <>
+            <Link className="btnSmall" href={`/orgs/${params.orgId}/index`}>
+              功能索引
+            </Link>
+            {staffReady && !staffSession ? (
+              <Link className="btnSmall" href={`/orgs/${params.orgId}/login`}>
+                Staff Login
+              </Link>
+            ) : null}
+            {staffReady && staffSession ? (
+              <Link className="btnSmall" href={`/orgs/${params.orgId}/logout`}>
+                Logout
+              </Link>
+            ) : null}
+          </>
+        }
+      >
+        {loading ? <SkeletonText lines={2} /> : null}
+        {error ? (
+          <Alert variant="danger" title="載入失敗">
+            {error}
+          </Alert>
+        ) : null}
 
         {org ? (
-          <div className="grid3" style={{ marginTop: 12 }}>
+          <div className="grid3">
             <div className="callout">
               <div className="muted">名稱</div>
-              <div style={{ fontWeight: 800 }}>{org.name}</div>
+              <div style={{ fontWeight: 900 }}>{org.name}</div>
             </div>
             <div className="callout">
               <div className="muted">代碼</div>
@@ -85,13 +159,13 @@ export default function OrgDashboardPage({ params }: { params: { orgId: string }
             </div>
             <div className="callout">
               <div className="muted">orgId</div>
-              <div style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>{org.id}</div>
+              <div style={{ fontFamily: 'var(--font-mono)' }}>{org.id}</div>
             </div>
           </div>
         ) : null}
 
-        <div className="callout" style={{ marginTop: 12 }}>
-          <div style={{ fontWeight: 800 }}>Staff Session</div>
+        <div className="callout">
+          <div style={{ fontWeight: 900 }}>Staff Session</div>
           {!staffReady ? <div className="muted">載入中…</div> : null}
           {staffReady && staffSession ? (
             <div className="muted">
@@ -104,71 +178,53 @@ export default function OrgDashboardPage({ params }: { params: { orgId: string }
             </div>
           ) : null}
         </div>
+      </PageHeader>
+
+      <section className="panel">
+        <SectionHeader title="模組入口" description="每個分區都有自己的首頁（Hub page），用卡片/段落收納常見入口與工作流。" />
+
+        <div className="tileGrid">
+          {categories.map((c) => (
+            <NavTile
+              key={c.id}
+              href={c.href}
+              icon={<NavIcon id={c.icon} size={20} />}
+              title={c.title}
+              description={c.description}
+            />
+          ))}
+        </div>
       </section>
 
       <section className="panel">
-        <h2 style={{ marginTop: 0 }}>模組導覽（Taxonomy）</h2>
-        <p className="muted">
-          這裡把功能用「階層式分類」整理成清楚的入口；側邊欄也會用同一套分類（並支援收合/拖拉寬度/tooltip）。
-        </p>
-
-        <div className="cardGrid">
-          {getOrgConsoleNav(params.orgId)
-            .filter((g) => g.id !== 'overview')
-            .map((group) => {
-              const links = pickPreviewLinks(group.children).slice(0, 5);
-              return (
-                <div key={group.id} className="card">
-                  <div className="cardTitle">{group.label}</div>
-                  <div className="cardMeta">{describeGroup(group.id)}</div>
-                  <div className="cardLinks">
-                    {links.map((item) => (
-                      <Link key={item.id} href={item.href}>
-                        {item.label}
-                      </Link>
-                    ))}
-                  </div>
-                </div>
-              );
-            })}
+        <SectionHeader title="常用入口" description="把高頻功能做成 tiles（降低翻找成本；也適合給新手）。" />
+        <div className="tileGrid">
+          <NavTile
+            href={`/orgs/${params.orgId}/bibs`}
+            icon={<NavIcon id="catalog" size={20} />}
+            title="書目查詢 / 編目"
+            description="建立/編修書目；term-based 欄位逐步整合。"
+          />
+          <NavTile
+            href={`/orgs/${params.orgId}/authority`}
+            icon={<NavIcon id="authority" size={20} />}
+            title="Authority Control（主控入口）"
+            description="Terms / Thesaurus / Backfill / MARC tools 集中入口。"
+          />
+          <NavTile
+            href={`/orgs/${params.orgId}/bibs/marc-editor`}
+            icon={<NavIcon id="marc" size={20} />}
+            title="MARC 編輯器"
+            description="編輯 marc_extras；下載 MARC 檔案。"
+          />
+          <NavTile
+            href={`/orgs/${params.orgId}/circulation`}
+            icon={<NavIcon id="circulation" size={20} />}
+            title="流通櫃台"
+            description="借出/歸還/續借；處理預約取書。"
+          />
         </div>
       </section>
     </div>
   );
-}
-
-function pickPreviewLinks(nodes: OrgConsoleNavNode[]): OrgConsoleNavItem[] {
-  // dashboard 的卡片只需要「最常點」的少量入口：
-  // - 我們用 DFS 取出 item（遇到 group 就往下走），並由呼叫端再 slice(0,n)
-  const items: OrgConsoleNavItem[] = [];
-  for (const n of nodes) {
-    if (n.type === 'item') {
-      items.push(n);
-      continue;
-    }
-    items.push(...pickPreviewLinks(n.children));
-  }
-  return items;
-}
-
-function describeGroup(groupId: string) {
-  // 這裡用「人類可讀」的摘要，讓 dashboard 卡片一眼看懂差異。
-  switch (groupId) {
-    case 'cataloging':
-      return '書目/編目、MARC、匯入、欄位字典、backfill';
-    case 'authority':
-      return '權威詞主檔、Thesaurus、品質檢查、視覺化治理';
-    case 'holdings':
-      return '冊（items）、館藏地點、盤點';
-    case 'circulation':
-      return '借閱、預約、政策、櫃台、維護工具';
-    case 'reports':
-      return '統計/報表（逾期、熱門、摘要…）';
-    case 'admin':
-      return '使用者、匯入、Bootstrap、稽核';
-    case 'opac':
-      return '讀者端（查詢/預約/我的借閱）';
-    default:
-      return '模組';
-  }
 }

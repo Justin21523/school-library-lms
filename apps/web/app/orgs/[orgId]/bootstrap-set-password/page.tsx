@@ -22,6 +22,9 @@ import { useState } from 'react';
 import Link from 'next/link';
 
 import { bootstrapSetStaffPassword } from '../../../lib/api';
+import { Alert } from '../../../components/ui/alert';
+import { Field, Form, FormActions, FormSection } from '../../../components/ui/form';
+import { PageHeader } from '../../../components/ui/page-header';
 import { formatErrorMessage } from '../../../lib/error';
 
 export default function BootstrapSetPasswordPage({ params }: { params: { orgId: string } }) {
@@ -80,70 +83,28 @@ export default function BootstrapSetPasswordPage({ params }: { params: { orgId: 
 
   return (
     <div className="stack">
-      <section className="panel">
-        <h1 style={{ marginTop: 0 }}>Bootstrap：Set Staff Password</h1>
-
-        <p className="muted">
-          你正在操作 organization：<code>{params.orgId}</code>
-        </p>
-
-        <p className="muted">
-          對應 API：<code>POST /api/v1/orgs/:orgId/auth/bootstrap-set-password</code>
-        </p>
-
-        <div className="callout warn">
-          <div style={{ fontWeight: 700 }}>⚠️ 高風險操作（請確認你在正確的環境）</div>
-          <ul style={{ margin: '8px 0 0 18px' }}>
-            <li>需要後端環境變數：<code>AUTH_BOOTSTRAP_SECRET</code></li>
+      <PageHeader
+        title="Bootstrap：Set Staff Password"
+        description={
+          <>
+            你正在操作 organization：<code>{params.orgId}</code> · 對應 API：
+            <code>POST /api/v1/orgs/:orgId/auth/bootstrap-set-password</code>
+          </>
+        }
+      >
+        <Alert variant="warning" title="高風險操作">
+          <ul style={{ margin: 0, paddingLeft: 18 }}>
+            <li>
+              需要後端環境變數：<code>AUTH_BOOTSTRAP_SECRET</code>
+            </li>
             <li>本頁不會保存 secret；請勿把 secret 放在一般 UI 或文件中</li>
             <li>此功能主要給 dev/staging 初始化；production 建議採用更正式的流程</li>
           </ul>
-        </div>
-
-        <form onSubmit={onSubmit} className="stack" style={{ marginTop: 12 }}>
-          <label>
-            bootstrap_secret（AUTH_BOOTSTRAP_SECRET）
-            <input
-              type="password"
-              value={bootstrapSecret}
-              onChange={(e) => setBootstrapSecret(e.target.value)}
-              placeholder="貼上一次性密語"
-              autoComplete="off"
-            />
-          </label>
-
-          <label>
-            target_external_id（要設定密碼的 staff）
-            <input
-              value={targetExternalId}
-              onChange={(e) => setTargetExternalId(e.target.value)}
-              placeholder="例：A0001（admin/librarian）"
-            />
-          </label>
-
-          <label>
-            new_password
-            <input type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} />
-          </label>
-
-          <label>
-            confirm_password
-            <input type="password" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} />
-          </label>
-
-          <label>
-            note（選填）
-            <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="例：dev bootstrap init" />
-          </label>
-
-          <button type="submit" disabled={loading}>
-            {loading ? '設定中…' : '設定密碼'}
-          </button>
-        </form>
+        </Alert>
 
         {error ? (
-          <p className="error">
-            錯誤：{error}
+          <Alert variant="danger" title="設定失敗">
+            {error}
             {error.includes('BOOTSTRAP_DISABLED') ? (
               <>
                 <br />
@@ -152,17 +113,78 @@ export default function BootstrapSetPasswordPage({ params }: { params: { orgId: 
                 </span>
               </>
             ) : null}
-          </p>
+          </Alert>
         ) : null}
 
-        {success ? <p className="success">{success}</p> : null}
+        {success ? (
+          <Alert variant="success" title="已完成" role="status">
+            {success}
+          </Alert>
+        ) : null}
 
-        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 12 }}>
-          <Link href={`/orgs/${params.orgId}/login`}>前往 Staff Login</Link>
-          <Link href={`/orgs/${params.orgId}`}>回到 Dashboard</Link>
-        </div>
-      </section>
+        <Form onSubmit={onSubmit}>
+          <FormSection title="設定密碼" description="完成後建議立刻到 Staff Login 驗證可登入。">
+            <Field label="bootstrap_secret（AUTH_BOOTSTRAP_SECRET）" htmlFor="bootstrap_secret">
+              <input
+                id="bootstrap_secret"
+                type="password"
+                value={bootstrapSecret}
+                onChange={(e) => setBootstrapSecret(e.target.value)}
+                placeholder="貼上一次性密語"
+                autoComplete="off"
+              />
+            </Field>
+
+            <Field label="target_external_id（要設定密碼的 staff）" htmlFor="target_external_id" hint="必須是 admin/librarian">
+              <input
+                id="target_external_id"
+                value={targetExternalId}
+                onChange={(e) => setTargetExternalId(e.target.value)}
+                placeholder="例：A0001"
+              />
+            </Field>
+
+            <div className="grid2">
+              <Field label="new_password" htmlFor="bootstrap_new_password">
+                <input
+                  id="bootstrap_new_password"
+                  type="password"
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  autoComplete="new-password"
+                />
+              </Field>
+
+              <Field label="confirm_password" htmlFor="bootstrap_confirm_password">
+                <input
+                  id="bootstrap_confirm_password"
+                  type="password"
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  autoComplete="new-password"
+                />
+              </Field>
+            </div>
+
+            <Field label="note（選填）" htmlFor="bootstrap_note">
+              <input
+                id="bootstrap_note"
+                value={note}
+                onChange={(e) => setNote(e.target.value)}
+                placeholder="例：dev bootstrap init"
+              />
+            </Field>
+
+            <FormActions>
+              <button type="submit" className="btnPrimary" disabled={loading}>
+                {loading ? '設定中…' : '設定密碼'}
+              </button>
+              <Link href={`/orgs/${params.orgId}/login`}>前往 Staff Login</Link>
+              <Link href={`/orgs/${params.orgId}`}>回到 Dashboard</Link>
+            </FormActions>
+          </FormSection>
+        </Form>
+      </PageHeader>
     </div>
   );
 }
-

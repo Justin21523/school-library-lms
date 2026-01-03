@@ -24,6 +24,7 @@ import type { OverdueReportRow } from '../../../../lib/api';
 import { downloadOverdueReportCsv, listOverdueReport } from '../../../../lib/api';
 import { formatErrorMessage } from '../../../../lib/error';
 import { useStaffSession } from '../../../../lib/use-staff-session';
+import { Alert } from '../../../../components/ui/alert';
 
 /**
  * datetime-local（HTML input）需要的格式：
@@ -114,9 +115,9 @@ export default function OverdueReportPage({ params }: { params: { orgId: string 
       <div className="stack">
         <section className="panel">
           <h1 style={{ marginTop: 0 }}>Overdue Report</h1>
-          <p className="error">
+          <Alert variant="danger" title="需要登入">
             這頁需要 staff 登入才能查詢/下載。請先前往 <Link href={`/orgs/${params.orgId}/login`}>/login</Link>。
-          </p>
+          </Alert>
         </section>
       </div>
     );
@@ -227,8 +228,16 @@ export default function OverdueReportPage({ params }: { params: { orgId: string 
           {session.user.role}）
         </p>
 
-        {error ? <p className="error">錯誤：{error}</p> : null}
-        {success ? <p className="success">{success}</p> : null}
+        {error ? (
+          <Alert variant="danger" title="操作失敗">
+            {error}
+          </Alert>
+        ) : null}
+        {success ? (
+          <Alert variant="success" title="已完成" role="status">
+            {success}
+          </Alert>
+        ) : null}
       </section>
 
       <section className="panel">
@@ -257,10 +266,10 @@ export default function OverdueReportPage({ params }: { params: { orgId: string 
           </div>
 
           <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-            <button type="submit" disabled={loading}>
+            <button type="submit" className="btnPrimary" disabled={loading}>
               {loading ? '查詢中…' : '查詢'}
             </button>
-            <button type="button" onClick={() => void onDownloadCsv()} disabled={downloading}>
+            <button type="button" className="btnSmall" onClick={() => void onDownloadCsv()} disabled={downloading}>
               {downloading ? '下載中…' : '下載 CSV'}
             </button>
           </div>

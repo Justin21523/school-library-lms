@@ -21,6 +21,11 @@ import Link from 'next/link';
 
 import type { TopCirculationRow } from '../../../../lib/api';
 import { downloadTopCirculationReportCsv, listTopCirculationReport } from '../../../../lib/api';
+import { Alert } from '../../../../components/ui/alert';
+import { DataTable } from '../../../../components/ui/data-table';
+import { EmptyState } from '../../../../components/ui/empty-state';
+import { Field, Form, FormActions, FormSection } from '../../../../components/ui/form';
+import { SkeletonTable } from '../../../../components/ui/skeleton';
 import { formatErrorMessage } from '../../../../lib/error';
 import { useStaffSession } from '../../../../lib/use-staff-session';
 
@@ -178,6 +183,20 @@ export default function TopCirculationReportPage({ params }: { params: { orgId: 
     return rows.reduce((sum, r) => sum + r.loan_count, 0);
   }, [rows]);
 
+  const rankByBibId = useMemo(() => {
+    // 讓「#（API rank）」即使在使用者切換排序後仍保持一致：
+    // - API 預設已依 loan_count desc 排序
+    // - UI 若讓使用者改用其他欄位排序，rank 仍可作為「回到原始排行」的參考
+    //
+    // 重要：這個 useMemo 必須放在「登入門檻 return」之前。
+    // - 因為 React hooks 需要「每次 render 的呼叫順序一致」
+    // - 若把 useMemo 放在 `if (!session) return ...` 之後，初次 render（session 尚未 ready）會少跑這個 hook，
+    //   下一次 render（session ready）又多跑一個 hook → 觸發 React minified error #310（hooks mismatch）。
+    const m = new Map<string, number>();
+    (rows ?? []).forEach((r, idx) => m.set(r.bibliographic_id, idx + 1));
+    return m;
+  }, [rows]);
+
   // 登入門檻（放在所有 hooks 之後，避免違反 React hooks 規則）
   if (!sessionReady) {
     return (
@@ -195,9 +214,9 @@ export default function TopCirculationReportPage({ params }: { params: { orgId: 
       <div className="stack">
         <section className="panel">
           <h1 style={{ marginTop: 0 }}>Top Circulation</h1>
-          <p className="error">
+          <Alert variant="danger" title="需要登入">
             這頁需要 staff 登入才能查詢/下載。請先前往 <Link href={`/orgs/${params.orgId}/login`}>/login</Link>。
-          </p>
+          </Alert>
         </section>
       </div>
     );
@@ -226,98 +245,130 @@ export default function TopCirculationReportPage({ params }: { params: { orgId: 
           {session.user.role}）
         </p>
 
-        {error ? <p className="error">錯誤：{error}</p> : null}
-        {success ? <p className="success">{success}</p> : null}
+        {error ? (
+          <Alert variant="danger" title="操作失敗">
+            {error}
+          </Alert>
+        ) : null}
+        {success ? <Alert variant="success" title={success} role="status" /> : null}
       </section>
 
       <section className="panel">
         <h2 style={{ marginTop: 0 }}>查詢條件</h2>
 
-        <form onSubmit={onSearch} className="stack" style={{ marginTop: 12 }}>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
-            <label>
-              from（本地時間顯示）
-              <input type="datetime-local" value={fromLocal} onChange={(e) => setFromLocal(e.target.value)} />
-            </label>
+        <Form onSubmit={onSearch} style={{ marginTop: 12 }}>
+          <FormSection title="條件" description="from/to 以本地時間顯示，送出時會轉成 ISO（UTC）給後端比較。">
+            <div className="grid3">
+              <Field label="from（本地時間顯示）" htmlFor="top_from">
+                <input id="top_from" type="datetime-local" value={fromLocal} onChange={(e) => setFromLocal(e.target.value)} />
+              </Field>
 
-            <label>
-              to（本地時間顯示）
-              <input type="datetime-local" value={toLocal} onChange={(e) => setToLocal(e.target.value)} />
-            </label>
+              <Field label="to（本地時間顯示）" htmlFor="top_to">
+                <input id="top_to" type="datetime-local" value={toLocal} onChange={(e) => setToLocal(e.target.value)} />
+              </Field>
 
-            <label>
-              limit（前 N 名；預設 50）
-              <input value={limit} onChange={(e) => setLimit(e.target.value)} />
-            </label>
-          </div>
+              <Field label="limit（前 N 名；預設 50）" htmlFor="top_limit">
+                <input id="top_limit" value={limit} onChange={(e) => setLimit(e.target.value)} />
+              </Field>
+            </div>
 
-          <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-            <button type="submit" disabled={loading}>
-              {loading ? '查詢中…' : '查詢'}
-            </button>
-            <button type="button" onClick={() => void onDownloadCsv()} disabled={downloading || loading}>
-              {downloading ? '下載中…' : '下載 CSV'}
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                const now = new Date();
-                const d = new Date();
-                d.setDate(now.getDate() - 30);
-                setFromLocal(toDateTimeLocalValue(d));
-                setToLocal(toDateTimeLocalValue(now));
-                setLimit('50');
-                void refresh();
-              }}
-              disabled={loading || downloading}
-            >
-              重設（近 30 天）
-            </button>
-          </div>
-        </form>
+            <FormActions>
+              <button type="submit" className="btnPrimary" disabled={loading}>
+                {loading ? '查詢中…' : '查詢'}
+              </button>
+              <button type="button" className="btnSmall" onClick={() => void onDownloadCsv()} disabled={downloading || loading}>
+                {downloading ? '下載中…' : '下載 CSV'}
+              </button>
+              <button
+                type="button"
+                className="btnSmall"
+                onClick={() => {
+                  const now = new Date();
+                  const d = new Date();
+                  d.setDate(now.getDate() - 30);
+                  setFromLocal(toDateTimeLocalValue(d));
+                  setToLocal(toDateTimeLocalValue(now));
+                  setLimit('50');
+                  void refresh();
+                }}
+                disabled={loading || downloading}
+              >
+                重設（近 30 天）
+              </button>
+            </FormActions>
+          </FormSection>
+        </Form>
       </section>
 
       <section className="panel">
         <h2 style={{ marginTop: 0 }}>結果</h2>
 
-        {loading ? <p className="muted">載入中…</p> : null}
-        {!loading && rows && rows.length === 0 ? <p className="muted">沒有資料（此期間沒有借出）。</p> : null}
+        {loading && !rows ? <SkeletonTable columns={5} rows={8} /> : null}
+
+        {!loading && !rows ? (
+          <EmptyState title="尚未查詢" description="請先設定查詢條件後按「查詢」。" />
+        ) : null}
+
+        {!loading && rows && rows.length === 0 ? (
+          <EmptyState title="沒有資料" description="此期間沒有任何借出（loans.checked_out_at）。" />
+        ) : null}
 
         {!loading && rows && rows.length > 0 ? (
-          <>
-            <p className="muted">總借出筆數（僅加總本頁排行）：{totalLoans}</p>
-
-            <div style={{ overflowX: 'auto' }}>
-              <table>
-                <thead>
-                  <tr>
-                    <th>#</th>
-                    <th>title</th>
-                    <th>loan_count</th>
-                    <th>unique_borrowers</th>
-                    <th>bib</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {rows.map((r, idx) => (
-                    <tr key={r.bibliographic_id}>
-                      <td>{idx + 1}</td>
-                      <td>
-                        <Link href={`/orgs/${params.orgId}/bibs/${r.bibliographic_id}`}>
-                          {r.bibliographic_title}
-                        </Link>
-                      </td>
-                      <td>{r.loan_count}</td>
-                      <td>{r.unique_borrowers}</td>
-                      <td>
-                        <code style={{ fontSize: 12 }}>{r.bibliographic_id}</code>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+          <div className="stack">
+            <div className="muted">
+              總借出筆數（僅加總本頁排行）：<code>{totalLoans}</code>
             </div>
-          </>
+
+            <DataTable
+              rows={rows}
+              getRowKey={(r) => r.bibliographic_id}
+              initialSort={{ columnId: 'loan_count', direction: 'desc' }}
+              sortHint="本報表一次載入全部資料；排序會即時套用在目前結果。"
+              columns={[
+                {
+                  id: 'rank',
+                  header: '#（API rank）',
+                  cell: (r) => <code>{rankByBibId.get(r.bibliographic_id) ?? '—'}</code>,
+                  sortValue: (r) => rankByBibId.get(r.bibliographic_id) ?? 0,
+                  align: 'right',
+                  width: 120,
+                },
+                {
+                  id: 'title',
+                  header: 'title',
+                  cell: (r) => (
+                    <Link href={`/orgs/${params.orgId}/bibs/${r.bibliographic_id}`}>
+                      <span style={{ fontWeight: 800 }}>{r.bibliographic_title}</span>
+                    </Link>
+                  ),
+                  sortValue: (r) => r.bibliographic_title,
+                },
+                {
+                  id: 'loan_count',
+                  header: 'loan_count',
+                  cell: (r) => <code>{r.loan_count}</code>,
+                  sortValue: (r) => r.loan_count,
+                  align: 'right',
+                  width: 140,
+                },
+                {
+                  id: 'unique_borrowers',
+                  header: 'unique_borrowers',
+                  cell: (r) => <code>{r.unique_borrowers}</code>,
+                  sortValue: (r) => r.unique_borrowers,
+                  align: 'right',
+                  width: 170,
+                },
+                {
+                  id: 'bib',
+                  header: 'bib',
+                  cell: (r) => <code>{r.bibliographic_id}</code>,
+                  sortValue: (r) => r.bibliographic_id,
+                  width: 310,
+                },
+              ]}
+            />
+          </div>
         ) : null}
       </section>
     </div>

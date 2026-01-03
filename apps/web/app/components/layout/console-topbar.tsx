@@ -23,7 +23,10 @@ import { getOrgConsoleNav, flattenOrgConsoleNav, type OrgConsoleNavItem } from '
 import { useStaffSession } from '../../lib/use-staff-session';
 
 import { CommandPalette } from './command-palette';
-import { ThemeToggle } from './theme-toggle';
+import { NavIcon } from './nav-icons';
+import { PreferencesMenu } from './preferences-menu';
+
+import { UiIcon } from '../ui/icons';
 
 type GlobalSearchScope = 'bibs' | 'authority_terms';
 
@@ -123,7 +126,12 @@ export function ConsoleTopbar() {
           <div className="topbarLeft">
             <div className="topbarTitle">
               <Link href="/orgs" style={{ color: 'inherit' }}>
-                Library System
+                <span style={{ display: 'inline-flex', gap: 10, alignItems: 'center' }}>
+                  <span className="brandMark" aria-hidden="true">
+                    <NavIcon id="catalog" size={20} />
+                  </span>
+                  <span>Library System</span>
+                </span>
               </Link>
             </div>
             {orgId ? (
@@ -150,9 +158,11 @@ export function ConsoleTopbar() {
                   placeholder="全域查詢（書名/作者/ISBN 或 權威詞）…"
                 />
                 <button type="submit" className="btnSmall">
+                  <UiIcon id="search" size={16} />
                   查詢
                 </button>
                 <button type="button" className="btnSmall" onClick={() => setPaletteOpen(true)} title="Ctrl/Cmd + K">
+                  <UiIcon id="command" size={16} />
                   快捷
                 </button>
               </form>
@@ -164,7 +174,7 @@ export function ConsoleTopbar() {
           </div>
 
           <div className="topbarRight">
-            <ThemeToggle />
+            <PreferencesMenu />
 
             {orgId ? (
               <div ref={staffMenuRef} className="menu" style={{ position: 'relative' }}>

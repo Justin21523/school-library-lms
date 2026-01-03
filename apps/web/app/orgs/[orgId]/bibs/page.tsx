@@ -26,6 +26,12 @@ import { useSearchParams } from 'next/navigation';
 import type { BibliographicRecord, BibliographicRecordWithCounts } from '../../../lib/api';
 import { createBib, expandAuthorityTerm, getAuthorityTerm, listBibs } from '../../../lib/api';
 import { TermMultiPicker, type AuthorityTermLite } from '../../../components/authority/term-multi-picker';
+import { Alert } from '../../../components/ui/alert';
+import { CursorPagination } from '../../../components/ui/cursor-pagination';
+import { DataTable } from '../../../components/ui/data-table';
+import { EmptyState } from '../../../components/ui/empty-state';
+import { PageHeader, SectionHeader } from '../../../components/ui/page-header';
+import { SkeletonTable } from '../../../components/ui/skeleton';
 import { formatErrorMessage } from '../../../lib/error';
 import { useStaffSession } from '../../../lib/use-staff-session';
 
@@ -386,10 +392,9 @@ export default function BibsPage({ params }: { params: { orgId: string } }) {
       <div className="stack">
         <section className="panel">
           <h1 style={{ marginTop: 0 }}>Bibs</h1>
-          <p className="error">
-            這頁需要 staff 登入才能查詢/建立書目。請先前往{' '}
-            <Link href={`/orgs/${params.orgId}/login`}>/login</Link>。
-          </p>
+          <Alert variant="danger" title="需要登入">
+            這頁需要 staff 登入才能查詢/建立書目。請先前往 <Link href={`/orgs/${params.orgId}/login`}>/login</Link>。
+          </Alert>
         </section>
       </div>
     );
@@ -397,12 +402,15 @@ export default function BibsPage({ params }: { params: { orgId: string } }) {
 
   return (
     <div className="stack">
-      <section className="panel">
-        <h1 style={{ marginTop: 0 }}>Bibs</h1>
-        <p className="muted">
-          對應 API：<code>GET/POST /api/v1/orgs/:orgId/bibs</code>（支援 <code>?query=</code> /{' '}
-          <code>?isbn=</code> / <code>?classification=</code>）
-        </p>
+      <PageHeader
+        title="Bibs"
+        description={
+          <>
+            對應 API：<code>GET/POST /api/v1/orgs/:orgId/bibs</code>（支援 <code>?query=</code> / <code>?isbn=</code> /{' '}
+            <code>?classification=</code>）
+          </>
+        }
+      >
         <div className="toolbar" style={{ marginTop: 12 }}>
           <div className="toolbarLeft muted">
             匯入：
@@ -524,11 +532,12 @@ export default function BibsPage({ params }: { params: { orgId: string } }) {
             </div>
 
             <div className="toolbarLeft">
-              <button type="submit" disabled={loading}>
+              <button type="submit" className="btnPrimary" disabled={loading}>
                 {loading ? '查詢中…' : '搜尋'}
               </button>
               <button
                 type="button"
+                className="btnSmall"
                 onClick={() => {
                   setQuery('');
                   setIsbn('');
@@ -669,7 +678,7 @@ export default function BibsPage({ params }: { params: { orgId: string } }) {
           </label>
 
           <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
-            <button type="submit" disabled={creating}>
+            <button type="submit" className="btnPrimary" disabled={creating}>
               {creating ? '建立中…' : '建立書目'}
             </button>
             {created ? (
@@ -681,45 +690,101 @@ export default function BibsPage({ params }: { params: { orgId: string } }) {
           </form>
         </details>
 
-        {error ? <p className="error">錯誤：{error}</p> : null}
-      </section>
+        {error ? (
+          <Alert variant="danger" title="操作失敗">
+            {error}
+          </Alert>
+        ) : null}
+      </PageHeader>
 
       {/* 列表 */}
       <section className="panel">
-        <h2 style={{ marginTop: 0 }}>結果</h2>
-        {loading ? <p className="muted">載入中…</p> : null}
+        <SectionHeader title="結果" />
+        {loading && !bibs ? <SkeletonTable columns={5} rows={8} /> : null}
 
-        {!loading && bibs && bibs.length === 0 ? <p className="muted">沒有符合條件的書目。</p> : null}
-
-        {!loading && bibs && bibs.length > 0 ? (
-          <div className="stack">
-            <ul>
-              {bibs.map((b) => (
-                <li key={b.id} style={{ marginBottom: 10 }}>
-                  <div style={{ display: 'grid', gap: 2 }}>
-                    <div>
-                      <Link href={`/orgs/${params.orgId}/bibs/${b.id}`}>
-                        <span style={{ fontWeight: 700 }}>{b.title}</span>
-                      </Link>
-                    </div>
-                    <div className="muted">
-                      isbn={b.isbn ?? '(none)'} · classification={b.classification ?? '(none)'} · available_items=
-                      {b.available_items}/{b.total_items}
-                    </div>
-                    <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-                      <Link href={`/orgs/${params.orgId}/bibs/marc-editor?bib_id=${b.id}`}>MARC21 編輯器</Link>
-                      <Link href={`/orgs/${params.orgId}/bibs/${b.id}#marc21`}>（直接跳到書目頁 MARC 區塊）</Link>
-                    </div>
-                  </div>
-                </li>
-              ))}
-            </ul>
-
-            {nextCursor ? (
-              <button type="button" onClick={() => void loadMore()} disabled={loadingMore || loading}>
-                {loadingMore ? '載入中…' : '載入更多'}
+        {!loading && !bibs ? (
+          <EmptyState
+            title="尚無資料"
+            description="目前沒有書目可顯示（可能是查詢失敗或尚未建立）。"
+            actions={
+              <button type="button" className="btnPrimary" onClick={() => void refresh()}>
+                重試載入
               </button>
-            ) : null}
+            }
+          />
+        ) : null}
+
+        {!loading && bibs && bibs.length === 0 ? (
+          <EmptyState title="沒有符合條件的書目" description="你可以調整搜尋/篩選條件後再試一次。" />
+        ) : null}
+
+        {bibs && bibs.length > 0 ? (
+          <div className="stack">
+            <DataTable
+              rows={bibs}
+              getRowKey={(b) => b.id}
+              density="compact"
+              initialSort={{ columnId: 'title', direction: 'asc' }}
+              sortHint="排序僅影響目前已載入資料（cursor pagination）。"
+              getRowHref={(b) => `/orgs/${params.orgId}/bibs/${b.id}`}
+              columns={[
+                {
+                  id: 'title',
+                  header: 'title',
+                  cell: (b) => (
+                    <Link href={`/orgs/${params.orgId}/bibs/${b.id}`}>
+                      <span style={{ fontWeight: 700 }}>{b.title}</span>
+                    </Link>
+                  ),
+                  sortValue: (b) => b.title,
+                },
+                {
+                  id: 'isbn',
+                  header: 'isbn',
+                  cell: (b) => <span className="muted">{b.isbn ?? '(none)'}</span>,
+                  sortValue: (b) => b.isbn ?? '',
+                  width: 190,
+                },
+                {
+                  id: 'classification',
+                  header: 'classification',
+                  cell: (b) => <span className="muted">{b.classification ?? '(none)'}</span>,
+                  sortValue: (b) => b.classification ?? '',
+                  width: 160,
+                },
+                {
+                  id: 'items',
+                  header: 'available/total',
+                  cell: (b) => (
+                    <span className="muted">
+                      <code>{b.available_items}</code>/<code>{b.total_items}</code>
+                    </span>
+                  ),
+                  sortValue: (b) => b.available_items,
+                  align: 'right',
+                  width: 140,
+                },
+                {
+                  id: 'actions',
+                  header: 'actions',
+                  cell: (b) => (
+                    <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                      <Link href={`/orgs/${params.orgId}/bibs/marc-editor?bib_id=${b.id}`}>MARC21</Link>
+                      <Link href={`/orgs/${params.orgId}/bibs/${b.id}#marc21`}>書目頁 MARC</Link>
+                    </div>
+                  ),
+                  width: 220,
+                },
+              ]}
+            />
+
+            <CursorPagination
+              showing={bibs.length}
+              nextCursor={nextCursor}
+              loadingMore={loadingMore}
+              loading={loading}
+              onLoadMore={() => void loadMore()}
+            />
           </div>
         ) : null}
       </section>

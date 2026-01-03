@@ -19,12 +19,17 @@
 
 'use client';
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 
 import Link from 'next/link';
 
 import type { ZeroCirculationReportRow } from '../../../../lib/api';
 import { downloadZeroCirculationReportCsv, listZeroCirculationReport } from '../../../../lib/api';
+import { Alert } from '../../../../components/ui/alert';
+import { DataTable } from '../../../../components/ui/data-table';
+import { EmptyState } from '../../../../components/ui/empty-state';
+import { Field, Form, FormActions, FormSection } from '../../../../components/ui/form';
+import { SkeletonTable } from '../../../../components/ui/skeleton';
 import { formatErrorMessage } from '../../../../lib/error';
 import { useStaffSession } from '../../../../lib/use-staff-session';
 
@@ -89,6 +94,12 @@ export default function ZeroCirculationReportPage({ params }: { params: { orgId:
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
+  const rankByBibId = useMemo(() => {
+    const m = new Map<string, number>();
+    (rows ?? []).forEach((r, idx) => m.set(r.bibliographic_id, idx + 1));
+    return m;
+  }, [rows]);
+
   // 登入門檻：未登入就不顯示報表 UI，避免一直撞 401/403。
   if (!sessionReady) {
     return (
@@ -106,9 +117,9 @@ export default function ZeroCirculationReportPage({ params }: { params: { orgId:
       <div className="stack">
         <section className="panel">
           <h1 style={{ marginTop: 0 }}>Zero Circulation</h1>
-          <p className="error">
+          <Alert variant="danger" title="需要登入">
             這頁需要 staff 登入才能查詢/下載。請先前往 <Link href={`/orgs/${params.orgId}/login`}>/login</Link>。
-          </p>
+          </Alert>
         </section>
       </div>
     );
@@ -224,83 +235,132 @@ export default function ZeroCirculationReportPage({ params }: { params: { orgId:
           {session.user.role}）
         </p>
 
-        {error ? <p className="error">錯誤：{error}</p> : null}
-        {success ? <p className="success">{success}</p> : null}
+        {error ? (
+          <Alert variant="danger" title="操作失敗">
+            {error}
+          </Alert>
+        ) : null}
+        {success ? <Alert variant="success" title={success} role="status" /> : null}
       </section>
 
       <section className="panel">
         <h2 style={{ marginTop: 0 }}>查詢條件</h2>
 
-        <form onSubmit={onSearch} className="stack" style={{ marginTop: 12 }}>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
-            <label>
-              from（本地時間顯示）
-              <input type="datetime-local" value={fromLocal} onChange={(e) => setFromLocal(e.target.value)} />
-            </label>
+        <Form onSubmit={onSearch} style={{ marginTop: 12 }}>
+          <FormSection title="條件" description="zero-circulation 會找出「期間內完全沒有借出」的書目清單。">
+            <div className="grid3">
+              <Field label="from（本地時間顯示）" htmlFor="zero_from">
+                <input
+                  id="zero_from"
+                  type="datetime-local"
+                  value={fromLocal}
+                  onChange={(e) => setFromLocal(e.target.value)}
+                />
+              </Field>
 
-            <label>
-              to（本地時間顯示）
-              <input type="datetime-local" value={toLocal} onChange={(e) => setToLocal(e.target.value)} />
-            </label>
+              <Field label="to（本地時間顯示）" htmlFor="zero_to">
+                <input id="zero_to" type="datetime-local" value={toLocal} onChange={(e) => setToLocal(e.target.value)} />
+              </Field>
 
-            <label>
-              limit（預設 200）
-              <input value={limit} onChange={(e) => setLimit(e.target.value)} />
-            </label>
-          </div>
+              <Field label="limit（預設 200）" htmlFor="zero_limit">
+                <input id="zero_limit" value={limit} onChange={(e) => setLimit(e.target.value)} />
+              </Field>
+            </div>
 
-          <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-            <button type="submit" disabled={loading}>
-              {loading ? '查詢中…' : '查詢'}
-            </button>
-            <button type="button" onClick={() => void onDownloadCsv()} disabled={downloading || loading}>
-              {downloading ? '下載中…' : '下載 CSV'}
-            </button>
-          </div>
-        </form>
+            <FormActions>
+              <button type="submit" className="btnPrimary" disabled={loading}>
+                {loading ? '查詢中…' : '查詢'}
+              </button>
+              <button type="button" className="btnSmall" onClick={() => void onDownloadCsv()} disabled={downloading || loading}>
+                {downloading ? '下載中…' : '下載 CSV'}
+              </button>
+            </FormActions>
+          </FormSection>
+        </Form>
       </section>
 
       <section className="panel">
         <h2 style={{ marginTop: 0 }}>結果</h2>
 
-        {loading ? <p className="muted">載入中…</p> : null}
-        {!loading && rows && rows.length === 0 ? <p className="muted">沒有資料（此期間內每本書都至少借出過一次）。</p> : null}
+        {loading && !rows ? <SkeletonTable columns={8} rows={8} /> : null}
+
+        {!loading && !rows ? <EmptyState title="尚未查詢" description="請先設定查詢條件後按「查詢」。" /> : null}
+
+        {!loading && rows && rows.length === 0 ? (
+          <EmptyState title="沒有資料" description="此期間內每本書都至少借出過一次。" />
+        ) : null}
 
         {!loading && rows && rows.length > 0 ? (
-          <div style={{ overflowX: 'auto' }}>
-            <table>
-              <thead>
-                <tr>
-                  <th>#</th>
-                  <th>title</th>
-                  <th>classification</th>
-                  <th>isbn</th>
-                  <th>total_items</th>
-                  <th>available_items</th>
-                  <th>last_checked_out_at</th>
-                  <th>bib</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((r, idx) => (
-                  <tr key={r.bibliographic_id}>
-                    <td>{idx + 1}</td>
-                    <td>
-                      <Link href={`/orgs/${params.orgId}/bibs/${r.bibliographic_id}`}>{r.bibliographic_title}</Link>
-                    </td>
-                    <td>{r.classification ?? ''}</td>
-                    <td>{r.isbn ?? ''}</td>
-                    <td>{r.total_items}</td>
-                    <td>{r.available_items}</td>
-                    <td>{r.last_checked_out_at ?? ''}</td>
-                    <td>
-                      <code style={{ fontSize: 12 }}>{r.bibliographic_id}</code>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <DataTable
+            rows={rows}
+            getRowKey={(r) => r.bibliographic_id}
+            initialSort={{ columnId: 'last_checked_out_at', direction: 'asc' }}
+            sortHint="本報表一次載入全部資料；排序會即時套用在目前結果。"
+            columns={[
+              {
+                id: 'rank',
+                header: '#（API rank）',
+                cell: (r) => <code>{rankByBibId.get(r.bibliographic_id) ?? '—'}</code>,
+                sortValue: (r) => rankByBibId.get(r.bibliographic_id) ?? 0,
+                align: 'right',
+                width: 120,
+              },
+              {
+                id: 'title',
+                header: 'title',
+                cell: (r) => (
+                  <Link href={`/orgs/${params.orgId}/bibs/${r.bibliographic_id}`}>
+                    <span style={{ fontWeight: 800 }}>{r.bibliographic_title}</span>
+                  </Link>
+                ),
+                sortValue: (r) => r.bibliographic_title,
+              },
+              {
+                id: 'classification',
+                header: 'classification',
+                cell: (r) => <span className="muted">{r.classification ?? '—'}</span>,
+                sortValue: (r) => r.classification ?? null,
+                width: 160,
+              },
+              {
+                id: 'isbn',
+                header: 'isbn',
+                cell: (r) => <span className="muted">{r.isbn ?? '—'}</span>,
+                sortValue: (r) => r.isbn ?? null,
+                width: 190,
+              },
+              {
+                id: 'total_items',
+                header: 'total_items',
+                cell: (r) => <code>{r.total_items}</code>,
+                sortValue: (r) => r.total_items,
+                align: 'right',
+                width: 140,
+              },
+              {
+                id: 'available_items',
+                header: 'available_items',
+                cell: (r) => <code>{r.available_items}</code>,
+                sortValue: (r) => r.available_items,
+                align: 'right',
+                width: 170,
+              },
+              {
+                id: 'last_checked_out_at',
+                header: 'last_checked_out_at',
+                cell: (r) => <code>{r.last_checked_out_at ?? '—'}</code>,
+                sortValue: (r) => r.last_checked_out_at,
+                width: 200,
+              },
+              {
+                id: 'bib',
+                header: 'bib',
+                cell: (r) => <code>{r.bibliographic_id}</code>,
+                sortValue: (r) => r.bibliographic_id,
+                width: 310,
+              },
+            ]}
+          />
         ) : null}
       </section>
     </div>

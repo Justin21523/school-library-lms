@@ -19,6 +19,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 
 import { clearStaffSession } from '../../../lib/staff-session';
+import { Alert } from '../../../components/ui/alert';
 
 export default function OrgLogoutPage({ params }: { params: { orgId: string } }) {
   const router = useRouter();
@@ -44,7 +45,9 @@ export default function OrgLogoutPage({ params }: { params: { orgId: string } })
         <h1 style={{ marginTop: 0 }}>Logout</h1>
 
         {done ? (
-          <p className="success">已清除 staff session，正在返回登入頁…</p>
+          <Alert variant="success" title="已登出" role="status">
+            已清除 staff session，正在返回登入頁…
+          </Alert>
         ) : (
           <p className="muted">登出中…</p>
         )}

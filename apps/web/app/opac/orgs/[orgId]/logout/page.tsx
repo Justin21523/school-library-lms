@@ -19,6 +19,8 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 
 import { clearOpacSession } from '../../../../lib/opac-session';
+import { Alert } from '../../../../components/ui/alert';
+import { PageHeader } from '../../../../components/ui/page-header';
 
 export default function OpacLogoutPage({ params }: { params: { orgId: string } }) {
   const router = useRouter();
@@ -40,17 +42,34 @@ export default function OpacLogoutPage({ params }: { params: { orgId: string } }
 
   return (
     <div className="stack">
-      <section className="panel">
-        <h1 style={{ marginTop: 0 }}>Logout</h1>
-
-        {done ? <p className="success">已清除 OPAC session，正在返回登入頁…</p> : <p className="muted">登出中…</p>}
-
-        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-          <Link href={`/opac/orgs/${params.orgId}/login`}>前往 Login</Link>
-          <Link href={`/opac/orgs/${params.orgId}`}>回到搜尋</Link>
-        </div>
-      </section>
+      <PageHeader
+        title="登出"
+        description={
+          <>
+            登出會清除瀏覽器中的 OPAC token（localStorage），讓 <code>/me/*</code> 端點回到「需要登入」狀態。
+          </>
+        }
+        actions={
+          <>
+            <Link className="btnSmall" href={`/opac/orgs/${params.orgId}`}>
+              回到搜尋
+            </Link>
+            <Link className="btnSmall" href={`/opac/orgs/${params.orgId}/login`}>
+              前往登入
+            </Link>
+          </>
+        }
+      >
+        {done ? (
+          <Alert variant="success" title="已登出" role="status">
+            已清除 OPAC session，正在返回登入頁…
+          </Alert>
+        ) : (
+          <Alert variant="info" title="登出中…" role="status">
+            正在清除 token…
+          </Alert>
+        )}
+      </PageHeader>
     </div>
   );
 }
-

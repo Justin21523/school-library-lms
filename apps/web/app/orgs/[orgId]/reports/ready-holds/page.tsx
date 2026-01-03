@@ -24,6 +24,12 @@ import Link from 'next/link';
 
 import type { Location, ReadyHoldsReportRow } from '../../../../lib/api';
 import { downloadReadyHoldsReportCsv, listLocations, listReadyHoldsReport } from '../../../../lib/api';
+import { Alert } from '../../../../components/ui/alert';
+import { DataTable } from '../../../../components/ui/data-table';
+import { EmptyState } from '../../../../components/ui/empty-state';
+import { Field, Form, FormActions, FormSection } from '../../../../components/ui/form';
+import { PageHeader, SectionHeader } from '../../../../components/ui/page-header';
+import { SkeletonTable } from '../../../../components/ui/skeleton';
 import { formatErrorMessage } from '../../../../lib/error';
 import { useStaffSession } from '../../../../lib/use-staff-session';
 
@@ -394,14 +400,18 @@ export default function ReadyHoldsReportPage({ params }: { params: { orgId: stri
     return rows.filter((r) => r.is_expired).length;
   }, [rows]);
 
+  const rankByHoldId = useMemo(() => {
+    // 與其他報表一致：把 API 回傳的原始順序固定成 rank，避免使用者切換排序後順位語意混亂。
+    const m = new Map<string, number>();
+    (rows ?? []).forEach((r, idx) => m.set(r.hold_id, idx + 1));
+    return m;
+  }, [rows]);
+
   // 登入門檻（放在所有 hooks 之後，避免違反 React hooks 規則）
   if (!sessionReady) {
     return (
       <div className="stack">
-        <section className="panel">
-          <h1 style={{ marginTop: 0 }}>Ready Holds</h1>
-          <p className="muted">載入登入狀態中…</p>
-        </section>
+        <PageHeader title="可取書預約（Ready Holds）" description="載入登入狀態中…" />
       </div>
     );
   }
@@ -409,155 +419,225 @@ export default function ReadyHoldsReportPage({ params }: { params: { orgId: stri
   if (!session) {
     return (
       <div className="stack">
-        <section className="panel">
-          <h1 style={{ marginTop: 0 }}>Ready Holds</h1>
-          <p className="error">
-            這頁需要 staff 登入才能查詢/下載/列印。請先前往{' '}
-            <Link href={`/orgs/${params.orgId}/login`}>/login</Link>。
-          </p>
-        </section>
+        <PageHeader
+          title="可取書預約（Ready Holds）"
+          description="這頁需要 staff 登入（StaffAuthGuard），才能查詢/下載/列印報表。"
+          actions={
+            <Link className="btnSmall btnPrimary" href={`/orgs/${params.orgId}/login`}>
+              前往登入
+            </Link>
+          }
+        >
+          <Alert variant="danger" title="需要登入">
+            這頁需要 staff 登入才能查詢/下載/列印。請先前往 <Link href={`/orgs/${params.orgId}/login`}>/login</Link>。
+          </Alert>
+        </PageHeader>
       </div>
     );
   }
 
   return (
     <div className="stack">
-      <section className="panel">
-        <h1 style={{ marginTop: 0 }}>Ready Holds</h1>
-
-        <p className="muted">
-          對應 API：<code>GET /api/v1/orgs/:orgId/reports/ready-holds</code>
-        </p>
-
-        <p className="muted">
+      <PageHeader
+        title="可取書預約（Ready Holds）"
+        description={
+          <>
+            對應 API：<code>GET /api/v1/orgs/:orgId/reports/ready-holds</code>
+          </>
+        }
+        actions={
+          <>
+            <Link className="btnSmall" href={`/orgs/${params.orgId}/holds`}>
+              Holds 工作台
+            </Link>
+            <Link className="btnSmall" href={`/orgs/${params.orgId}/holds/maintenance`}>
+              Holds Maintenance
+            </Link>
+            <Link className="btnSmall" href={`/orgs/${params.orgId}/reports/overdue`}>
+              Overdue
+            </Link>
+          </>
+        }
+      >
+        <div className="muted">
+          actor_user_id（查詢者）：<code>{session.user.id}</code>（{session.user.name} / {session.user.role}）
+        </div>
+        <Alert variant="info" title="提醒">
           若清單中出現「已過期」的 hold，代表它仍卡在 <code>status=ready</code>（尚未跑到期處理）。你可以到{' '}
           <Link href={`/orgs/${params.orgId}/holds/maintenance`}>Holds Maintenance</Link> 先 preview 再 apply。
-        </p>
+        </Alert>
+        {loadingLocations ? <Alert variant="info" title="載入 locations 中…" role="status" /> : null}
+        {error ? (
+          <Alert variant="danger" title="操作失敗">
+            {error}
+          </Alert>
+        ) : null}
+        {success ? <Alert variant="success" title={success} role="status" /> : null}
+      </PageHeader>
 
-        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-          <Link href={`/orgs/${params.orgId}/holds`}>→ Holds 工作台</Link>
-          <Link href={`/orgs/${params.orgId}/reports/overdue`}>→ Overdue Report</Link>
-        </div>
+      <section className="panel">
+        <SectionHeader title="查詢" description="as_of 以本地時間顯示；送出時轉成 ISO（UTC）供後端推導逾期/剩餘天數。" />
 
-        <hr style={{ border: 0, borderTop: '1px solid var(--border)', margin: '16px 0' }} />
+        <Form onSubmit={onSearch} style={{ marginTop: 12 }}>
+          <FormSection title="條件" description="as_of 以本地時間顯示，送出時會轉成 ISO（UTC）給後端推導逾期/剩餘天數。">
+            <div className="grid3">
+              <Field label="as_of（基準時間，本地時間顯示）" htmlFor="ready_as_of">
+                <input
+                  id="ready_as_of"
+                  type="datetime-local"
+                  value={asOfLocal}
+                  onChange={(e) => setAsOfLocal(e.target.value)}
+                />
+              </Field>
 
-        <p className="muted">
-          actor_user_id（查詢者）已鎖定為：<code>{session.user.id}</code>（{session.user.name} /{' '}
-          {session.user.role}）
-        </p>
+              <Field
+                label="pickup_location_id（取書地點）"
+                htmlFor="ready_pickup_location_id"
+                hint={activeLocations.length === 0 ? '尚未建立可用 location；可先到 Locations 建立。' : undefined}
+              >
+                <select
+                  id="ready_pickup_location_id"
+                  value={pickupLocationId}
+                  onChange={(e) => setPickupLocationId(e.target.value)}
+                >
+                  <option value="">（全部）</option>
+                  {activeLocations.map((loc) => (
+                    <option key={loc.id} value={loc.id}>
+                      {loc.name} ({loc.code})
+                    </option>
+                  ))}
+                </select>
+              </Field>
 
-        {loadingLocations ? <p className="muted">載入 locations 中…</p> : null}
-        {error ? <p className="error">錯誤：{error}</p> : null}
-        {success ? <p className="success">{success}</p> : null}
+              <Field label="limit（預設 200）" htmlFor="ready_limit">
+                <input id="ready_limit" value={limit} onChange={(e) => setLimit(e.target.value)} />
+              </Field>
+            </div>
+
+            <FormActions>
+              <button type="submit" className="btnPrimary" disabled={loading}>
+                {loading ? '查詢中…' : '查詢'}
+              </button>
+              <button type="button" className="btnSmall" onClick={() => void onDownloadCsv()} disabled={downloading || loading}>
+                {downloading ? '下載中…' : '下載 CSV'}
+              </button>
+              <button type="button" className="btnPrimary" onClick={() => void onPrintSlips()} disabled={printing || loading || downloading}>
+                {printing ? '產生列印中…' : '列印小條'}
+              </button>
+            </FormActions>
+          </FormSection>
+        </Form>
       </section>
 
       <section className="panel">
-        <h2 style={{ marginTop: 0 }}>查詢條件</h2>
+        <SectionHeader title="結果" description={rows ? `count=${rows.length} · expired=${expiredCount}` : undefined} />
 
-        <form onSubmit={onSearch} className="stack" style={{ marginTop: 12 }}>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
-            <label>
-              as_of（基準時間，本地時間顯示）
-              <input type="datetime-local" value={asOfLocal} onChange={(e) => setAsOfLocal(e.target.value)} />
-            </label>
+        {loading && !rows ? <SkeletonTable columns={8} rows={8} /> : null}
 
-            <label>
-              pickup_location_id（取書地點）
-              <select value={pickupLocationId} onChange={(e) => setPickupLocationId(e.target.value)}>
-                <option value="">（全部）</option>
-                {activeLocations.map((loc) => (
-                  <option key={loc.id} value={loc.id}>
-                    {loc.name} ({loc.code})
-                  </option>
-                ))}
-              </select>
-            </label>
+        {!loading && !rows ? <EmptyState title="尚未查詢" description="請先設定查詢條件後按「查詢」。" /> : null}
 
-            <label>
-              limit（預設 200）
-              <input value={limit} onChange={(e) => setLimit(e.target.value)} />
-            </label>
-          </div>
-
-          <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-            <button type="submit" disabled={loading}>
-              {loading ? '查詢中…' : '查詢'}
-            </button>
-            <button type="button" onClick={() => void onDownloadCsv()} disabled={downloading || loading}>
-              {downloading ? '下載中…' : '下載 CSV'}
-            </button>
-            <button type="button" onClick={() => void onPrintSlips()} disabled={printing || loading || downloading}>
-              {printing ? '產生列印中…' : '列印小條'}
-            </button>
-          </div>
-        </form>
-      </section>
-
-      <section className="panel">
-        <h2 style={{ marginTop: 0 }}>結果</h2>
-
-        {loading ? <p className="muted">載入中…</p> : null}
-        {!loading && rows && rows.length === 0 ? <p className="muted">沒有資料。</p> : null}
+        {!loading && rows && rows.length === 0 ? <EmptyState title="沒有資料" description="目前沒有 ready holds。" /> : null}
 
         {!loading && rows && rows.length > 0 ? (
-          <>
-            <p className="muted">
-              count={rows.length} · expired={expiredCount}
-            </p>
-
-            <div style={{ overflowX: 'auto' }}>
-              <table>
-                <thead>
-                  <tr>
-                    <th>#</th>
-                    <th>pickup</th>
-                    <th>title</th>
-                    <th>borrower</th>
-                    <th>item</th>
-                    <th>ready_until</th>
-                    <th>days</th>
-                    <th>hold_id</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {rows.map((r, idx) => (
-                    <tr key={r.hold_id}>
-                      <td>{idx + 1}</td>
-                      <td>
-                        {r.pickup_location_name} ({r.pickup_location_code})
-                      </td>
-                      <td>
-                        <Link href={`/orgs/${params.orgId}/bibs/${r.bibliographic_id}`}>{r.bibliographic_title}</Link>
-                      </td>
-                      <td>
-                        {r.user_name} ({r.user_external_id})
-                        {r.user_org_unit ? <span className="muted"> · {r.user_org_unit}</span> : null}
-                      </td>
-                      <td>
+          <div className="stack" style={{ marginTop: 12 }}>
+            <DataTable<ReadyHoldsReportRow>
+              rows={rows}
+              getRowKey={(r) => r.hold_id}
+              initialSort={{ columnId: 'rank', direction: 'asc' }}
+              sortHint="本報表一次載入全部資料；排序會即時套用在目前結果。"
+              columns={[
+                {
+                  id: 'rank',
+                  header: '#（API rank）',
+                  cell: (r) => <code>{rankByHoldId.get(r.hold_id) ?? '—'}</code>,
+                  sortValue: (r) => rankByHoldId.get(r.hold_id) ?? 0,
+                  align: 'right',
+                  width: 120,
+                },
+                {
+                  id: 'pickup',
+                  header: 'pickup',
+                  cell: (r) => (
+                    <span className="muted">
+                      {r.pickup_location_name} ({r.pickup_location_code})
+                    </span>
+                  ),
+                  sortValue: (r) => `${r.pickup_location_code} ${r.pickup_location_name}`,
+                  width: 200,
+                },
+                {
+                  id: 'title',
+                  header: 'title',
+                  cell: (r) => (
+                    <Link href={`/orgs/${params.orgId}/bibs/${r.bibliographic_id}`}>
+                      <span style={{ fontWeight: 800 }}>{r.bibliographic_title}</span>
+                    </Link>
+                  ),
+                  sortValue: (r) => r.bibliographic_title,
+                },
+                {
+                  id: 'borrower',
+                  header: 'borrower',
+                  cell: (r) => (
+                    <div style={{ display: 'grid', gap: 2 }}>
+                      <div>
+                        {r.user_name} <span className="muted">({r.user_external_id})</span>
+                      </div>
+                      {r.user_org_unit ? <div className="muted">{r.user_org_unit}</div> : <div className="muted">—</div>}
+                    </div>
+                  ),
+                  sortValue: (r) => r.user_external_id,
+                  width: 220,
+                },
+                {
+                  id: 'item',
+                  header: 'item',
+                  cell: (r) => (
+                    <div style={{ display: 'grid', gap: 2 }}>
+                      <div>
                         {r.assigned_item_id && r.assigned_item_barcode ? (
-                          <Link href={`/orgs/${params.orgId}/items/${r.assigned_item_id}`}>
-                            {r.assigned_item_barcode}
-                          </Link>
+                          <Link href={`/orgs/${params.orgId}/items/${r.assigned_item_id}`}>{r.assigned_item_barcode}</Link>
                         ) : r.assigned_item_barcode ? (
                           <span>{r.assigned_item_barcode}</span>
                         ) : (
                           <span className="muted">（no item）</span>
                         )}
-                        {r.assigned_item_call_number ? (
-                          <span className="muted"> · {r.assigned_item_call_number}</span>
-                        ) : null}
-                      </td>
-                      <td>{r.ready_until ?? ''}</td>
-                      <td className={r.is_expired ? 'error' : ''}>{formatDaysLabel(r.days_until_expire)}</td>
-                      <td>
-                        <code style={{ fontSize: 12 }}>{r.hold_id}</code>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </>
+                      </div>
+                      <div className="muted">{r.assigned_item_call_number ?? '—'}</div>
+                    </div>
+                  ),
+                  sortValue: (r) => r.assigned_item_barcode ?? '',
+                  width: 200,
+                },
+                {
+                  id: 'ready_until',
+                  header: 'ready_until',
+                  cell: (r) => <code>{r.ready_until ?? '—'}</code>,
+                  sortValue: (r) => r.ready_until ?? '',
+                  width: 210,
+                },
+                {
+                  id: 'days',
+                  header: 'days',
+                  cell: (r) => (
+                    <span className={['badge', r.is_expired ? 'badge--danger' : r.days_until_expire === 0 ? 'badge--warning' : 'badge--info'].join(' ')}>
+                      {formatDaysLabel(r.days_until_expire)}
+                    </span>
+                  ),
+                  sortValue: (r) => (r.days_until_expire ?? 999999),
+                  align: 'right',
+                  width: 160,
+                },
+                {
+                  id: 'hold_id',
+                  header: 'hold_id',
+                  cell: (r) => <code>{r.hold_id}</code>,
+                  sortValue: (r) => r.hold_id,
+                  width: 310,
+                },
+              ]}
+            />
+          </div>
         ) : null}
       </section>
     </div>

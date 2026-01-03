@@ -23,6 +23,11 @@ import Link from 'next/link';
 
 import type { BackfillBibGenreTermsApplyResult, BackfillBibGenreTermsPreviewResult } from '../../../../../lib/api';
 import { applyBackfillBibGenreTerms, previewBackfillBibGenreTerms } from '../../../../../lib/api';
+import { Alert } from '../../../../../components/ui/alert';
+import { EmptyState } from '../../../../../components/ui/empty-state';
+import { Field, Form, FormActions, FormSection } from '../../../../../components/ui/form';
+import { PageHeader, SectionHeader } from '../../../../../components/ui/page-header';
+import { SkeletonText } from '../../../../../components/ui/skeleton';
 import { formatErrorMessage } from '../../../../../lib/error';
 import { useStaffSession } from '../../../../../lib/use-staff-session';
 
@@ -85,10 +90,7 @@ export default function BackfillBibGenreTermsPage({ params }: { params: { orgId:
   if (!sessionReady) {
     return (
       <div className="stack">
-        <section className="panel">
-          <h1 style={{ marginTop: 0 }}>Bibs Genre Backfill</h1>
-          <p className="muted">載入登入狀態中…</p>
-        </section>
+        <PageHeader title="Bibs Genre Backfill" description="載入登入狀態中…" />
       </div>
     );
   }
@@ -96,12 +98,11 @@ export default function BackfillBibGenreTermsPage({ params }: { params: { orgId:
   if (!session) {
     return (
       <div className="stack">
-        <section className="panel">
-          <h1 style={{ marginTop: 0 }}>Bibs Genre Backfill</h1>
-          <p className="error">
-            這頁需要 staff 登入才能操作。請先前往 <Link href={`/orgs/${params.orgId}/login`}>/login</Link>。
-          </p>
-        </section>
+        <PageHeader title="Bibs Genre Backfill" description="這頁需要 staff 登入才能操作。">
+          <Alert variant="danger" title="需要登入">
+            請先前往 <Link href={`/orgs/${params.orgId}/login`}>/login</Link>。
+          </Alert>
+        </PageHeader>
       </div>
     );
   }
@@ -186,186 +187,235 @@ export default function BackfillBibGenreTermsPage({ params }: { params: { orgId:
 
   return (
     <div className="stack">
+      <PageHeader
+        title="Bibs Genre Backfill（655）"
+        description={
+          <>
+            把既有 <code>genres(text[])</code>（MARC 655）回填成 <code>genre_term_ids</code>（term_id-driven）。完成後，書目編目與檢索才可以完全以 term 為準。
+          </>
+        }
+        actions={
+          <>
+            <Link className="btnSmall" href={`/orgs/${params.orgId}/bibs`}>
+              Bibs
+            </Link>
+            <Link className="btnSmall" href={`/orgs/${params.orgId}/authority`}>
+              Authority 主控
+            </Link>
+            <Link className="btnSmall" href={`/orgs/${params.orgId}/audit-events`}>
+              Audit
+            </Link>
+          </>
+        }
+      >
+        <div className="muted" style={{ display: 'grid', gap: 4 }}>
+          <div>
+            actor_user_id（操作者）已鎖定為：<code>{session.user.id}</code>（{session.user.name} / {session.user.role}）
+          </div>
+        </div>
+
+        <Alert variant="warning" title="preview 提醒">
+          preview 會在 transaction 內實跑寫入再 ROLLBACK，因此 auto-created term 的 <code>id</code> 只是「預覽用」，apply 時會重新產生；治理（merge/redirect）請以 apply 後的 term id 為準。
+        </Alert>
+
+        {previewing || applying ? <Alert variant="info" title={previewing ? '預覽中…' : '套用中…'} role="status" /> : null}
+        {previewing && !preview ? <SkeletonText lines={3} /> : null}
+
+        {error ? (
+          <Alert variant="danger" title="操作失敗">
+            {error}
+          </Alert>
+        ) : null}
+        {success ? <Alert variant="success" title={success} role="status" /> : null}
+      </PageHeader>
+
       <section className="panel">
-        <h1 style={{ marginTop: 0 }}>Bibs Genre Backfill（655）</h1>
-        <p className="muted">
-          這頁用於把既有 <code>genres(text[])</code>（MARC 655）回填成 <code>genre_term_ids</code>（term_id-driven）。完成後，
-          書目編目與檢索才可以完全以 term 為準。
-        </p>
+        <SectionHeader title="參數" description="建議先 preview，再逐批 apply；可用 next_cursor 接續下一批。" />
+        <Form onSubmit={(e) => e.preventDefault()}>
+          <FormSection title="參數" description="建議先 preview，再逐批 apply；可用 next_cursor 接續下一批。">
+            <div className="grid2">
+              <Field label="limit（一次最多掃/處理幾筆；1..500）" htmlFor="genre_limit">
+                <input id="genre_limit" value={limit} onChange={(e) => setLimit(e.target.value)} />
+              </Field>
 
-        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-          <Link href={`/orgs/${params.orgId}/bibs`}>← 回 Bibs</Link>
-          <Link href={`/orgs/${params.orgId}/authority-terms`}>Authority / Vocabulary</Link>
-          <Link href={`/orgs/${params.orgId}/audit-events`}>Audit Events</Link>
-        </div>
+              <Field label="cursor（選填；接續下一批）" htmlFor="genre_cursor" hint="留空代表從最新開始；可貼上 API 回傳的 next_cursor。">
+                <input
+                  id="genre_cursor"
+                  value={cursor}
+                  onChange={(e) => setCursor(e.target.value)}
+                  placeholder="（可貼上 API 回傳的 next_cursor）"
+                />
+              </Field>
+            </div>
 
-        <hr style={{ border: 0, borderTop: '1px solid var(--border)', margin: '16px 0' }} />
+            <Field label="only_missing" htmlFor="genre_only_missing" hint="只處理 link table 目前為空的書目；migration 建議保持勾選。">
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                <input
+                  id="genre_only_missing"
+                  type="checkbox"
+                  checked={onlyMissing}
+                  onChange={(e) => setOnlyMissing(e.target.checked)}
+                />
+                <span className="muted">only_missing</span>
+              </div>
+            </Field>
 
-        <p className="muted">
-          actor_user_id（操作者）已鎖定為：<code>{session.user.id}</code>（{session.user.name} / {session.user.role}）
-        </p>
+            <div className="grid2">
+              <Field label="vocabulary_code_for_new（自動建立 local term 用）" htmlFor="genre_vocabulary_code_for_new">
+                <input
+                  id="genre_vocabulary_code_for_new"
+                  value={vocabularyCodeForNew}
+                  onChange={(e) => setVocabularyCodeForNew(e.target.value)}
+                />
+              </Field>
+              <Field label="source_for_new（追溯用；寫入 authority_terms.source）" htmlFor="genre_source_for_new">
+                <input id="genre_source_for_new" value={sourceForNew} onChange={(e) => setSourceForNew(e.target.value)} />
+              </Field>
+            </div>
 
-        <div className="callout warn" style={{ marginTop: 12 }}>
-          <div className="muted">
-            <strong>preview 提醒：</strong>preview 會在 transaction 內實跑寫入再 ROLLBACK，因此 auto-created term 的{' '}
-            <code>id</code> 只是「預覽用」，apply 時會重新產生；治理（merge/redirect）請以 apply 後的 term id 為準。
-          </div>
-        </div>
+            <Field
+              label="prefer_vocabulary_codes（選填；用於消歧）"
+              htmlFor="genre_prefer_vocabulary_codes"
+              hint="可用換行或逗號分隔（例：builtin-zh,local）。"
+            >
+              <textarea
+                id="genre_prefer_vocabulary_codes"
+                value={preferVocabularyCodesText}
+                onChange={(e) => setPreferVocabularyCodesText(e.target.value)}
+                rows={3}
+                placeholder="例：builtin-zh\nlocal"
+              />
+            </Field>
 
-        <div style={{ display: 'grid', gap: 12, marginTop: 12 }}>
-          <label>
-            limit（一次最多掃/處理幾筆；1..500）
-            <input value={limit} onChange={(e) => setLimit(e.target.value)} />
-          </label>
+            <Field label="note（選填；寫入 audit metadata）" htmlFor="genre_note" hint="例：第一次 migration / 手動補跑某批">
+              <input
+                id="genre_note"
+                value={note}
+                onChange={(e) => setNote(e.target.value)}
+                placeholder="例：第一次 migration / 手動補跑某批"
+              />
+            </Field>
 
-          <label>
-            cursor（選填；接續下一批；留空代表從最新開始）
-            <input value={cursor} onChange={(e) => setCursor(e.target.value)} placeholder="（可貼上 API 回傳的 next_cursor）" />
-          </label>
-
-          <label style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-            <input type="checkbox" checked={onlyMissing} onChange={(e) => setOnlyMissing(e.target.checked)} />
-            only_missing（只處理 link table 目前為空的書目；migration 建議保持勾選）
-          </label>
-
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-            <label>
-              vocabulary_code_for_new（自動建立 local term 用）
-              <input value={vocabularyCodeForNew} onChange={(e) => setVocabularyCodeForNew(e.target.value)} />
-            </label>
-            <label>
-              source_for_new（追溯用；寫入 authority_terms.source）
-              <input value={sourceForNew} onChange={(e) => setSourceForNew(e.target.value)} />
-            </label>
-          </div>
-
-          <label>
-            prefer_vocabulary_codes（選填；用於消歧；可用換行或逗號）
-            <textarea
-              value={preferVocabularyCodesText}
-              onChange={(e) => setPreferVocabularyCodesText(e.target.value)}
-              rows={3}
-              placeholder="例：builtin-zh\nlocal"
-            />
-          </label>
-
-          <label>
-            note（選填；寫入 audit metadata）
-            <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="例：第一次 migration / 手動補跑某批" />
-          </label>
-        </div>
-
-        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 12 }}>
-          <button type="button" onClick={() => void runPreview()} disabled={previewing}>
-            {previewing ? '預覽中…' : '預覽（Preview）'}
-          </button>
-          <button type="button" onClick={() => void runApply()} disabled={applying}>
-            {applying ? '套用中…' : '套用（Apply）'}
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              setPreview(null);
-              setApplyResult(null);
-              setError(null);
-              setSuccess(null);
-            }}
-            disabled={previewing || applying}
-          >
-            清除結果
-          </button>
-        </div>
-
-        {error ? <p className="error" style={{ marginTop: 12 }}>錯誤：{error}</p> : null}
-        {success ? <p className="success" style={{ marginTop: 12 }}>{success}</p> : null}
+            <FormActions>
+              <button type="button" className="btnPrimary" onClick={() => void runPreview()} disabled={previewing || applying}>
+                {previewing ? '預覽中…' : '預覽（Preview）'}
+              </button>
+              <button type="button" className="btnDanger" onClick={() => void runApply()} disabled={applying || previewing}>
+                {applying ? '套用中…' : '套用（Apply）'}
+              </button>
+              <button
+                type="button"
+                className="btnSmall"
+                onClick={() => {
+                  setPreview(null);
+                  setApplyResult(null);
+                  setError(null);
+                  setSuccess(null);
+                }}
+                disabled={previewing || applying}
+              >
+                清除結果
+              </button>
+            </FormActions>
+          </FormSection>
+        </Form>
       </section>
 
-      {result ? (
-        <section className="panel">
-          <h2 style={{ marginTop: 0 }}>結果</h2>
+      <section className="panel">
+        <SectionHeader title="結果" description="Preview：實跑寫入再 rollback；Apply：寫入 junction table 並更新 bib 正規化字串。" />
 
-          <div className="muted" style={{ display: 'grid', gap: 4 }}>
-            <div>
-              mode：<code>{result.mode}</code>
-            </div>
-            {'audit_event_id' in result ? (
+        {!result ? (
+          <EmptyState title="尚無結果" description="先在上方設定參數後執行 Preview 或 Apply。" />
+        ) : (
+          <>
+            <div className="muted" style={{ display: 'grid', gap: 4 }}>
               <div>
-                audit_event_id：<code>{result.audit_event_id}</code>
+                mode：<code>{result.mode}</code>
               </div>
-            ) : null}
-            <div>
-              next_cursor：<code>{result.next_cursor ?? '(none)'}</code>
-            </div>
-          </div>
-
-          <div className="callout" style={{ marginTop: 12 }}>
-            <div className="muted">
-              scanned={result.summary.scanned} · would_update={result.summary.would_update} · skipped_invalid=
-              {result.summary.skipped_invalid} · no_genres={result.summary.no_genres}
-            </div>
-            <div className="muted" style={{ marginTop: 6 }}>
-              labels：matched_preferred={result.summary.labels.matched_preferred} · matched_variant=
-              {result.summary.labels.matched_variant} · auto_created={result.summary.labels.auto_created} · ambiguous_auto_created=
-              {result.summary.labels.ambiguous_auto_created} · unmatched={result.summary.labels.unmatched} · skipped_blank=
-              {result.summary.labels.skipped_blank}
-            </div>
-          </div>
-
-          <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 12 }}>
-            <button
-              type="button"
-              onClick={() =>
-                downloadText(
-                  `genre-backfill-${params.orgId}-${result.mode}.json`,
-                  JSON.stringify(result, null, 2),
-                  'application/json;charset=utf-8',
-                )
-              }
-            >
-              下載 JSON 報表
-            </button>
-            {result.next_cursor ? (
-              <button type="button" onClick={() => setCursor(result.next_cursor ?? '')}>
-                將 next_cursor 填入輸入框
-              </button>
-            ) : null}
-          </div>
-
-          <div className="stack" style={{ marginTop: 12 }}>
-            {result.rows.map((r) => (
-              <div key={r.bibliographic_id} className="callout">
-                <div style={{ display: 'grid', gap: 6 }}>
-                  <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
-                    <div style={{ fontWeight: 700 }}>{r.title}</div>
-                    <span className="muted">
-                      bibId=<code>{r.bibliographic_id}</code>
-                    </span>
-                    <span className="muted">
-                      status=<code>{r.status}</code>
-                    </span>
-                    <Link href={`/orgs/${params.orgId}/bibs/${r.bibliographic_id}`}>開啟書目</Link>
-                  </div>
-
-                  <div className="muted">
-                    before：{r.genres_before.filter(Boolean).length > 0 ? r.genres_before.filter(Boolean).join(' · ') : '(none)'}
-                  </div>
-                  <div className="muted">
-                    after：{r.genres_after && r.genres_after.length > 0 ? r.genres_after.join(' · ') : '(unchanged)'}
-                  </div>
-
-                  <details>
-                    <summary className="muted">檢視 decisions（label-level 報表）</summary>
-                    <pre style={{ whiteSpace: 'pre-wrap', margin: 0, marginTop: 8 }}>
-                      {JSON.stringify(r.decisions, null, 2)}
-                    </pre>
-                  </details>
+              {'audit_event_id' in result ? (
+                <div>
+                  audit_event_id：<code>{result.audit_event_id}</code>
                 </div>
+              ) : null}
+              <div>
+                next_cursor：<code>{result.next_cursor ?? '(none)'}</code>
               </div>
-            ))}
-          </div>
-        </section>
-      ) : null}
+            </div>
+
+            <Alert variant="info" title="摘要" role="status">
+              <div>
+                scanned=<code>{result.summary.scanned}</code> · would_update=<code>{result.summary.would_update}</code> · skipped_invalid=
+                <code>{result.summary.skipped_invalid}</code> · no_genres=<code>{result.summary.no_genres}</code>
+              </div>
+              <div style={{ marginTop: 6 }}>
+                labels：matched_preferred=<code>{result.summary.labels.matched_preferred}</code> · matched_variant=
+                <code>{result.summary.labels.matched_variant}</code> · auto_created=<code>{result.summary.labels.auto_created}</code> ·
+                ambiguous_auto_created=<code>{result.summary.labels.ambiguous_auto_created}</code> · unmatched=
+                <code>{result.summary.labels.unmatched}</code> · skipped_blank=<code>{result.summary.labels.skipped_blank}</code>
+              </div>
+            </Alert>
+
+            <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 12 }}>
+              <button
+                type="button"
+                className="btnSmall"
+                onClick={() =>
+                  downloadText(
+                    `genre-backfill-${params.orgId}-${result.mode}.json`,
+                    JSON.stringify(result, null, 2),
+                    'application/json;charset=utf-8',
+                  )
+                }
+              >
+                下載 JSON 報表
+              </button>
+              {result.next_cursor ? (
+                <button type="button" className="btnSmall" onClick={() => setCursor(result.next_cursor ?? '')}>
+                  將 next_cursor 填入輸入框
+                </button>
+              ) : null}
+            </div>
+
+            {result.rows.length === 0 ? (
+              <EmptyState title="本批次沒有列出任何書目" description="可能沒有候選、或都被 skipped/無 genres。" />
+            ) : (
+              <div className="stack" style={{ marginTop: 12 }}>
+                {result.rows.map((r) => (
+                  <div key={r.bibliographic_id} className="callout">
+                    <div style={{ display: 'grid', gap: 6 }}>
+                      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
+                        <div style={{ fontWeight: 700 }}>{r.title}</div>
+                        <span className="muted">
+                          bibId=<code>{r.bibliographic_id}</code>
+                        </span>
+                        <span className="muted">
+                          status=<code>{r.status}</code>
+                        </span>
+                        <Link href={`/orgs/${params.orgId}/bibs/${r.bibliographic_id}`}>開啟書目</Link>
+                      </div>
+
+                      <div className="muted">
+                        before：
+                        {r.genres_before.filter(Boolean).length > 0 ? r.genres_before.filter(Boolean).join(' · ') : '(none)'}
+                      </div>
+                      <div className="muted">
+                        after：{r.genres_after && r.genres_after.length > 0 ? r.genres_after.join(' · ') : '(unchanged)'}
+                      </div>
+
+                      <details>
+                        <summary className="muted">檢視 decisions（label-level 報表）</summary>
+                        <pre style={{ whiteSpace: 'pre-wrap', margin: 0, marginTop: 8 }}>
+                          {JSON.stringify(r.decisions, null, 2)}
+                        </pre>
+                      </details>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </>
+        )}
+      </section>
     </div>
   );
 }
-

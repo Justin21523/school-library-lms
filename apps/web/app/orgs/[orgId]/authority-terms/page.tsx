@@ -36,6 +36,13 @@ import { useSearchParams } from 'next/navigation';
 
 import type { AuthorityTerm } from '../../../lib/api';
 import { createAuthorityTerm, listAuthorityTerms, updateAuthorityTerm } from '../../../lib/api';
+import { Alert } from '../../../components/ui/alert';
+import { CursorPagination } from '../../../components/ui/cursor-pagination';
+import { DataTable } from '../../../components/ui/data-table';
+import { EmptyState } from '../../../components/ui/empty-state';
+import { Field, Form, FormActions, FormSection } from '../../../components/ui/form';
+import { PageHeader, SectionHeader } from '../../../components/ui/page-header';
+import { SkeletonTable } from '../../../components/ui/skeleton';
 import { formatErrorMessage } from '../../../lib/error';
 import { useStaffSession } from '../../../lib/use-staff-session';
 
@@ -102,6 +109,12 @@ export default function AuthorityTermsPage({ params }: { params: { orgId: string
     if (!Number.isFinite(n) || n <= 0) return 200;
     return Math.min(n, 500);
   }, [limit]);
+
+  // thesaurus links：
+  // - BT/NT/RT 目前只支援 subject/geographic/genre（對齊 650/651/655）
+  // - vocabulary_code 若未指定，thesaurus 頁會預設 builtin-zh（這裡也用同樣策略做連結）
+  const thesaurusKind = kind === 'subject' || kind === 'geographic' || kind === 'genre' ? kind : null;
+  const thesaurusVocabularyCode = vocabularyCode.trim() || 'builtin-zh';
 
   async function refresh() {
     setLoading(true);
@@ -287,14 +300,18 @@ export default function AuthorityTermsPage({ params }: { params: { orgId: string
     }
   }
 
+  function statusBadgeVariant(s: AuthorityTerm['status']): 'success' | 'danger' {
+    // 這裡的顏色不是「規則」本身，而是治理 UI 的掃描輔助：
+    // - active：可用（綠）
+    // - inactive：停用/不建議用（紅）
+    return s === 'active' ? 'success' : 'danger';
+  }
+
   // Login gate
   if (!sessionReady) {
     return (
       <div className="stack">
-        <section className="panel">
-          <h1 style={{ marginTop: 0 }}>Authority Terms</h1>
-          <p className="muted">載入登入狀態中…</p>
-        </section>
+        <PageHeader title="Authority Terms" description="載入登入狀態中…" />
       </div>
     );
   }
@@ -302,219 +319,457 @@ export default function AuthorityTermsPage({ params }: { params: { orgId: string
   if (!session) {
     return (
       <div className="stack">
-        <section className="panel">
-          <h1 style={{ marginTop: 0 }}>Authority Terms</h1>
-          <p className="muted">
+        <PageHeader
+          title="Authority Terms"
+          description="這頁需要 staff 登入（StaffAuthGuard），才能治理權威詞主檔。"
+          actions={
+            <Link className="btnSmall btnPrimary" href={`/orgs/${params.orgId}/login`}>
+              前往登入
+            </Link>
+          }
+        >
+          <Alert variant="danger" title="需要登入">
             這頁需要 staff 登入。請先前往 <Link href={`/orgs/${params.orgId}/login`}>/login</Link>。
-          </p>
-        </section>
+          </Alert>
+        </PageHeader>
       </div>
     );
   }
 
   return (
     <div className="stack">
-      <section className="panel">
-        <h1 style={{ marginTop: 0 }}>Authority / Vocabulary（v0）</h1>
-        <p className="muted">
-          先把「姓名/主題詞」做成可治理的主檔，讓後續 MARC 匯入、authority linking、thesaurus 都有落地點。
-        </p>
-        <p className="muted">
-          API：<code>GET/POST/PATCH /api/v1/orgs/:orgId/authority-terms</code>
-        </p>
-
-        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 12 }}>
-          <Link href={`/orgs/${params.orgId}/authority`}>Authority Control（主控入口）</Link>
-          <Link href={`/orgs/${params.orgId}/authority-terms/thesaurus`}>Thesaurus Browser</Link>
-          <Link href={`/orgs/${params.orgId}/authority-terms/thesaurus/quality`}>Thesaurus Quality</Link>
-          <Link href={`/orgs/${params.orgId}/authority-terms/thesaurus/visual`}>Thesaurus Visual Editor</Link>
-        </div>
-
-        <div className="muted" style={{ display: 'grid', gap: 4, marginTop: 8 }}>
-          <div>
-            orgId：<code>{params.orgId}</code>
+      <PageHeader
+        title="Authority Terms（權威詞主檔）"
+        description={
+          <>
+            這裡是 controlled vocabulary 的「單一真相來源」：term-based 編目、thesaurus、MARC $0 linking、backfill 都會以此為準。
+            <br />
+            API：<code>GET/POST/PATCH /api/v1/orgs/:orgId/authority-terms</code>
+          </>
+        }
+        actions={
+          <>
+            <Link className="btnSmall" href={`/orgs/${params.orgId}/authority`}>
+              主控入口
+            </Link>
+            <Link className="btnSmall btnPrimary" href="#create">
+              新增款目
+            </Link>
+            <Link className="btnSmall" href={`/orgs/${params.orgId}`}>
+              Dashboard
+            </Link>
+          </>
+        }
+      >
+        <div className="grid3">
+          <div className="callout">
+            <div className="muted">orgId</div>
+            <div style={{ fontFamily: 'var(--font-mono)' }}>{params.orgId}</div>
+          </div>
+          <div className="callout">
+            <div className="muted">登入者</div>
+            <div style={{ fontWeight: 900 }}>{session.user.name}</div>
+            <div className="muted">{session.user.role}</div>
+          </div>
+          <div className="callout">
+            <div className="muted">目前範圍</div>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+              <span className="badge badge--info">{kind}</span>
+              <span
+                className={[
+                  'badge',
+                  status === 'active' ? 'badge--success' : status === 'inactive' ? 'badge--danger' : 'badge--info',
+                ].join(' ')}
+              >
+                {status}
+              </span>
+              <span className="muted">{vocabularyCode.trim() ? `vocab=${vocabularyCode.trim()}` : 'vocab=all'}</span>
+            </div>
           </div>
         </div>
 
-        {loading ? <p className="muted">載入中…</p> : null}
-        {error ? <p className="error">錯誤：{error}</p> : null}
-        {success ? <p className="success">{success}</p> : null}
-      </section>
-
-      <section className="panel">
-        <h2 style={{ marginTop: 0 }}>搜尋/篩選</h2>
-
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-          <label>
-            kind（款目類型）
-            <select value={kind} onChange={(e) => setKind(e.target.value as AuthorityTerm['kind'])}>
-              <option value="subject">subject（主題詞）</option>
-              <option value="name">name（姓名）</option>
-              <option value="geographic">geographic（地理名稱）</option>
-              <option value="genre">genre（類型/體裁）</option>
-              <option value="language">language（語言）</option>
-              <option value="relator">relator（關係/角色）</option>
-            </select>
-          </label>
-
-          <label>
-            status
-            <select value={status} onChange={(e) => setStatus(e.target.value as any)}>
-              <option value="active">active（只看啟用）</option>
-              <option value="inactive">inactive（只看停用）</option>
-              <option value="all">all（全部）</option>
-            </select>
-          </label>
+        <div className="toolbar">
+          <div className="toolbarLeft">
+            {thesaurusKind ? (
+              <>
+                <Link
+                  className="btnSmall"
+                  href={`/orgs/${params.orgId}/authority-terms/thesaurus?kind=${encodeURIComponent(thesaurusKind)}&vocabulary_code=${encodeURIComponent(
+                    thesaurusVocabularyCode,
+                  )}`}
+                >
+                  Thesaurus Browser
+                </Link>
+                <Link
+                  className="btnSmall"
+                  href={`/orgs/${params.orgId}/authority-terms/thesaurus/quality?kind=${encodeURIComponent(thesaurusKind)}&vocabulary_code=${encodeURIComponent(
+                    thesaurusVocabularyCode,
+                  )}`}
+                >
+                  Quality
+                </Link>
+                <Link
+                  className="btnSmall"
+                  href={`/orgs/${params.orgId}/authority-terms/thesaurus/visual?kind=${encodeURIComponent(thesaurusKind)}&vocabulary_code=${encodeURIComponent(
+                    thesaurusVocabularyCode,
+                  )}`}
+                >
+                  Visual
+                </Link>
+              </>
+            ) : (
+              <span className="muted">（此 kind 不支援 Thesaurus：只支援 subject/geographic/genre）</span>
+            )}
+          </div>
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginTop: 12 }}>
-          <label>
-            vocabulary_code（選填；例如 local / builtin-zh）
-            <input value={vocabularyCode} onChange={(e) => setVocabularyCode(e.target.value)} />
-          </label>
+        {error ? (
+          <Alert variant="danger" title="操作失敗">
+            {error}
+          </Alert>
+        ) : null}
+        {success ? <Alert variant="success" title={success} role="status" /> : null}
+      </PageHeader>
 
-          <label>
-            limit（1..500）
-            <input value={limit} onChange={(e) => setLimit(e.target.value)} />
-          </label>
-        </div>
+      <div className="grid2">
+        <section className="panel">
+          <SectionHeader
+            title="搜尋/篩選"
+            description="filters 變更後會自動 refresh；你也可手動按「重新整理」。"
+            actions={
+              <button type="button" className="btnSmall" onClick={() => void refresh()} disabled={loading}>
+                {loading ? '載入中…' : '重新整理'}
+              </button>
+            }
+          />
 
-        <label style={{ marginTop: 12 }}>
-          query（模糊搜尋：preferred_label + variant_labels）
-          <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="例如：魔法 / Rowling / 資訊素養" />
-        </label>
+          {/* NOTE:
+           * - 目前這頁的 filters 採「state 變更 → useEffect 自動 refresh」。
+           * - 因此這裡的表單主要目標是：一致容器 + 可掃描。 */}
+          <Form onSubmit={(e) => e.preventDefault()}>
+            <FormSection title="條件" description="query 為模糊搜尋（preferred_label + variant_labels）。">
+              <div className="grid2">
+                <Field label="kind（款目類型）" htmlFor="authority_kind">
+                  <select id="authority_kind" value={kind} onChange={(e) => setKind(e.target.value as AuthorityTerm['kind'])}>
+                    <option value="subject">subject（主題詞 / 650）</option>
+                    <option value="geographic">geographic（地理名稱 / 651）</option>
+                    <option value="genre">genre（類型/體裁 / 655）</option>
+                    <option value="name">name（姓名 / 100/700）</option>
+                    <option value="language">language（語言 / 041/008）</option>
+                    <option value="relator">relator（關係/角色 / $e/$4）</option>
+                  </select>
+                </Field>
 
-        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 12 }}>
-          <button type="button" onClick={() => void refresh()} disabled={loading}>
-            重新整理
-          </button>
-          <Link href={`/orgs/${params.orgId}`}>回到 Dashboard</Link>
-        </div>
-      </section>
+                <Field label="status" htmlFor="authority_status">
+                  <select id="authority_status" value={status} onChange={(e) => setStatus(e.target.value as any)}>
+                    <option value="active">active（只看啟用）</option>
+                    <option value="inactive">inactive（只看停用）</option>
+                    <option value="all">all（全部）</option>
+                  </select>
+                </Field>
+              </div>
+
+              <div className="grid2">
+                <Field label="vocabulary_code（選填）" htmlFor="authority_vocab" hint="例：local / builtin-zh">
+                  <input id="authority_vocab" value={vocabularyCode} onChange={(e) => setVocabularyCode(e.target.value)} />
+                </Field>
+
+                <Field label="limit（1..500）" htmlFor="authority_limit" className="field--narrow">
+                  <input id="authority_limit" value={limit} onChange={(e) => setLimit(e.target.value)} />
+                </Field>
+              </div>
+
+              <Field label="query（模糊搜尋）" htmlFor="authority_query" hint="例：魔法 / Rowling / 資訊素養">
+                <input
+                  id="authority_query"
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder="例如：魔法 / Rowling / 資訊素養"
+                />
+              </Field>
+
+              <FormActions>
+                <Link className="btnSmall" href={`/orgs/${params.orgId}/authority`}>
+                  回主控入口
+                </Link>
+                {thesaurusKind ? (
+                  <>
+                    <Link
+                      className="btnSmall"
+                      href={`/orgs/${params.orgId}/authority-terms/thesaurus?kind=${encodeURIComponent(thesaurusKind)}&vocabulary_code=${encodeURIComponent(
+                        thesaurusVocabularyCode,
+                      )}`}
+                    >
+                      Thesaurus Browser
+                    </Link>
+                    <Link
+                      className="btnSmall"
+                      href={`/orgs/${params.orgId}/authority-terms/thesaurus/visual?kind=${encodeURIComponent(thesaurusKind)}&vocabulary_code=${encodeURIComponent(
+                        thesaurusVocabularyCode,
+                      )}`}
+                    >
+                      Visual
+                    </Link>
+                  </>
+                ) : (
+                  <span className="muted">（此 kind 不支援 Thesaurus）</span>
+                )}
+              </FormActions>
+            </FormSection>
+          </Form>
+        </section>
+
+        <section className="panel" id="create">
+          <SectionHeader title="建立新款目（local）" description="由 UI 建立的款目一律 source=local；內建詞彙庫由 seed/維運工具建立。" />
+          <Form onSubmit={onCreate}>
+            <FormSection title="建立" description="建立後可再進入 term detail 做 usage / merge/redirect / 關係治理。">
+              <Field label="preferred_label（必填）" htmlFor="new_preferred_label" error={error === 'preferred_label 不可為空' ? error : undefined}>
+                <input
+                  id="new_preferred_label"
+                  value={newPreferredLabel}
+                  onChange={(e) => setNewPreferredLabel(e.target.value)}
+                />
+              </Field>
+
+              <div className="grid2">
+                <Field label="vocabulary_code" htmlFor="new_vocabulary_code" hint="建議：local（若你要多套詞彙庫可自行分碼）">
+                  <input
+                    id="new_vocabulary_code"
+                    value={newVocabularyCode}
+                    onChange={(e) => setNewVocabularyCode(e.target.value)}
+                  />
+                </Field>
+                <Field label="kind" htmlFor="new_kind" hint="沿用上方篩選的 kind（讓你更快批次建立同類款目）。">
+                  <input id="new_kind" value={kind} disabled />
+                </Field>
+              </div>
+
+              <Field label="variant_labels（選填；每行一個）" htmlFor="new_variant_labels" hint="UF（同義詞/別名/常見錯寫）。">
+                <textarea
+                  id="new_variant_labels"
+                  value={newVariantLabels}
+                  onChange={(e) => setNewVariantLabels(e.target.value)}
+                  rows={4}
+                />
+              </Field>
+
+              <Field label="note（選填）" htmlFor="new_note">
+                <textarea id="new_note" value={newNote} onChange={(e) => setNewNote(e.target.value)} rows={3} />
+              </Field>
+
+              <FormActions>
+                <button type="submit" className="btnPrimary" disabled={creating}>
+                  {creating ? '建立中…' : '建立'}
+                </button>
+              </FormActions>
+            </FormSection>
+          </Form>
+        </section>
+      </div>
 
       <section className="panel">
-        <h2 style={{ marginTop: 0 }}>建立新款目（local）</h2>
-        <form onSubmit={onCreate} className="stack" style={{ marginTop: 12 }}>
-          <label>
-            preferred_label（必填）
-            <input value={newPreferredLabel} onChange={(e) => setNewPreferredLabel(e.target.value)} />
-          </label>
+        <SectionHeader
+          title="款目列表"
+          description={page ? `showing ${page.items.length} · next_cursor=${page.next_cursor ? '有' : '無'}` : undefined}
+          actions={
+            <button type="button" className="btnSmall" onClick={() => void refresh()} disabled={loading}>
+              {loading ? '載入中…' : '重新整理'}
+            </button>
+          }
+        />
+        {loading && !page ? <SkeletonTable columns={6} rows={8} /> : null}
 
-          <label>
-            variant_labels（選填；每行一個）
-            <textarea value={newVariantLabels} onChange={(e) => setNewVariantLabels(e.target.value)} rows={4} />
-          </label>
+        {!loading && !page ? (
+          <EmptyState
+            title="尚無資料"
+            description="目前沒有 authority terms 可顯示（可能是載入失敗或尚未建立）。"
+            actions={
+              <button type="button" className="btnPrimary" onClick={() => void refresh()}>
+                重試載入
+              </button>
+            }
+          />
+        ) : null}
 
-          <label>
-            note（選填）
-            <textarea value={newNote} onChange={(e) => setNewNote(e.target.value)} rows={3} />
-          </label>
-
-          <label>
-            vocabulary_code（建議：local；若你要建多套詞彙庫可自行分碼）
-            <input value={newVocabularyCode} onChange={(e) => setNewVocabularyCode(e.target.value)} />
-          </label>
-
-          <button type="submit" disabled={creating}>
-            {creating ? '建立中…' : '建立'}
-          </button>
-        </form>
-      </section>
-
-      <section className="panel">
-        <h2 style={{ marginTop: 0 }}>款目列表</h2>
-        {page && page.items.length === 0 ? <p className="muted">沒有資料。</p> : null}
+        {page && page.items.length === 0 ? (
+          <EmptyState
+            title="沒有資料"
+            description="你可以改變 kind/status/query，或先建立第一筆款目。"
+          />
+        ) : null}
 
         {page && page.items.length > 0 ? (
           <div className="stack">
-            <ul>
-              {page.items.map((t) => {
-                const isEditing = editingId === t.id;
+            <DataTable
+              rows={page.items}
+              getRowKey={(t) => t.id}
+              density="compact"
+              getRowHref={(t) => `/orgs/${params.orgId}/authority-terms/${t.id}`}
+              initialSort={{ columnId: 'preferred_label', direction: 'asc' }}
+              sortHint="排序僅影響目前已載入資料（cursor pagination）。"
+              rowActionsHeader="actions"
+              rowActionsWidth={240}
+              rowActions={(t) => {
                 const isUpdating = updatingId === t.id;
                 return (
-                  <li key={t.id} style={{ marginBottom: 14 }}>
-                    <div style={{ display: 'grid', gap: 4 }}>
-                      <div style={{ fontWeight: 700 }}>
-                        {t.preferred_label}{' '}
-                        <span className="muted" style={{ fontWeight: 400 }}>
-                          ({t.status} · {t.vocabulary_code} · {t.source})
-                        </span>
-                      </div>
-
-                      {t.variant_labels && t.variant_labels.length > 0 ? (
-                        <div className="muted">variant_labels：{t.variant_labels.join(' · ')}</div>
-                      ) : null}
-
-                      {t.note ? <div className="muted">note：{t.note}</div> : null}
-
-                      <div className="muted" style={{ wordBreak: 'break-all' }}>
-                        id：<code>{t.id}</code>
-                      </div>
-
-                      {!isEditing ? (
-                        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                          <Link href={`/orgs/${params.orgId}/authority-terms/${t.id}`}>BT/NT/RT</Link>
-                          <button type="button" onClick={() => startEdit(t)}>
-                            編輯
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => void toggleStatus(t)}
-                            disabled={isUpdating}
-                          >
-                            {t.status === 'active' ? '停用' : '啟用'}
-                          </button>
-                        </div>
-                      ) : (
-                        <form onSubmit={onSaveEdit} className="stack" style={{ marginTop: 8 }}>
-                          <label>
-                            preferred_label
-                            <input value={editPreferredLabel} onChange={(e) => setEditPreferredLabel(e.target.value)} />
-                          </label>
-                          <label>
-                            variant_labels（每行一個；留空代表清空）
-                            <textarea value={editVariantLabels} onChange={(e) => setEditVariantLabels(e.target.value)} rows={4} />
-                          </label>
-                          <label>
-                            note（留空代表清空）
-                            <textarea value={editNote} onChange={(e) => setEditNote(e.target.value)} rows={3} />
-                          </label>
-                          <label>
-                            vocabulary_code
-                            <input value={editVocabularyCode} onChange={(e) => setEditVocabularyCode(e.target.value)} />
-                          </label>
-                          <label>
-                            status
-                            <select value={editStatus} onChange={(e) => setEditStatus(e.target.value as AuthorityTerm['status'])}>
-                              <option value="active">active</option>
-                              <option value="inactive">inactive</option>
-                            </select>
-                          </label>
-
-                          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                            <button type="submit" disabled={isUpdating}>
-                              {isUpdating ? '儲存中…' : '儲存'}
-                            </button>
-                            <button type="button" onClick={cancelEdit} disabled={isUpdating}>
-                              取消
-                            </button>
-                          </div>
-                        </form>
-                      )}
-                    </div>
-                  </li>
+                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                    <Link className="btnSmall" href={`/orgs/${params.orgId}/authority-terms/${t.id}`}>
+                      詳情
+                    </Link>
+                    <button type="button" onClick={() => startEdit(t)} className="btnSmall">
+                      編輯
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void toggleStatus(t)}
+                      disabled={isUpdating}
+                      className={['btnSmall', t.status === 'active' ? 'btnDanger' : 'btnPrimary'].join(' ')}
+                    >
+                      {isUpdating ? '處理中…' : t.status === 'active' ? '停用' : '啟用'}
+                    </button>
+                  </div>
                 );
-              })}
-            </ul>
+              }}
+              columns={[
+                {
+                  id: 'preferred_label',
+                  header: 'preferred_label',
+                  cell: (t) => (
+                    <div style={{ display: 'grid', gap: 4 }}>
+                      <Link href={`/orgs/${params.orgId}/authority-terms/${t.id}`}>
+                        <span style={{ fontWeight: 800 }}>{t.preferred_label}</span>
+                      </Link>
+                      <div className="muted" style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                        <span className={['badge', `badge--${statusBadgeVariant(t.status)}`].join(' ')}>{t.status}</span>
+                        <span className="badge badge--info">{t.kind}</span>
+                        <span className="muted">{t.vocabulary_code}</span>
+                        <span className="muted">source={t.source}</span>
+                      </div>
+                    </div>
+                  ),
+                  sortValue: (t) => t.preferred_label,
+                },
+                {
+                  id: 'variants',
+                  header: 'variant_labels',
+                  cell: (t) =>
+                    t.variant_labels && t.variant_labels.length > 0 ? (
+                      <span className="muted">
+                        {t.variant_labels.slice(0, 3).join(' · ')}
+                        {t.variant_labels.length > 3 ? <span> · …</span> : null}
+                      </span>
+                    ) : (
+                      <span className="muted">—</span>
+                    ),
+                  sortValue: (t) => (t.variant_labels?.[0] ?? ''),
+                  width: 260,
+                },
+                {
+                  id: 'note',
+                  header: 'note',
+                  cell: (t) => (t.note ? <span className="muted">{t.note}</span> : <span className="muted">—</span>),
+                  sortValue: (t) => t.note ?? '',
+                  width: 240,
+                },
+                {
+                  id: 'id',
+                  header: 'id',
+                  cell: (t) => <code>{t.id}</code>,
+                  sortValue: (t) => t.id,
+                  width: 310,
+                },
+              ]}
+            />
 
-            {page.next_cursor ? (
-              <button type="button" onClick={() => void loadMore()} disabled={loadingMore || loading}>
-                {loadingMore ? '載入中…' : '載入更多'}
-              </button>
-            ) : null}
+            <CursorPagination
+              showing={page.items.length}
+              nextCursor={page.next_cursor}
+              loadingMore={loadingMore}
+              loading={loading}
+              onLoadMore={() => void loadMore()}
+            />
           </div>
         ) : null}
       </section>
+
+      {/* 編輯面板：從「列表 actions」進來（避免在 table row 內塞一整個表單造成閱讀負擔） */}
+      {editingId ? (
+        <section className="panel">
+          <SectionHeader
+            title="編輯款目"
+            description={
+              <>
+                editing_id=<code>{editingId}</code>
+              </>
+            }
+            actions={
+              <>
+                <button type="button" className="btnSmall" onClick={cancelEdit} disabled={Boolean(updatingId)}>
+                  關閉
+                </button>
+                <Link className="btnSmall" href={`/orgs/${params.orgId}/authority-terms/${editingId}`}>
+                  開啟詳情
+                </Link>
+              </>
+            }
+          />
+
+          <Form onSubmit={onSaveEdit}>
+            <FormSection title="更新" description="只會送出有變更的欄位（減少無意義的 updated_at 異動）。">
+              <div className="grid2">
+                <Field label="preferred_label（必填）" htmlFor="edit_preferred_label">
+                  <input
+                    id="edit_preferred_label"
+                    value={editPreferredLabel}
+                    onChange={(e) => setEditPreferredLabel(e.target.value)}
+                  />
+                </Field>
+                <Field label="vocabulary_code（必填）" htmlFor="edit_vocabulary_code" hint="至少用 local。">
+                  <input
+                    id="edit_vocabulary_code"
+                    value={editVocabularyCode}
+                    onChange={(e) => setEditVocabularyCode(e.target.value)}
+                  />
+                </Field>
+              </div>
+
+              <Field label="variant_labels（每行一個；留空代表清空）" htmlFor="edit_variant_labels">
+                <textarea
+                  id="edit_variant_labels"
+                  value={editVariantLabels}
+                  onChange={(e) => setEditVariantLabels(e.target.value)}
+                  rows={4}
+                />
+              </Field>
+
+              <Field label="note（留空代表清空）" htmlFor="edit_note">
+                <textarea id="edit_note" value={editNote} onChange={(e) => setEditNote(e.target.value)} rows={3} />
+              </Field>
+
+              <div className="grid2">
+                <Field label="status" htmlFor="edit_status">
+                  <select id="edit_status" value={editStatus} onChange={(e) => setEditStatus(e.target.value as AuthorityTerm['status'])}>
+                    <option value="active">active</option>
+                    <option value="inactive">inactive</option>
+                  </select>
+                </Field>
+                <Field label="id" htmlFor="edit_id">
+                  <input id="edit_id" value={editingId} disabled />
+                </Field>
+              </div>
+
+              <FormActions>
+                <button type="submit" className="btnPrimary" disabled={Boolean(updatingId)}>
+                  {updatingId ? '儲存中…' : '儲存'}
+                </button>
+                <button type="button" className="btnSmall" onClick={cancelEdit} disabled={Boolean(updatingId)}>
+                  取消
+                </button>
+              </FormActions>
+            </FormSection>
+          </Form>
+        </section>
+      ) : null}
     </div>
   );
 }

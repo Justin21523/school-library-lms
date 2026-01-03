@@ -26,6 +26,8 @@ import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 
 import type { ItemCopy, ItemDetail, Location } from '../../../../lib/api';
+import { PageHeader, SectionHeader } from '../../../../components/ui/page-header';
+import { Alert } from '../../../../components/ui/alert';
 import {
   getItem,
   listLocations,
@@ -241,10 +243,7 @@ export default function ItemDetailPage({
   if (!sessionReady) {
     return (
       <div className="stack">
-        <section className="panel">
-          <h1 style={{ marginTop: 0 }}>Item Detail</h1>
-          <p className="muted">載入登入狀態中…</p>
-        </section>
+        <PageHeader title="Item Detail" description="載入登入狀態中…" />
       </div>
     );
   }
@@ -252,24 +251,25 @@ export default function ItemDetailPage({
   if (!session) {
     return (
       <div className="stack">
-        <section className="panel">
-          <h1 style={{ marginTop: 0 }}>Item Detail</h1>
-          <p className="error">
-            這頁需要 staff 登入才能查看/操作 item。請先前往{' '}
-            <Link href={`/orgs/${params.orgId}/login`}>/login</Link>。
-          </p>
-        </section>
+        <PageHeader title="Item Detail">
+          <Alert variant="danger" title="需要登入">
+            這頁需要 staff 登入才能查看/操作 item。請先前往 <Link href={`/orgs/${params.orgId}/login`}>/login</Link>。
+          </Alert>
+        </PageHeader>
       </div>
     );
   }
 
   return (
     <div className="stack">
-      <section className="panel">
-        <h1 style={{ marginTop: 0 }}>Item Detail</h1>
-        <p className="muted">
-          對應 API：<code>GET/PATCH /api/v1/orgs/:orgId/items/:itemId</code>
-        </p>
+      <PageHeader
+        title="Item Detail"
+        description={
+          <>
+            對應 API：<code>GET/PATCH /api/v1/orgs/:orgId/items/:itemId</code>
+          </>
+        }
+      >
 
         <div className="muted" style={{ display: 'grid', gap: 4, marginTop: 8 }}>
           <div>
@@ -281,8 +281,16 @@ export default function ItemDetailPage({
         </div>
 
         {loading ? <p className="muted">載入中…</p> : null}
-        {error ? <p className="error">錯誤：{error}</p> : null}
-        {success ? <p className="success">{success}</p> : null}
+        {error ? (
+          <Alert variant="danger" title="操作失敗">
+            {error}
+          </Alert>
+        ) : null}
+        {success ? (
+          <Alert variant="success" title="已完成" role="status">
+            {success}
+          </Alert>
+        ) : null}
 
         {item ? (
           <div className="stack" style={{ marginTop: 16 }}>
@@ -332,22 +340,22 @@ export default function ItemDetailPage({
 
               {/* 基本一致性提示：幫助你在 scale seed/測試時快速看出狀態不一致 */}
               {currentLoan && item.status !== 'checked_out' ? (
-                <div className="error" style={{ marginTop: 8 }}>
+                <Alert variant="warning" title="資料一致性提醒" role="status">
                   注意：存在 open loan，但 item.status 不是 checked_out（可能有資料不一致）
-                </div>
+                </Alert>
               ) : null}
               {assignedHold && item.status !== 'on_hold' ? (
-                <div className="error" style={{ marginTop: 8 }}>
+                <Alert variant="warning" title="資料一致性提醒" role="status">
                   注意：存在 assigned ready hold，但 item.status 不是 on_hold（可能有資料不一致）
-                </div>
+                </Alert>
               ) : null}
             </div>
           </div>
         ) : null}
-      </section>
+      </PageHeader>
 
       <section className="panel">
-        <h2 style={{ marginTop: 0 }}>冊異常狀態（US-045）</h2>
+        <SectionHeader title="冊異常狀態（US-045）" />
         <p className="muted">
           這些動作會呼叫 item status action endpoints，並寫入 <code>audit_events</code>，可到{' '}
           <code>/orgs/:orgId/audit-events</code> 追溯誰改的。
@@ -371,6 +379,7 @@ export default function ItemDetailPage({
           <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 12 }}>
             <button
               type="button"
+              className="btnDanger"
               onClick={() =>
                 void runStatusAction('lost', async () => {
                   await markItemLost(params.orgId, params.itemId, {
@@ -391,6 +400,7 @@ export default function ItemDetailPage({
 
             <button
               type="button"
+              className="btnPrimary"
               onClick={() =>
                 void runStatusAction('repair', async () => {
                   await markItemRepair(params.orgId, params.itemId, {
@@ -407,6 +417,7 @@ export default function ItemDetailPage({
 
             <button
               type="button"
+              className="btnDanger"
               onClick={() =>
                 void runStatusAction('withdrawn', async () => {
                   await markItemWithdrawn(params.orgId, params.itemId, {
@@ -435,10 +446,10 @@ export default function ItemDetailPage({
       </section>
 
       <section className="panel">
-        <h2 style={{ marginTop: 0 }}>更新冊（PATCH）</h2>
-        <p className="muted">
-          勾選欄位 → 只送出勾選的欄位（部分更新）。冊狀態（lost/repair/withdrawn）請用上方「冊異常狀態」按鈕。
-        </p>
+        <SectionHeader
+          title="更新冊（PATCH）"
+          description="勾選欄位 → 只送出勾選的欄位（部分更新）。冊狀態（lost/repair/withdrawn）請用上方「冊異常狀態」按鈕。"
+        />
 
         <form onSubmit={onUpdate} className="stack" style={{ marginTop: 12 }}>
           <label>
@@ -514,7 +525,7 @@ export default function ItemDetailPage({
             />
           </label>
 
-          <button type="submit" disabled={updating}>
+          <button type="submit" className="btnPrimary" disabled={updating}>
             {updating ? '更新中…' : '送出 PATCH'}
           </button>
         </form>

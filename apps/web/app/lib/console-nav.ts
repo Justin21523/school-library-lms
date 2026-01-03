@@ -66,6 +66,15 @@ export function getOrgConsoleNav(orgId: string): OrgConsoleNavGroup[] {
           icon: 'dashboard',
           keywords: ['overview', 'home', '總覽', '概覽', 'dashboard'],
         },
+        {
+          type: 'item',
+          id: 'index',
+          label: '功能索引',
+          href: `/orgs/${orgId}/index`,
+          icon: 'dashboard',
+          description: '用卡片式索引瀏覽功能 + 搜尋',
+          keywords: ['index', 'explore', '功能索引', '導航', 'search'],
+        },
       ],
     },
 
@@ -79,6 +88,15 @@ export function getOrgConsoleNav(orgId: string): OrgConsoleNavGroup[] {
       icon: 'catalog',
       defaultOpen: true,
       children: [
+        {
+          type: 'item',
+          id: 'catalog-home',
+          label: '編目首頁',
+          href: `/orgs/${orgId}/catalog`,
+          icon: 'catalog',
+          description: '以工作流分區的編目導覽（MARC/匯入/維護）',
+          keywords: ['catalog', 'home', '編目', '入口'],
+        },
         {
           type: 'group',
           id: 'catalog-bibs',
@@ -291,6 +309,15 @@ export function getOrgConsoleNav(orgId: string): OrgConsoleNavGroup[] {
       defaultOpen: false,
       children: [
         {
+          type: 'item',
+          id: 'holdings-home',
+          label: '館藏首頁',
+          href: `/orgs/${orgId}/holdings`,
+          icon: 'holdings',
+          description: 'Items / Locations / Inventory 的導覽入口',
+          keywords: ['holdings', 'home', '館藏', '入口'],
+        },
+        {
           type: 'group',
           id: 'holdings-items',
           label: '冊與館藏（Items）',
@@ -354,6 +381,15 @@ export function getOrgConsoleNav(orgId: string): OrgConsoleNavGroup[] {
       icon: 'circulation',
       defaultOpen: true,
       children: [
+        {
+          type: 'item',
+          id: 'circulation-home',
+          label: '流通首頁',
+          href: `/orgs/${orgId}/circulation/home`,
+          icon: 'circulation',
+          description: '櫃台/借閱/預約/政策/維護入口',
+          keywords: ['circulation', 'home', '流通', '入口'],
+        },
         {
           type: 'group',
           id: 'circ-desk',
@@ -452,6 +488,15 @@ export function getOrgConsoleNav(orgId: string): OrgConsoleNavGroup[] {
       defaultOpen: false,
       children: [
         {
+          type: 'item',
+          id: 'reports-home',
+          label: '報表首頁',
+          href: `/orgs/${orgId}/reports`,
+          icon: 'reports',
+          description: '集中報表入口（逾期/熱門/摘要…）',
+          keywords: ['reports', 'home', '報表', '入口'],
+        },
+        {
           type: 'group',
           id: 'reports-circulation',
           label: '流通報表',
@@ -513,6 +558,15 @@ export function getOrgConsoleNav(orgId: string): OrgConsoleNavGroup[] {
       icon: 'admin',
       defaultOpen: false,
       children: [
+        {
+          type: 'item',
+          id: 'admin-home',
+          label: '系統管理首頁',
+          href: `/orgs/${orgId}/admin`,
+          icon: 'admin',
+          description: 'Users / Audit / Bootstrap 等入口',
+          keywords: ['admin', 'home', '系統管理', '入口'],
+        },
         {
           type: 'group',
           id: 'admin-accounts',

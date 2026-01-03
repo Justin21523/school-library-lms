@@ -30,21 +30,30 @@ export default function RootLayout({ children }: { children: ReactNode }) {
     // `lang="zh-Hant"`：標示主要語言為繁體中文（對 SEO/螢幕閱讀器有幫助）。
     <html lang="zh-Hant" suppressHydrationWarning>
       <head>
-        {/* theme init：避免 Light/Dark 切換時出現「閃一下」的 FOUC（Flash of Unstyled Content） */}
-        <Script id="theme-init" strategy="beforeInteractive">
+        {/* UI init：避免 Light/Dark / 字體大小 切換時出現「閃一下」的 FOUC（Flash of Unstyled Content） */}
+        <Script id="ui-init" strategy="beforeInteractive">
           {`
 (() => {
   try {
-    const raw = window.localStorage.getItem('ui.theme');
-    const mode = (raw || '').trim();
     const root = document.documentElement;
-    if (mode === 'light' || mode === 'dark') {
-      root.setAttribute('data-theme', mode);
+
+    // theme
+    const themeRaw = window.localStorage.getItem('ui.theme');
+    const theme = (themeRaw || '').trim();
+    if (theme === 'light' || theme === 'dark') root.setAttribute('data-theme', theme);
+    else root.removeAttribute('data-theme');
+
+    // ui scale（字體大小）
+    const scaleRaw = window.localStorage.getItem('ui.scale');
+    const scale = (scaleRaw || '').trim();
+    if (scale === 'sm' || scale === 'md' || scale === 'lg' || scale === 'xl') {
+      if (scale === 'md') root.removeAttribute('data-ui-scale');
+      else root.setAttribute('data-ui-scale', scale);
     } else {
-      root.removeAttribute('data-theme');
+      root.removeAttribute('data-ui-scale');
     }
   } catch {
-    // localStorage 可能被禁用；忽略即可（會回退到 CSS 的 system theme）
+    // localStorage 可能被禁用；忽略即可（會回退到 CSS 的 system theme / default scale）
   }
 })();
           `}

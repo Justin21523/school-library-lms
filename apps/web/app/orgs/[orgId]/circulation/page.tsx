@@ -26,6 +26,9 @@ import Link from 'next/link';
 
 import type { CheckinResult, CheckoutResult, FulfillHoldResult, HoldWithDetails } from '../../../lib/api';
 import { checkin, checkout, fulfillHold, listHolds } from '../../../lib/api';
+import { Alert } from '../../../components/ui/alert';
+import { DataTable } from '../../../components/ui/data-table';
+import { Field, Form, FormActions, FormSection } from '../../../components/ui/form';
 import { formatErrorMessage } from '../../../lib/error';
 import { useStaffSession } from '../../../lib/use-staff-session';
 
@@ -68,7 +71,7 @@ export default function CirculationPage({ params }: { params: { orgId: string } 
       <div className="stack">
         <section className="panel">
           <h1 style={{ marginTop: 0 }}>Circulation</h1>
-          <p className="muted">載入登入狀態中…</p>
+          <Alert variant="info" title="載入登入狀態中…" role="status" />
         </section>
       </div>
     );
@@ -79,9 +82,9 @@ export default function CirculationPage({ params }: { params: { orgId: string } 
       <div className="stack">
         <section className="panel">
           <h1 style={{ marginTop: 0 }}>Circulation</h1>
-          <p className="error">
+          <Alert variant="danger" title="需要登入">
             這頁需要 staff 登入才能操作。請先前往 <Link href={`/orgs/${params.orgId}/login`}>/login</Link>。
-          </p>
+          </Alert>
         </section>
       </div>
     );
@@ -281,8 +284,12 @@ export default function CirculationPage({ params }: { params: { orgId: string } 
           {session.user.role}）
         </p>
 
-        {error ? <p className="error">錯誤：{error}</p> : null}
-        {success ? <p className="success">{success}</p> : null}
+        {error ? (
+          <Alert variant="danger" title="操作失敗">
+            {error}
+          </Alert>
+        ) : null}
+        {success ? <Alert variant="success" title={success} role="status" /> : null}
       </section>
 
       {/* 取書借出（Fulfill ready hold） */}
@@ -298,25 +305,31 @@ export default function CirculationPage({ params }: { params: { orgId: string } 
           <code>POST /api/v1/orgs/:orgId/holds/:holdId/fulfill</code>
         </p>
 
-        <form onSubmit={onFulfillByBarcode} className="stack" style={{ marginTop: 12 }}>
-          <label>
-            item_barcode（取書冊條碼）
-            <input
-              value={fulfillBarcode}
-              onChange={(e) => setFulfillBarcode(e.target.value)}
-              placeholder="例：LIB-00001234"
-            />
-          </label>
+        <Form onSubmit={onFulfillByBarcode} style={{ marginTop: 12 }}>
+          <FormSection title="掃冊條碼" description="先查 ready holds；若命中多筆再由你手動選擇要 fulfill 的那一筆。">
+            <Field label="item_barcode（取書冊條碼）" htmlFor="fulfill_item_barcode" hint="例：LIB-00001234">
+              <input
+                id="fulfill_item_barcode"
+                value={fulfillBarcode}
+                onChange={(e) => setFulfillBarcode(e.target.value)}
+                placeholder="例：LIB-00001234"
+                disabled={findingHold || Boolean(fulfillingHoldId)}
+              />
+            </Field>
 
-          <button type="submit" disabled={findingHold || Boolean(fulfillingHoldId)}>
-            {findingHold ? '查找 ready hold 中…' : fulfillingHoldId ? '取書借出中…' : '取書借出'}
-          </button>
-        </form>
+            <FormActions>
+              <button type="submit" className="btnPrimary" disabled={findingHold || Boolean(fulfillingHoldId)}>
+                {findingHold ? '查找 ready hold 中…' : fulfillingHoldId ? '取書借出中…' : '取書借出'}
+              </button>
+            </FormActions>
+          </FormSection>
+        </Form>
 
         {fulfillResult ? (
-          <div className="muted" style={{ marginTop: 12 }}>
-            fulfill 結果：hold_id={fulfillResult.hold_id} · loan_id={fulfillResult.loan_id} · due_at={fulfillResult.due_at}
-          </div>
+          <Alert variant="info" title="Fulfill 結果" role="status">
+            hold_id=<code>{fulfillResult.hold_id}</code> · loan_id=<code>{fulfillResult.loan_id}</code> · due_at=
+            <code>{fulfillResult.due_at}</code>
+          </Alert>
         ) : null}
 
         {fulfillCandidates && fulfillCandidates.length > 1 ? (
@@ -325,42 +338,52 @@ export default function CirculationPage({ params }: { params: { orgId: string } 
               這個條碼對應到多筆 <code>ready</code> holds（不常見，通常代表資料不一致）。請手動選擇要 fulfill 哪一筆：
             </p>
 
-            <div style={{ overflowX: 'auto' }}>
-              <table>
-                <thead>
-                  <tr>
-                    <th>borrower</th>
-                    <th>title</th>
-                    <th>ready_until</th>
-                    <th>hold_id</th>
-                    <th>action</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {fulfillCandidates.map((h) => (
-                    <tr key={h.id}>
-                      <td>
-                        {h.user_name} ({h.user_external_id})
-                      </td>
-                      <td>{h.bibliographic_title}</td>
-                      <td>{h.ready_until ?? ''}</td>
-                      <td>
-                        <code style={{ fontSize: 12 }}>{h.id}</code>
-                      </td>
-                      <td>
-                        <button
-                          type="button"
-                          onClick={() => void onFulfillHoldId(h.id)}
-                          disabled={Boolean(fulfillingHoldId)}
-                        >
-                          {fulfillingHoldId === h.id ? '取書借出中…' : 'Fulfill'}
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            <DataTable
+              rows={fulfillCandidates}
+              getRowKey={(r) => r.id}
+              columns={[
+                {
+                  id: 'borrower',
+                  header: 'borrower',
+                  sortValue: (r) => `${r.user_name} ${r.user_external_id}`,
+                  cell: (r) => (
+                    <>
+                      {r.user_name} <span className="muted">({r.user_external_id})</span>
+                    </>
+                  ),
+                },
+                {
+                  id: 'title',
+                  header: 'title',
+                  sortValue: (r) => r.bibliographic_title,
+                  cell: (r) => r.bibliographic_title,
+                },
+                {
+                  id: 'ready_until',
+                  header: 'ready_until',
+                  sortValue: (r) => r.ready_until ?? '',
+                  cell: (r) => r.ready_until ?? '—',
+                  width: 160,
+                },
+                {
+                  id: 'hold_id',
+                  header: 'hold_id',
+                  sortValue: (r) => r.id,
+                  cell: (r) => <code style={{ fontSize: 12 }}>{r.id}</code>,
+                  width: 220,
+                },
+                {
+                  id: 'action',
+                  header: 'action',
+                  cell: (r) => (
+                    <button type="button" className="btnPrimary" onClick={() => void onFulfillHoldId(r.id)} disabled={Boolean(fulfillingHoldId)}>
+                      {fulfillingHoldId === r.id ? '取書借出中…' : 'Fulfill'}
+                    </button>
+                  ),
+                  width: 140,
+                },
+              ]}
+            />
           </div>
         ) : null}
       </section>
@@ -368,61 +391,84 @@ export default function CirculationPage({ params }: { params: { orgId: string } 
       {/* 借出 */}
       <section className="panel">
         <h2 style={{ marginTop: 0 }}>借出（Checkout）</h2>
-        <form onSubmit={onCheckout} className="stack" style={{ marginTop: 12 }}>
-          <label>
-            user_external_id（借閱者：學號/員編）
-            <input
-              value={borrowerExternalId}
-              onChange={(e) => setBorrowerExternalId(e.target.value)}
-              placeholder="例：S1130123"
-            />
-          </label>
+        <Form onSubmit={onCheckout} style={{ marginTop: 12 }}>
+          <FormSection title="掃描借出" description="借出會建立 loan；若此冊有 hold/狀態異常，後端會回傳錯誤。">
+            <div className="grid2">
+              <Field label="user_external_id（借閱者：學號/員編）" htmlFor="checkout_user_external_id" hint="例：S1130123">
+                <input
+                  id="checkout_user_external_id"
+                  value={borrowerExternalId}
+                  onChange={(e) => setBorrowerExternalId(e.target.value)}
+                  placeholder="例：S1130123"
+                  disabled={checkingOut}
+                />
+              </Field>
 
-          <label>
-            item_barcode（冊條碼）
-            <input
-              value={checkoutBarcode}
-              onChange={(e) => setCheckoutBarcode(e.target.value)}
-              placeholder="例：LIB-00001234"
-            />
-          </label>
+              <Field label="item_barcode（冊條碼）" htmlFor="checkout_item_barcode" hint="例：LIB-00001234">
+                <input
+                  id="checkout_item_barcode"
+                  value={checkoutBarcode}
+                  onChange={(e) => setCheckoutBarcode(e.target.value)}
+                  placeholder="例：LIB-00001234"
+                  disabled={checkingOut}
+                />
+              </Field>
+            </div>
 
-          <button type="submit" disabled={checkingOut}>
-            {checkingOut ? '借出中…' : '借出'}
-          </button>
-        </form>
+            <FormActions>
+              <button type="submit" className="btnPrimary" disabled={checkingOut}>
+                {checkingOut ? '借出中…' : '借出'}
+              </button>
+            </FormActions>
+          </FormSection>
+        </Form>
 
         {checkoutResult ? (
-          <div className="muted" style={{ marginTop: 12 }}>
-            loan_id={checkoutResult.loan_id} · due_at={checkoutResult.due_at}
-          </div>
+          <Alert variant="info" title="Checkout 結果" role="status">
+            loan_id=<code>{checkoutResult.loan_id}</code> · due_at=<code>{checkoutResult.due_at}</code>
+          </Alert>
         ) : null}
       </section>
 
       {/* 歸還 */}
       <section className="panel">
         <h2 style={{ marginTop: 0 }}>歸還（Check-in）</h2>
-        <form onSubmit={onCheckin} className="stack" style={{ marginTop: 12 }}>
-          <label>
-            item_barcode（冊條碼）
-            <input
-              value={checkinBarcode}
-              onChange={(e) => setCheckinBarcode(e.target.value)}
-              placeholder="例：LIB-00001234"
-            />
-          </label>
+        <Form onSubmit={onCheckin} style={{ marginTop: 12 }}>
+          <FormSection title="掃描歸還" description="歸還後可能自動指派 hold（變成 ready/on_hold），並更新 item status。">
+            <Field label="item_barcode（冊條碼）" htmlFor="checkin_item_barcode" hint="例：LIB-00001234">
+              <input
+                id="checkin_item_barcode"
+                value={checkinBarcode}
+                onChange={(e) => setCheckinBarcode(e.target.value)}
+                placeholder="例：LIB-00001234"
+                disabled={checkingIn}
+              />
+            </Field>
 
-          <button type="submit" disabled={checkingIn}>
-            {checkingIn ? '歸還中…' : '歸還'}
-          </button>
-        </form>
+            <FormActions>
+              <button type="submit" className="btnPrimary" disabled={checkingIn}>
+                {checkingIn ? '歸還中…' : '歸還'}
+              </button>
+            </FormActions>
+          </FormSection>
+        </Form>
 
         {checkinResult ? (
-          <div className="muted" style={{ marginTop: 12 }}>
-            item_status={checkinResult.item_status}
-            {checkinResult.hold_id ? ` · hold_id=${checkinResult.hold_id}` : ''}
-            {checkinResult.ready_until ? ` · ready_until=${checkinResult.ready_until}` : ''}
-          </div>
+          <Alert variant="info" title="Check-in 結果" role="status">
+            item_status=<code>{checkinResult.item_status}</code>
+            {checkinResult.hold_id ? (
+              <>
+                {' '}
+                · hold_id=<code>{checkinResult.hold_id}</code>
+              </>
+            ) : null}
+            {checkinResult.ready_until ? (
+              <>
+                {' '}
+                · ready_until=<code>{checkinResult.ready_until}</code>
+              </>
+            ) : null}
+          </Alert>
         ) : null}
       </section>
     </div>

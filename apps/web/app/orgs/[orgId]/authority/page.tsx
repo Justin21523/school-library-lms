@@ -28,6 +28,14 @@ import { suggestAuthorityTerms } from '../../../lib/api';
 import { formatErrorMessage } from '../../../lib/error';
 import { useStaffSession } from '../../../lib/use-staff-session';
 
+import { NavIcon } from '../../../components/layout/nav-icons';
+import { Alert } from '../../../components/ui/alert';
+import { DataTable } from '../../../components/ui/data-table';
+import { EmptyState } from '../../../components/ui/empty-state';
+import { Field, Form, FormSection } from '../../../components/ui/form';
+import { PageHeader, SectionHeader } from '../../../components/ui/page-header';
+import { SkeletonText } from '../../../components/ui/skeleton';
+
 type ThesaurusKind = 'subject' | 'geographic' | 'genre';
 
 const AUTHORITY_KIND_OPTIONS: Array<{
@@ -107,10 +115,7 @@ export default function AuthorityControlHomePage({ params }: { params: { orgId: 
   if (!sessionReady) {
     return (
       <div className="stack">
-        <section className="panel">
-          <h1 style={{ marginTop: 0 }}>Authority Control</h1>
-          <p className="muted">載入登入狀態中…</p>
-        </section>
+        <PageHeader title="Authority Control" description="載入登入狀態中…" />
       </div>
     );
   }
@@ -118,169 +123,325 @@ export default function AuthorityControlHomePage({ params }: { params: { orgId: 
   if (!session) {
     return (
       <div className="stack">
-        <section className="panel">
-          <h1 style={{ marginTop: 0 }}>Authority Control</h1>
-          <p className="muted">
-            這頁需要 staff 登入。請先前往 <Link href={`/orgs/${params.orgId}/login`}>/login</Link>。
-          </p>
-        </section>
+        <PageHeader title="Authority Control" description="這頁需要 staff 登入才能使用治理工具。">
+          <Alert variant="danger" title="需要登入">
+            請先前往 <Link href={`/orgs/${params.orgId}/login`}>/login</Link>。
+          </Alert>
+        </PageHeader>
       </div>
     );
   }
 
   return (
     <div className="stack">
-      <section className="panel">
-        <h1 style={{ marginTop: 0 }}>Authority Control（主控入口）</h1>
-        <p className="muted">
-          這頁把「權威控制 / controlled vocabulary / thesaurus / MARC tools / backfill」集中成可導覽的入口，避免散落在側邊欄造成迷路。
-        </p>
-
-        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 12 }}>
-          <Link href={`/orgs/${params.orgId}`}>回 Dashboard</Link>
-          <Link href={`/orgs/${params.orgId}/authority-terms`}>Authority Terms（原始列表頁）</Link>
-          <Link href={`/orgs/${params.orgId}/bibs`}>Bibs</Link>
-          <Link href={`/orgs/${params.orgId}/bibs/marc-editor`}>MARC21 編輯器</Link>
+      <PageHeader
+        title="Authority Control（主控入口）"
+        description={
+          <>
+            把「權威控制 / controlled vocabulary / thesaurus / backfill / MARC tools」集中成治理導覽入口，避免功能散落在側邊欄造成迷路。
+          </>
+        }
+        actions={
+          <>
+            <Link className="btnSmall" href={`/orgs/${params.orgId}`}>
+              Dashboard
+            </Link>
+            <Link className="btnSmall" href={`/orgs/${params.orgId}/authority-terms`}>
+              Terms
+            </Link>
+            <Link className="btnSmall" href={`/orgs/${params.orgId}/bibs/marc-editor`}>
+              MARC 編輯器
+            </Link>
+          </>
+        }
+      >
+        <div className="muted" style={{ display: 'grid', gap: 4 }}>
+          <div>
+            orgId：<code>{params.orgId}</code>
+          </div>
+          <div>
+            目前 kind：<code>{kind}</code> · vocabulary_code：<code>{vocabularyCode.trim() || '—'}</code>
+          </div>
         </div>
-      </section>
+
+        {error ? (
+          <Alert variant="danger" title="操作失敗">
+            {error}
+          </Alert>
+        ) : null}
+      </PageHeader>
 
       <section className="panel">
-        <h2 style={{ marginTop: 0 }}>Kind（治理範圍）</h2>
-        <p className="muted">先選你要治理的 controlled vocab 類型，再進入對應工具（Thesaurus/Quality/Visual/Backfill）。</p>
-
-        <label style={{ display: 'grid', gap: 6, maxWidth: 520 }}>
-          kind
-          <select value={kind} onChange={(e) => setKind(e.target.value as AuthorityTerm['kind'])}>
-            {AUTHORITY_KIND_OPTIONS.map((o) => (
-              <option key={o.value} value={o.value}>
-                {o.label}
-              </option>
-            ))}
-          </select>
-        </label>
-
-        <label style={{ display: 'grid', gap: 6, maxWidth: 520, marginTop: 12 }}>
-          vocabulary_code（給 thesaurus / quick find 使用）
-          <input value={vocabularyCode} onChange={(e) => setVocabularyCode(e.target.value)} placeholder="例如 builtin-zh / local" />
-        </label>
-      </section>
-
-      <section className="panel">
-        <h2 style={{ marginTop: 0 }}>治理入口</h2>
-
-        <div style={{ display: 'grid', gap: 12 }}>
-          <div className="callout">
-            <div style={{ fontWeight: 700 }}>A) Terms（主檔）</div>
-            <div className="muted" style={{ marginTop: 6 }}>
-              清單/搜尋/建立/停用/改標目/variant labels；term detail 可做 usage + merge/redirect。
+        <SectionHeader title="Kind（治理範圍）" description="先選你要治理的 controlled vocab 類型，再進入對應工具（Terms/Thesaurus/Backfill）。" />
+        <Form onSubmit={(e) => e.preventDefault()}>
+          <FormSection title="治理範圍" description="vocabulary_code 會用於 thesaurus 與 quick find（建議先選 builtin-zh 或 local）。">
+            <div className="grid2">
+              <Field label="kind" htmlFor="authority_kind">
+                <select id="authority_kind" value={kind} onChange={(e) => setKind(e.target.value as AuthorityTerm['kind'])}>
+                  {AUTHORITY_KIND_OPTIONS.map((o) => (
+                    <option key={o.value} value={o.value}>
+                      {o.label}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+              <Field label="vocabulary_code" htmlFor="authority_vocab" hint="例如 builtin-zh / local">
+                <input
+                  id="authority_vocab"
+                  value={vocabularyCode}
+                  onChange={(e) => setVocabularyCode(e.target.value)}
+                  placeholder="builtin-zh / local"
+                />
+              </Field>
             </div>
-            <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 10 }}>
-              <Link href={`/orgs/${params.orgId}/authority-terms?kind=${encodeURIComponent(kind)}`}>開啟 Terms List</Link>
+          </FormSection>
+        </Form>
+      </section>
+
+      <section className="panel">
+        <SectionHeader title="治理入口" description="把常用治理流程收斂成清楚的入口（Terms / Thesaurus / Backfill）。" />
+
+        <div className="cardGrid">
+          <div className="card">
+            <div className="cardHeader">
+              <div className="cardIcon" aria-hidden="true">
+                <NavIcon id="authority" size={20} />
+              </div>
+              <div>
+                <div className="cardTitle">A) Terms（主檔）</div>
+                <div className="cardMeta">清單/搜尋/建立/停用/variant labels；term detail 可做 usage + merge/redirect。</div>
+              </div>
+            </div>
+            <div className="cardLinks">
+              <Link className="btnSmall" href={`/orgs/${params.orgId}/authority-terms?kind=${encodeURIComponent(kind)}`}>
+                開啟 Terms List
+              </Link>
             </div>
           </div>
 
-          <div className={`callout ${thesaurusKind ? '' : 'warn'}`}>
-            <div style={{ fontWeight: 700 }}>B) Thesaurus（BT/NT/RT）</div>
-            <div className="muted" style={{ marginTop: 6 }}>
-              目前只支援 <code>subject/geographic/genre</code>（因為 name 不做 BT/NT）。Thesaurus 入口含：Browser / Quality / Visual / 匯入匯出。
+          <div className={thesaurusKind ? 'card' : 'card card--warn'}>
+            <div className="cardHeader">
+              <div className="cardIcon" aria-hidden="true">
+                <NavIcon id="authority" size={20} />
+              </div>
+              <div>
+                <div className="cardTitle">B) Thesaurus（BT/NT/RT）</div>
+                <div className="cardMeta">
+                  目前只支援 <code>subject/geographic/genre</code>（name 不做 BT/NT）。入口含：Browser / Quality / Visual / 匯入匯出。
+                </div>
+              </div>
             </div>
+
             {thesaurusKind ? (
-              <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 10 }}>
+              <div className="cardLinks">
                 <Link
+                  className="btnSmall"
                   href={`/orgs/${params.orgId}/authority-terms/thesaurus?kind=${encodeURIComponent(thesaurusKind)}&vocabulary_code=${encodeURIComponent(
                     vocabularyCode.trim() || 'builtin-zh',
                   )}`}
                 >
-                  Thesaurus Browser（含 Import/Export）
+                  Browser
                 </Link>
                 <Link
+                  className="btnSmall"
                   href={`/orgs/${params.orgId}/authority-terms/thesaurus/quality?kind=${encodeURIComponent(thesaurusKind)}&vocabulary_code=${encodeURIComponent(
                     vocabularyCode.trim() || 'builtin-zh',
                   )}`}
                 >
-                  Thesaurus Quality
+                  Quality
                 </Link>
                 <Link
+                  className="btnSmall"
                   href={`/orgs/${params.orgId}/authority-terms/thesaurus/visual?kind=${encodeURIComponent(thesaurusKind)}&vocabulary_code=${encodeURIComponent(
                     vocabularyCode.trim() || 'builtin-zh',
                   )}`}
                 >
-                  Thesaurus Visual Editor
+                  Visual Editor
                 </Link>
               </div>
             ) : (
-              <div className="muted" style={{ marginTop: 10 }}>
-                你目前選的 kind=<code>{kind}</code> 不支援 BT/NT；請改用「Terms 主檔」治理（或回到 subject/geographic/genre）。
+              <Alert variant="warning" title="此 kind 不支援 Thesaurus">
+                你目前選的 kind=<code>{kind}</code> 不支援 BT/NT；請改用「Terms 主檔」治理（或切換到 subject/geographic/genre）。
+              </Alert>
+            )}
+          </div>
+
+          <div className="card">
+            <div className="cardHeader">
+              <div className="cardIcon" aria-hidden="true">
+                <NavIcon id="maintenance" size={20} />
               </div>
-            )}
-          </div>
-
-          <div className="callout">
-            <div style={{ fontWeight: 700 }}>C) Backfill（既有資料 → term_id-driven）</div>
-            <div className="muted" style={{ marginTop: 6 }}>
-              把歷史的 <code>text[]</code>（例如 subjects / geographics / genres）回填到 junction table，並輸出 auto-created / ambiguous / unmatched 報表，讓 term-based 真正落地。
+              <div>
+                <div className="cardTitle">C) Backfill（既有資料 → term_id-driven）</div>
+                <div className="cardMeta">
+                  把歷史的 <code>text[]</code>（例如 subjects / geographics / genres）回填到 junction table，並輸出 auto-created / ambiguous / unmatched 報表，讓 term-based 真正落地。
+                </div>
+              </div>
             </div>
-            <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 10 }}>
-              <Link href={`/orgs/${params.orgId}/bibs/maintenance/backfill-subject-terms`}>subjects backfill</Link>
-              <Link href={`/orgs/${params.orgId}/bibs/maintenance/backfill-geographic-terms`}>geographics backfill</Link>
-              <Link href={`/orgs/${params.orgId}/bibs/maintenance/backfill-genre-terms`}>genres backfill</Link>
-              <Link href={`/orgs/${params.orgId}/bibs/maintenance/backfill-name-terms`}>names backfill</Link>
+            <div className="cardLinks">
+              <Link className="btnSmall" href={`/orgs/${params.orgId}/bibs/maintenance/backfill-subject-terms`}>
+                650 subject
+              </Link>
+              <Link className="btnSmall" href={`/orgs/${params.orgId}/bibs/maintenance/backfill-geographic-terms`}>
+                651 geographic
+              </Link>
+              <Link className="btnSmall" href={`/orgs/${params.orgId}/bibs/maintenance/backfill-genre-terms`}>
+                655 genre
+              </Link>
+              <Link className="btnSmall" href={`/orgs/${params.orgId}/bibs/maintenance/backfill-name-terms`}>
+                100/700 name
+              </Link>
             </div>
           </div>
         </div>
       </section>
 
       <section className="panel">
-        <h2 style={{ marginTop: 0 }}>Quick Find（跳到 term detail）</h2>
-        <p className="muted">
-          這裡用 <code>suggest</code> 做快速跳轉（適合治理時先找到目標 term，再進 detail 做 usage/merge/relations）。
-        </p>
+        <SectionHeader
+          title="Quick Find（跳到 term detail）"
+          description={
+            <>
+              用 <code>suggest</code> 做快速跳轉（適合治理時先找到目標 term，再進 detail 做 usage/merge/relations）。
+            </>
+          }
+        />
 
-        {error ? <p className="error">錯誤：{error}</p> : null}
+        <Form
+          onSubmit={(e) => {
+            e.preventDefault();
+            void runSuggest();
+          }}
+        >
+          <FormSection title="查詢" description="建議先選上方 kind/vocabulary_code，再輸入關鍵字。">
+            <div className="toolbar">
+              <div className="toolbarLeft" style={{ flex: 1, minWidth: 260 }}>
+                <Field label="query" htmlFor="authority_quick_find_query">
+                  <input
+                    id="authority_quick_find_query"
+                    value={q}
+                    onChange={(e) => setQ(e.target.value)}
+                    placeholder="例如：汰舊 / 報廢 / 台灣 / fantasy"
+                  />
+                </Field>
+              </div>
+              <div className="toolbarRight">
+                <button type="submit" className="btnPrimary" disabled={suggesting || !q.trim()}>
+                  {suggesting ? '搜尋中…' : '搜尋'}
+                </button>
+              </div>
+            </div>
 
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'flex-end' }}>
-          <label style={{ width: 420 }}>
-            query
-            <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="例如：汰舊 / 報廢 / 台灣 / fantasy" />
-          </label>
-          <button type="button" onClick={() => void runSuggest()} disabled={suggesting || !q.trim()}>
-            {suggesting ? '搜尋中…' : '搜尋'}
-          </button>
-        </div>
-
-        {suggestions ? (
-          <div style={{ marginTop: 12 }}>
-            {suggestions.length === 0 ? (
-              <div className="muted">（沒有建議；可改用 Terms List 建立新 term）</div>
-            ) : (
-              <ul>
-                {suggestions.map((t) => (
-                  <li key={t.id} style={{ marginBottom: 8 }}>
-                    <Link href={`/orgs/${params.orgId}/authority-terms/${t.id}`}>{t.preferred_label}</Link>{' '}
-                    <span className="muted">
-                      ({t.kind} · {t.status} · vocab={t.vocabulary_code ?? '—'})
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-        ) : null}
+            {suggesting ? <SkeletonText lines={3} /> : null}
+            {suggestions ? (
+              suggestions.length === 0 ? (
+                <EmptyState title="沒有建議" description="可改用 Terms List 建立新 term，或調整 query / vocabulary_code。" />
+              ) : (
+                <DataTable
+                  rows={suggestions}
+                  getRowKey={(r) => r.id}
+                  density="compact"
+                  columns={[
+                    {
+                      id: 'label',
+                      header: 'term',
+                      cell: (r) => (
+                        <div style={{ display: 'grid', gap: 2 }}>
+                          <Link href={`/orgs/${params.orgId}/authority-terms/${r.id}`} style={{ fontWeight: 800 }}>
+                            {r.preferred_label}
+                          </Link>
+                          <div className="muted" style={{ fontSize: 12, wordBreak: 'break-all' }}>
+                            <code>{r.id}</code>
+                          </div>
+                        </div>
+                      ),
+                      sortValue: (r) => r.preferred_label,
+                    },
+                    { id: 'kind', header: 'kind', cell: (r) => <code>{r.kind}</code>, width: 120, sortValue: (r) => r.kind },
+                    {
+                      id: 'status',
+                      header: 'status',
+                      cell: (r) => <code>{r.status}</code>,
+                      width: 120,
+                      sortValue: (r) => r.status,
+                    },
+                    {
+                      id: 'vocab',
+                      header: 'vocab',
+                      cell: (r) => <code>{r.vocabulary_code ?? '—'}</code>,
+                      width: 140,
+                      sortValue: (r) => r.vocabulary_code ?? '',
+                    },
+                  ]}
+                />
+              )
+            ) : null}
+          </FormSection>
+        </Form>
       </section>
 
       <section className="panel">
-        <h2 style={{ marginTop: 0 }}>MARC Tools（交換格式）</h2>
-        <p className="muted">
-          MARC 是交換格式；本系統的治理真相來源仍是 term_id-driven（junction tables）。MARC 編輯器主要用來編輯 <code>marc_extras</code> 與下載 <code>.mrc/.xml/.json</code>。
-        </p>
+        <SectionHeader
+          title="MARC Tools（交換格式）"
+          description={
+            <>
+              MARC 是交換格式；治理真相來源仍是 term_id-driven（junction tables）。MARC 編輯器主要用來編輯 <code>marc_extras</code> 與下載 <code>.mrc/.xml/.json</code>。
+            </>
+          }
+        />
 
-        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 12 }}>
-          <Link href={`/orgs/${params.orgId}/bibs/import-marc`}>MARC Import</Link>
-          <Link href={`/orgs/${params.orgId}/bibs/marc-editor`}>MARC21 編輯器</Link>
-          <Link href={`/orgs/${params.orgId}/bibs/marc-dictionary`}>MARC 欄位字典</Link>
+        <div className="cardGrid">
+          <div className="card">
+            <div className="cardHeader">
+              <div className="cardIcon" aria-hidden="true">
+                <NavIcon id="marc" size={20} />
+              </div>
+              <div>
+                <div className="cardTitle">MARC Import</div>
+                <div className="cardMeta">批次 preview/apply；未對映欄位保留到 marc_extras。</div>
+              </div>
+            </div>
+            <div className="cardLinks">
+              <Link className="btnSmall" href={`/orgs/${params.orgId}/bibs/import-marc`}>
+                開啟
+              </Link>
+            </div>
+          </div>
+
+          <div className="card">
+            <div className="cardHeader">
+              <div className="cardIcon" aria-hidden="true">
+                <NavIcon id="marc" size={20} />
+              </div>
+              <div>
+                <div className="cardTitle">MARC 編輯器</div>
+                <div className="cardMeta">編輯 marc_extras；下載 .mrc/.xml/.json。</div>
+              </div>
+            </div>
+            <div className="cardLinks">
+              <Link className="btnSmall" href={`/orgs/${params.orgId}/bibs/marc-editor`}>
+                開啟
+              </Link>
+            </div>
+          </div>
+
+          <div className="card">
+            <div className="cardHeader">
+              <div className="cardIcon" aria-hidden="true">
+                <NavIcon id="marc" size={20} />
+              </div>
+              <div>
+                <div className="cardTitle">MARC 欄位字典</div>
+                <div className="cardMeta">欄位/指標/子欄位一覽 + 搜尋（供編目與驗證）。</div>
+              </div>
+            </div>
+            <div className="cardLinks">
+              <Link className="btnSmall" href={`/orgs/${params.orgId}/bibs/marc-dictionary`}>
+                開啟
+              </Link>
+            </div>
+          </div>
         </div>
       </section>
     </div>
   );
 }
-

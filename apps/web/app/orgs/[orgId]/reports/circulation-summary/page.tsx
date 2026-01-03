@@ -24,6 +24,12 @@ import {
   downloadCirculationSummaryReportCsv,
   listCirculationSummaryReport,
 } from '../../../../lib/api';
+import { Alert } from '../../../../components/ui/alert';
+import { DataTable } from '../../../../components/ui/data-table';
+import { EmptyState } from '../../../../components/ui/empty-state';
+import { Field, Form, FormActions, FormSection } from '../../../../components/ui/form';
+import { PageHeader, SectionHeader } from '../../../../components/ui/page-header';
+import { SkeletonTable } from '../../../../components/ui/skeleton';
 import { formatErrorMessage } from '../../../../lib/error';
 import { useStaffSession } from '../../../../lib/use-staff-session';
 
@@ -165,10 +171,7 @@ export default function CirculationSummaryPage({ params }: { params: { orgId: st
   if (!sessionReady) {
     return (
       <div className="stack">
-        <section className="panel">
-          <h1 style={{ marginTop: 0 }}>Circulation Summary</h1>
-          <p className="muted">載入登入狀態中…</p>
-        </section>
+        <PageHeader title="流通摘要（Circulation Summary）" description="載入登入狀態中…" />
       </div>
     );
   }
@@ -176,13 +179,19 @@ export default function CirculationSummaryPage({ params }: { params: { orgId: st
   if (!session) {
     return (
       <div className="stack">
-        <section className="panel">
-          <h1 style={{ marginTop: 0 }}>Circulation Summary</h1>
-          <p className="error">
-            這頁需要 staff 登入才能查詢/下載。請先前往{' '}
-            <Link href={`/orgs/${params.orgId}/login`}>/login</Link>。
-          </p>
-        </section>
+        <PageHeader
+          title="流通摘要（Circulation Summary）"
+          description="這頁需要 staff 登入（StaffAuthGuard），才能查詢/下載報表。"
+          actions={
+            <Link className="btnSmall btnPrimary" href={`/orgs/${params.orgId}/login`}>
+              前往登入
+            </Link>
+          }
+        >
+          <Alert variant="danger" title="需要登入">
+            這頁需要 staff 登入才能查詢/下載。請先前往 <Link href={`/orgs/${params.orgId}/login`}>/login</Link>。
+          </Alert>
+        </PageHeader>
       </div>
     );
   }
@@ -197,124 +206,147 @@ export default function CirculationSummaryPage({ params }: { params: { orgId: st
 
   return (
     <div className="stack">
-      <section className="panel">
-        <h1 style={{ marginTop: 0 }}>Circulation Summary</h1>
-        <p className="muted">
-          對應 API：<code>GET /api/v1/orgs/:orgId/reports/circulation-summary</code>
-        </p>
-        <p className="muted">
-          這個報表用 <code>loans.checked_out_at</code> 統計「借出筆數」，並用 <code>group_by</code>{' '}
-          彙總成日/週/月。
-        </p>
-
-        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-          <Link href={`/orgs/${params.orgId}/reports/overdue`}>→ Overdue Report</Link>
-          <Link href={`/orgs/${params.orgId}/reports/top-circulation`}>→ Top Circulation</Link>
+      <PageHeader
+        title="流通摘要（Circulation Summary）"
+        description={
+          <>
+            對應 API：<code>GET /api/v1/orgs/:orgId/reports/circulation-summary</code>；統計基準：<code>loans.checked_out_at</code>
+          </>
+        }
+        actions={
+          <>
+            <Link className="btnSmall" href={`/orgs/${params.orgId}/reports/overdue`}>
+              Overdue
+            </Link>
+            <Link className="btnSmall" href={`/orgs/${params.orgId}/reports/top-circulation`}>
+              Top Circulation
+            </Link>
+          </>
+        }
+      >
+        <div className="muted">
+          actor_user_id（查詢者）：<code>{session.user.id}</code>（{session.user.name} / {session.user.role}）
         </div>
+        {error ? (
+          <Alert variant="danger" title="操作失敗">
+            {error}
+          </Alert>
+        ) : null}
+        {success ? <Alert variant="success" title={success} role="status" /> : null}
+      </PageHeader>
 
-        <hr style={{ border: 0, borderTop: '1px solid var(--border)', margin: '16px 0' }} />
+      <section className="panel">
+        <SectionHeader title="查詢" description="from/to 以本地時間顯示；送出時轉成 ISO（UTC）供後端比較。" />
 
-        <p className="muted">
-          actor_user_id（查詢者）已鎖定為：<code>{session.user.id}</code>（{session.user.name} /{' '}
-          {session.user.role}）
-        </p>
+        <Form onSubmit={onSearch} style={{ marginTop: 12 }}>
+          <FormSection title="條件" description="from/to 以本地時間顯示，送出時會轉成 ISO（UTC）給後端比較。">
+            <div className="grid3">
+              <Field label="from（本地時間顯示）" htmlFor="summary_from">
+                <input
+                  id="summary_from"
+                  type="datetime-local"
+                  value={fromLocal}
+                  onChange={(e) => setFromLocal(e.target.value)}
+                />
+              </Field>
 
-        {error ? <p className="error">錯誤：{error}</p> : null}
-        {success ? <p className="success">{success}</p> : null}
+              <Field label="to（本地時間顯示）" htmlFor="summary_to">
+                <input
+                  id="summary_to"
+                  type="datetime-local"
+                  value={toLocal}
+                  onChange={(e) => setToLocal(e.target.value)}
+                />
+              </Field>
+
+              <Field label="group_by（彙總顆粒度）" htmlFor="summary_group_by">
+                <select
+                  id="summary_group_by"
+                  value={groupBy}
+                  onChange={(e) => setGroupBy(e.target.value as any)}
+                >
+                  <option value="day">day（日）</option>
+                  <option value="week">week（週）</option>
+                  <option value="month">month（月）</option>
+                </select>
+              </Field>
+            </div>
+
+            <FormActions>
+              <button type="submit" className="btnPrimary" disabled={loading}>
+                {loading ? '查詢中…' : '查詢'}
+              </button>
+              <button type="button" className="btnSmall" onClick={() => void onDownloadCsv()} disabled={downloading || loading}>
+                {downloading ? '下載中…' : '下載 CSV'}
+              </button>
+
+              {/* 小工具：快速切換常用期間（學校現場常用） */}
+              <button type="button" className="btnSmall" onClick={() => setPresetDays(7)} disabled={loading || downloading}>
+                近 7 天
+              </button>
+              <button type="button" className="btnSmall" onClick={() => setPresetDays(30)} disabled={loading || downloading}>
+                近 30 天
+              </button>
+              <button type="button" className="btnSmall" onClick={() => setPresetDays(180)} disabled={loading || downloading}>
+                近 180 天（約一學期）
+              </button>
+
+              <button
+                type="button"
+                className="btnSmall"
+                onClick={() => {
+                  setPresetDays(30);
+                  setGroupBy('day');
+                  void refresh();
+                }}
+                disabled={loading || downloading}
+              >
+                重設
+              </button>
+            </FormActions>
+          </FormSection>
+        </Form>
       </section>
 
       <section className="panel">
-        <h2 style={{ marginTop: 0 }}>查詢條件</h2>
+        <SectionHeader
+          title="結果"
+          description={rows ? `bucket=${rows.length} · total_loans=${totalLoans}` : undefined}
+        />
 
-        <form onSubmit={onSearch} className="stack" style={{ marginTop: 12 }}>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
-            <label>
-              from（本地時間顯示）
-              <input type="datetime-local" value={fromLocal} onChange={(e) => setFromLocal(e.target.value)} />
-            </label>
+        {loading && !rows ? <SkeletonTable columns={2} rows={8} /> : null}
 
-            <label>
-              to（本地時間顯示）
-              <input type="datetime-local" value={toLocal} onChange={(e) => setToLocal(e.target.value)} />
-            </label>
+        {!loading && !rows ? <EmptyState title="尚未查詢" description="請先設定查詢條件後按「查詢」。" /> : null}
 
-            <label>
-              group_by（彙總顆粒度）
-              <select value={groupBy} onChange={(e) => setGroupBy(e.target.value as any)}>
-                <option value="day">day（日）</option>
-                <option value="week">week（週）</option>
-                <option value="month">month（月）</option>
-              </select>
-            </label>
-          </div>
-
-          <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-            <button type="submit" disabled={loading}>
-              {loading ? '查詢中…' : '查詢'}
-            </button>
-            <button type="button" onClick={() => void onDownloadCsv()} disabled={downloading || loading}>
-              {downloading ? '下載中…' : '下載 CSV'}
-            </button>
-
-            {/* 小工具：快速切換常用期間（學校現場常用） */}
-            <button type="button" onClick={() => setPresetDays(7)} disabled={loading || downloading}>
-              近 7 天
-            </button>
-            <button type="button" onClick={() => setPresetDays(30)} disabled={loading || downloading}>
-              近 30 天
-            </button>
-            <button type="button" onClick={() => setPresetDays(180)} disabled={loading || downloading}>
-              近 180 天（約一學期）
-            </button>
-
-            <button
-              type="button"
-              onClick={() => {
-                setPresetDays(30);
-                setGroupBy('day');
-                void refresh();
-              }}
-              disabled={loading || downloading}
-            >
-              重設
-            </button>
-          </div>
-        </form>
-      </section>
-
-      <section className="panel">
-        <h2 style={{ marginTop: 0 }}>結果</h2>
-
-        {loading ? <p className="muted">載入中…</p> : null}
-        {!loading && rows && rows.length === 0 ? <p className="muted">沒有資料（此期間沒有借出）。</p> : null}
+        {!loading && rows && rows.length === 0 ? (
+          <EmptyState title="沒有資料" description="此期間沒有任何借出（loans.checked_out_at）。" />
+        ) : null}
 
         {!loading && rows && rows.length > 0 ? (
-          <>
-            <p className="muted">
-              bucket 數：{rows.length} · 總借出筆數：{totalLoans}
-            </p>
-
-            <div style={{ overflowX: 'auto' }}>
-              <table>
-                <thead>
-                  <tr>
-                    <th>bucket_start</th>
-                    <th>loan_count</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {rows.map((r) => (
-                    <tr key={r.bucket_start}>
-                      <td>
-                        <code style={{ fontSize: 12 }}>{r.bucket_start}</code>
-                      </td>
-                      <td>{r.loan_count}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </>
+          <div className="stack" style={{ marginTop: 12 }}>
+            <DataTable<CirculationSummaryRow>
+              rows={rows}
+              getRowKey={(r) => r.bucket_start}
+              initialSort={{ columnId: 'bucket_start', direction: 'asc' }}
+              sortHint="本報表一次載入全部資料；排序會即時套用在目前結果。"
+              columns={[
+                {
+                  id: 'bucket_start',
+                  header: 'bucket_start',
+                  cell: (r) => <code>{r.bucket_start}</code>,
+                  sortValue: (r) => r.bucket_start,
+                },
+                {
+                  id: 'loan_count',
+                  header: 'loan_count',
+                  cell: (r) => <code>{r.loan_count}</code>,
+                  sortValue: (r) => r.loan_count,
+                  align: 'right',
+                  width: 160,
+                },
+              ]}
+            />
+          </div>
         ) : null}
       </section>
     </div>

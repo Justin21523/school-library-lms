@@ -16,7 +16,7 @@
 
 'use client';
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 
 import Link from 'next/link';
 
@@ -26,6 +26,12 @@ import type {
   HoldWithDetails,
 } from '../../../../lib/api';
 import { applyExpireReadyHolds, previewExpireReadyHolds } from '../../../../lib/api';
+import { Alert } from '../../../../components/ui/alert';
+import { DataTable } from '../../../../components/ui/data-table';
+import { EmptyState } from '../../../../components/ui/empty-state';
+import { Field, Form, FormActions, FormSection } from '../../../../components/ui/form';
+import { PageHeader, SectionHeader } from '../../../../components/ui/page-header';
+import { SkeletonTable } from '../../../../components/ui/skeleton';
 import { formatErrorMessage } from '../../../../lib/error';
 import { useStaffSession } from '../../../../lib/use-staff-session';
 
@@ -45,13 +51,6 @@ function fromDateTimeLocalToIso(value: string) {
   const date = new Date(trimmed);
   if (Number.isNaN(date.getTime())) return null;
   return date.toISOString();
-}
-
-function formatHoldLabel(hold: HoldWithDetails) {
-  const who = `${hold.user_name} (${hold.user_external_id})`;
-  const what = hold.bibliographic_title;
-  const item = hold.assigned_item_barcode ? ` · item=${hold.assigned_item_barcode}` : '';
-  return `${who} · ${what}${item}`;
 }
 
 export default function HoldsMaintenancePage({ params }: { params: { orgId: string } }) {
@@ -89,10 +88,7 @@ export default function HoldsMaintenancePage({ params }: { params: { orgId: stri
   if (!sessionReady) {
     return (
       <div className="stack">
-        <section className="panel">
-          <h1 style={{ marginTop: 0 }}>Holds Maintenance</h1>
-          <p className="muted">載入登入狀態中…</p>
-        </section>
+        <PageHeader title="Holds Maintenance" description="載入登入狀態中…" />
       </div>
     );
   }
@@ -100,12 +96,19 @@ export default function HoldsMaintenancePage({ params }: { params: { orgId: stri
   if (!session) {
     return (
       <div className="stack">
-        <section className="panel">
-          <h1 style={{ marginTop: 0 }}>Holds Maintenance</h1>
-          <p className="error">
+        <PageHeader
+          title="Holds Maintenance"
+          description="這頁需要 staff 登入（StaffAuthGuard），才能 preview/apply 到期處理。"
+          actions={
+            <Link className="btnSmall btnPrimary" href={`/orgs/${params.orgId}/login`}>
+              前往登入
+            </Link>
+          }
+        >
+          <Alert variant="danger" title="需要登入">
             這頁需要 staff 登入才能操作。請先前往 <Link href={`/orgs/${params.orgId}/login`}>/login</Link>。
-          </p>
-        </section>
+          </Alert>
+        </PageHeader>
       </div>
     );
   }
@@ -195,171 +198,291 @@ export default function HoldsMaintenancePage({ params }: { params: { orgId: stri
     }
   }
 
+  const previewRankByHoldId = useMemo(() => {
+    const m = new Map<string, number>();
+    (preview?.holds ?? []).forEach((h, idx) => m.set(h.id, idx + 1));
+    return m;
+  }, [preview]);
+
+  const applyRankByAuditEventId = useMemo(() => {
+    const m = new Map<string, number>();
+    (applyResult?.results ?? []).forEach((r, idx) => m.set(r.audit_event_id, idx + 1));
+    return m;
+  }, [applyResult]);
+
   return (
     <div className="stack">
-      <section className="panel">
-        <h1 style={{ marginTop: 0 }}>Holds Maintenance</h1>
-        <p className="muted">
-          這頁是「館員每日例行作業」入口：先提供到期處理（ready_until → expired）。套用後可到{' '}
-          <Link href={`/orgs/${params.orgId}/audit-events`}>Audit Events</Link> 用 action{' '}
-          <code>hold.expire</code> 查追溯。
-        </p>
-
-        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-          <Link href={`/orgs/${params.orgId}/holds`}>← 回 Holds 工作台</Link>
+      <PageHeader
+        title="Holds Maintenance"
+        description={
+          <>
+            到期處理（ready_until → expired）。套用後可到 <Link href={`/orgs/${params.orgId}/audit-events`}>Audit Events</Link> 用 action{' '}
+            <code>hold.expire</code> 追溯。
+          </>
+        }
+        actions={
+          <>
+            <Link className="btnSmall" href={`/orgs/${params.orgId}/holds`}>
+              Holds 工作台
+            </Link>
+            <Link className="btnSmall" href={`/orgs/${params.orgId}/audit-events`}>
+              Audit Events
+            </Link>
+          </>
+        }
+      >
+        <div className="muted">
+          actor_user_id（操作者）：<code>{session.user.id}</code>（{session.user.name} / {session.user.role}）
         </div>
+        <Alert variant="warning" title="安全提示">
+          建議先按 <strong>Preview</strong> 確認候選清單與筆數，再按 <strong>Apply</strong> 執行到期處理（會寫入 audit）。
+        </Alert>
 
-        <hr style={{ border: 0, borderTop: '1px solid var(--border)', margin: '16px 0' }} />
+        <Form onSubmit={(e) => e.preventDefault()} style={{ marginTop: 12 }}>
+          <FormSection title="參數" description="as_of 可留空（後端用 DB now()）；note 會寫入 audit metadata 方便追溯。">
+            <Field label="as_of（選填；留空則使用後端 DB now()）" htmlFor="holds_as_of">
+              <input
+                id="holds_as_of"
+                type="datetime-local"
+                value={asOfLocal}
+                onChange={(e) => setAsOfLocal(e.target.value)}
+              />
+            </Field>
 
-        <p className="muted">
-          actor_user_id（操作者）已鎖定為：<code>{session.user.id}</code>（{session.user.name} /{' '}
-          {session.user.role}）
-        </p>
+            <div className="grid2">
+              <Field label="limit（一次最多處理幾筆；預設 200）" htmlFor="holds_limit">
+                <input id="holds_limit" value={limit} onChange={(e) => setLimit(e.target.value)} />
+              </Field>
+              <Field label="note（選填；寫入 audit metadata）" htmlFor="holds_note" hint="例：每日到期處理 / 連假後補處理">
+                <input
+                  id="holds_note"
+                  value={note}
+                  onChange={(e) => setNote(e.target.value)}
+                  placeholder="例：每日到期處理 / 連假後補處理"
+                />
+              </Field>
+            </div>
 
-        <div style={{ display: 'grid', gap: 12, marginTop: 12 }}>
-          <label>
-            as_of（選填；留空則使用後端 DB now()）
-            <input
-              type="datetime-local"
-              value={asOfLocal}
-              onChange={(e) => setAsOfLocal(e.target.value)}
-            />
-          </label>
+            <FormActions>
+              <button type="button" className="btnPrimary" onClick={() => void runPreview()} disabled={previewing || applying}>
+                {previewing ? '預覽中…' : '預覽（Preview）'}
+              </button>
+              <button type="button" className="btnDanger" onClick={() => void runApply()} disabled={applying || previewing}>
+                {applying ? '套用中…' : '套用（Apply）'}
+              </button>
+              <button
+                type="button"
+                className="btnSmall"
+                onClick={() => {
+                  setPreview(null);
+                  setApplyResult(null);
+                  setError(null);
+                  setSuccess(null);
+                }}
+                disabled={previewing || applying}
+              >
+                清除結果
+              </button>
+            </FormActions>
+          </FormSection>
+        </Form>
 
-          <label>
-            limit（一次最多處理幾筆；預設 200）
-            <input value={limit} onChange={(e) => setLimit(e.target.value)} />
-          </label>
+        {previewing || applying ? <Alert variant="info" title={previewing ? '預覽中…' : '套用中…'} role="status" /> : null}
+        {error ? (
+          <Alert variant="danger" title="操作失敗">
+            {error}
+          </Alert>
+        ) : null}
+        {success ? <Alert variant="success" title={success} role="status" /> : null}
+      </PageHeader>
 
-          <label>
-            note（選填；寫入 audit metadata）
-            <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="例：每日到期處理 / 連假後補處理" />
-          </label>
-        </div>
-
-        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 12 }}>
-          <button type="button" onClick={() => void runPreview()} disabled={previewing}>
-            {previewing ? '預覽中…' : '預覽（Preview）'}
-          </button>
-          <button type="button" onClick={() => void runApply()} disabled={applying}>
-            {applying ? '套用中…' : '套用（Apply）'}
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              setPreview(null);
-              setApplyResult(null);
-              setError(null);
-              setSuccess(null);
-            }}
-            disabled={previewing || applying}
-          >
-            清除結果
-          </button>
-        </div>
-
-        {error ? <p className="error">錯誤：{error}</p> : null}
-        {success ? <p className="success">{success}</p> : null}
-      </section>
+      {previewing && !preview ? (
+        <section className="panel">
+          <SectionHeader title="Preview 結果" />
+          <SkeletonTable columns={7} rows={6} />
+        </section>
+      ) : null}
 
       {preview ? (
         <section className="panel">
-          <h2 style={{ marginTop: 0 }}>Preview 結果</h2>
-          <div className="muted" style={{ display: 'grid', gap: 6 }}>
-            <div>
-              as_of：<code>{preview.as_of}</code>
-            </div>
-            <div>candidates_total：{preview.candidates_total}</div>
-            <div>
-              本次顯示：{preview.holds.length}（limit={preview.limit}）
-            </div>
-          </div>
-
-          <hr style={{ border: 0, borderTop: '1px solid var(--border)', margin: '16px 0' }} />
+          <SectionHeader title="Preview 結果" />
+          <Alert variant="info" title="Preview 摘要" role="status">
+            as_of=<code>{preview.as_of}</code> · candidates_total=<code>{preview.candidates_total}</code> · showing=
+            <code>{preview.holds.length}</code> · limit=<code>{preview.limit}</code>
+          </Alert>
 
           {preview.holds.length === 0 ? (
-            <p className="muted">（沒有需要處理的 holds）</p>
+            <EmptyState title="沒有需要處理的 holds" description="代表目前沒有 ready_until 已過期的 ready holds。" />
           ) : (
-            <ul>
-              {preview.holds.map((h) => (
-                <li key={h.id} style={{ marginBottom: 10 }}>
-                  <div style={{ display: 'grid', gap: 4 }}>
-                    <div style={{ fontWeight: 700 }}>{formatHoldLabel(h)}</div>
-                    <div className="muted">
-                      status={h.status} · ready_until={h.ready_until ?? '-'} · pickup={h.pickup_location_name} (
-                      {h.pickup_location_code})
+            <DataTable<HoldWithDetails>
+              rows={preview.holds}
+              getRowKey={(h) => h.id}
+              initialSort={{ columnId: 'rank', direction: 'asc' }}
+              sortHint="Preview 清單一次載入；排序會即時套用在目前結果。"
+              columns={[
+                {
+                  id: 'rank',
+                  header: '#（API rank）',
+                  cell: (h) => <code>{previewRankByHoldId.get(h.id) ?? '—'}</code>,
+                  sortValue: (h) => previewRankByHoldId.get(h.id) ?? 0,
+                  align: 'right',
+                  width: 120,
+                },
+                {
+                  id: 'borrower',
+                  header: 'borrower',
+                  cell: (h) => (
+                    <div style={{ display: 'grid', gap: 2 }}>
+                      <div>{h.user_name}</div>
+                      <div className="muted">
+                        <code>{h.user_external_id}</code> · {h.user_role}
+                      </div>
                     </div>
-                    <div className="muted" style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>
-                      hold_id={h.id}
-                    </div>
-                  </div>
-                </li>
-              ))}
-            </ul>
+                  ),
+                  sortValue: (h) => h.user_external_id,
+                  width: 220,
+                },
+                {
+                  id: 'title',
+                  header: 'title',
+                  cell: (h) => (
+                    <Link href={`/orgs/${params.orgId}/bibs/${h.bibliographic_id}`}>
+                      <span style={{ fontWeight: 800 }}>{h.bibliographic_title}</span>
+                    </Link>
+                  ),
+                  sortValue: (h) => h.bibliographic_title,
+                },
+                {
+                  id: 'item',
+                  header: 'item',
+                  cell: (h) =>
+                    h.assigned_item_id && h.assigned_item_barcode ? (
+                      <Link href={`/orgs/${params.orgId}/items/${h.assigned_item_id}`}>{h.assigned_item_barcode}</Link>
+                    ) : h.assigned_item_barcode ? (
+                      <span>{h.assigned_item_barcode}</span>
+                    ) : (
+                      <span className="muted">—</span>
+                    ),
+                  sortValue: (h) => h.assigned_item_barcode ?? '',
+                  width: 160,
+                },
+                {
+                  id: 'ready_until',
+                  header: 'ready_until',
+                  cell: (h) => <code>{h.ready_until ?? '—'}</code>,
+                  sortValue: (h) => h.ready_until ?? '',
+                  width: 210,
+                },
+                {
+                  id: 'pickup',
+                  header: 'pickup',
+                  cell: (h) => (
+                    <span className="muted">
+                      {h.pickup_location_name} ({h.pickup_location_code})
+                    </span>
+                  ),
+                  sortValue: (h) => `${h.pickup_location_code} ${h.pickup_location_name}`,
+                  width: 220,
+                },
+                {
+                  id: 'hold_id',
+                  header: 'hold_id',
+                  cell: (h) => <code>{h.id}</code>,
+                  sortValue: (h) => h.id,
+                  width: 310,
+                },
+              ]}
+            />
           )}
+        </section>
+      ) : null}
+
+      {applying && !applyResult ? (
+        <section className="panel">
+          <SectionHeader title="Apply 結果" />
+          <SkeletonTable columns={6} rows={6} />
         </section>
       ) : null}
 
       {applyResult ? (
         <section className="panel">
-          <h2 style={{ marginTop: 0 }}>Apply 結果</h2>
-          <div className="muted" style={{ display: 'grid', gap: 6 }}>
-            <div>
-              as_of：<code>{applyResult.as_of}</code>
-            </div>
-            <div>
-              candidates_total={applyResult.summary.candidates_total} · processed={applyResult.summary.processed} ·
-              transferred={applyResult.summary.transferred} · released={applyResult.summary.released} ·
-              skipped_item_action={applyResult.summary.skipped_item_action}
-            </div>
-          </div>
+          <SectionHeader title="Apply 結果" />
+          <Alert variant="info" title="Apply 摘要" role="status">
+            as_of=<code>{applyResult.as_of}</code> · candidates_total=<code>{applyResult.summary.candidates_total}</code> ·
+            processed=<code>{applyResult.summary.processed}</code> · transferred=<code>{applyResult.summary.transferred}</code> ·
+            released=<code>{applyResult.summary.released}</code> · skipped_item_action=
+            <code>{applyResult.summary.skipped_item_action}</code>
+          </Alert>
 
           <p className="muted" style={{ marginTop: 12 }}>
             你可以到 <Link href={`/orgs/${params.orgId}/holds`}>Holds 工作台</Link>（status=ready/queued/expired）確認結果，
             或到 <Link href={`/orgs/${params.orgId}/audit-events`}>Audit Events</Link> 查 action <code>hold.expire</code>。
           </p>
 
-          <hr style={{ border: 0, borderTop: '1px solid var(--border)', margin: '16px 0' }} />
-
           {applyResult.results.length === 0 ? (
-            <p className="muted">（本次沒有處理任何 holds；可能已被其他人 fulfill/cancel，或被鎖住而 SKIP LOCKED）</p>
+            <EmptyState
+              title="本次沒有處理任何 holds"
+              description="可能已被其他人 fulfill/cancel，或被鎖住而 SKIP LOCKED。"
+            />
           ) : (
-            <div style={{ overflowX: 'auto' }}>
-              <table>
-                <thead>
-                  <tr>
-                    <th>hold_id</th>
-                    <th>item_barcode</th>
-                    <th>item_before</th>
-                    <th>item_after</th>
-                    <th>transferred_to_hold_id</th>
-                    <th>audit_event_id</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {applyResult.results.map((r) => (
-                    <tr key={r.audit_event_id}>
-                      <td>
-                        <code style={{ fontSize: 12 }}>{r.hold_id}</code>
-                      </td>
-                      <td>{r.assigned_item_barcode ?? ''}</td>
-                      <td>{r.item_status_before ?? ''}</td>
-                      <td>{r.item_status_after ?? ''}</td>
-                      <td>
-                        {r.transferred_to_hold_id ? (
-                          <code style={{ fontSize: 12 }}>{r.transferred_to_hold_id}</code>
-                        ) : (
-                          ''
-                        )}
-                      </td>
-                      <td>
-                        <code style={{ fontSize: 12 }}>{r.audit_event_id}</code>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            <DataTable
+              rows={applyResult.results}
+              getRowKey={(r) => r.audit_event_id}
+              initialSort={{ columnId: 'rank', direction: 'asc' }}
+              sortHint="Apply 結果一次載入；排序會即時套用在目前結果。"
+              columns={[
+                {
+                  id: 'rank',
+                  header: '#',
+                  cell: (r) => <code>{applyRankByAuditEventId.get(r.audit_event_id) ?? '—'}</code>,
+                  sortValue: (r) => applyRankByAuditEventId.get(r.audit_event_id) ?? 0,
+                  align: 'right',
+                  width: 90,
+                },
+                {
+                  id: 'hold_id',
+                  header: 'hold_id',
+                  cell: (r) => <code>{r.hold_id}</code>,
+                  sortValue: (r) => r.hold_id,
+                  width: 310,
+                },
+                {
+                  id: 'item_barcode',
+                  header: 'item_barcode',
+                  cell: (r) => <span className="muted">{r.assigned_item_barcode ?? '—'}</span>,
+                  sortValue: (r) => r.assigned_item_barcode ?? '',
+                  width: 170,
+                },
+                {
+                  id: 'item_before',
+                  header: 'item_before',
+                  cell: (r) => <code>{r.item_status_before ?? '—'}</code>,
+                  sortValue: (r) => r.item_status_before ?? '',
+                  width: 140,
+                },
+                {
+                  id: 'item_after',
+                  header: 'item_after',
+                  cell: (r) => <code>{r.item_status_after ?? '—'}</code>,
+                  sortValue: (r) => r.item_status_after ?? '',
+                  width: 140,
+                },
+                {
+                  id: 'transferred_to_hold_id',
+                  header: 'transferred_to_hold_id',
+                  cell: (r) => (r.transferred_to_hold_id ? <code>{r.transferred_to_hold_id}</code> : <span className="muted">—</span>),
+                  sortValue: (r) => r.transferred_to_hold_id ?? '',
+                  width: 310,
+                },
+                {
+                  id: 'audit_event_id',
+                  header: 'audit_event_id',
+                  cell: (r) => <code>{r.audit_event_id}</code>,
+                  sortValue: (r) => r.audit_event_id,
+                  width: 310,
+                },
+              ]}
+            />
           )}
         </section>
       ) : null}

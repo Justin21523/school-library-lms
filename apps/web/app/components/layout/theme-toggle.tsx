@@ -15,6 +15,8 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 
+import { UiIcon } from '../ui/icons';
+
 type ThemeMode = 'system' | 'light' | 'dark';
 
 function normalizeMode(raw: string | null): ThemeMode {
@@ -38,6 +40,7 @@ function applyModeToDom(mode: ThemeMode) {
 export function ThemeToggle() {
   const [open, setOpen] = useState(false);
   const [mode, setMode] = useState<ThemeMode>('system');
+  const rootRef = useRef<HTMLDivElement | null>(null);
   const buttonRef = useRef<HTMLButtonElement | null>(null);
 
   // 讀取 localStorage 的偏好，並套用到 DOM。
@@ -46,6 +49,29 @@ export function ThemeToggle() {
     setMode(stored);
     applyModeToDom(stored);
   }, []);
+
+  // UX：點擊外部/按 Esc 關閉 menu
+  useEffect(() => {
+    if (!open) return;
+
+    function onMouseDown(e: MouseEvent) {
+      const el = rootRef.current;
+      if (!el) return;
+      if (e.target instanceof Node && el.contains(e.target)) return;
+      setOpen(false);
+    }
+
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === 'Escape') setOpen(false);
+    }
+
+    window.addEventListener('mousedown', onMouseDown);
+    window.addEventListener('keydown', onKeyDown);
+    return () => {
+      window.removeEventListener('mousedown', onMouseDown);
+      window.removeEventListener('keydown', onKeyDown);
+    };
+  }, [open]);
 
   // 寫回 localStorage + 套用到 DOM（單一真相來源：mode state）
   function setAndPersist(next: ThemeMode) {
@@ -70,8 +96,20 @@ export function ThemeToggle() {
     }
   }, [mode]);
 
+  const iconId = useMemo(() => {
+    switch (mode) {
+      case 'light':
+        return 'sun' as const;
+      case 'dark':
+        return 'moon' as const;
+      case 'system':
+      default:
+        return 'computer' as const;
+    }
+  }, [mode]);
+
   return (
-    <div className="menu" style={{ position: 'relative' }}>
+    <div ref={rootRef} className="menu" style={{ position: 'relative' }}>
       <button
         ref={buttonRef}
         type="button"
@@ -79,9 +117,10 @@ export function ThemeToggle() {
         aria-haspopup="menu"
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
-        title="切換顏色主題（Light/Dark/System）"
+        title={`主題：${label}（Light/Dark/System）`}
       >
-        Theme：{label}
+        <UiIcon id={iconId} size={16} />
+        主題
       </button>
 
       {open ? (
@@ -91,13 +130,35 @@ export function ThemeToggle() {
             role="menuitem"
             className="menuItem"
             onClick={() => setAndPersist('system')}
+            data-selected={mode === 'system' ? 'true' : 'false'}
           >
+            <span className="menuItemIcon" aria-hidden="true">
+              <UiIcon id="computer" size={16} />
+            </span>
             跟隨系統（System）
           </button>
-          <button type="button" role="menuitem" className="menuItem" onClick={() => setAndPersist('light')}>
+          <button
+            type="button"
+            role="menuitem"
+            className="menuItem"
+            onClick={() => setAndPersist('light')}
+            data-selected={mode === 'light' ? 'true' : 'false'}
+          >
+            <span className="menuItemIcon" aria-hidden="true">
+              <UiIcon id="sun" size={16} />
+            </span>
             白底（Light）
           </button>
-          <button type="button" role="menuitem" className="menuItem" onClick={() => setAndPersist('dark')}>
+          <button
+            type="button"
+            role="menuitem"
+            className="menuItem"
+            onClick={() => setAndPersist('dark')}
+            data-selected={mode === 'dark' ? 'true' : 'false'}
+          >
+            <span className="menuItemIcon" aria-hidden="true">
+              <UiIcon id="moon" size={16} />
+            </span>
             深色（Dark）
           </button>
         </div>
@@ -105,4 +166,3 @@ export function ThemeToggle() {
     </div>
   );
 }
-

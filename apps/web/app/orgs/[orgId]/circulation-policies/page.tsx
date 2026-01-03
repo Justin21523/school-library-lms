@@ -26,6 +26,8 @@ import type { CirculationPolicy } from '../../../lib/api';
 import { createPolicy, listPolicies, updatePolicy } from '../../../lib/api';
 import { formatErrorMessage } from '../../../lib/error';
 import { useStaffSession } from '../../../lib/use-staff-session';
+import { PageHeader, SectionHeader } from '../../../components/ui/page-header';
+import { Alert } from '../../../components/ui/alert';
 
 // 把數字欄位從字串轉成 int，並做最基本的檢查（讓錯誤在前端就能被看懂）。
 function parseIntField(label: string, value: string) {
@@ -252,10 +254,7 @@ export default function CirculationPoliciesPage({ params }: { params: { orgId: s
   if (!sessionReady) {
     return (
       <div className="stack">
-        <section className="panel">
-          <h1 style={{ marginTop: 0 }}>Circulation Policies</h1>
-          <p className="muted">載入登入狀態中…</p>
-        </section>
+        <PageHeader title="Circulation Policies" description="載入登入狀態中…" />
       </div>
     );
   }
@@ -263,25 +262,25 @@ export default function CirculationPoliciesPage({ params }: { params: { orgId: s
   if (!session) {
     return (
       <div className="stack">
-        <section className="panel">
-          <h1 style={{ marginTop: 0 }}>Circulation Policies</h1>
-          <p className="error">
-            這頁需要 staff 登入才能管理借閱政策。請先前往{' '}
-            <Link href={`/orgs/${params.orgId}/login`}>/login</Link>。
-          </p>
-        </section>
+        <PageHeader title="Circulation Policies">
+          <Alert variant="danger" title="需要登入">
+            這頁需要 staff 登入才能管理借閱政策。請先前往 <Link href={`/orgs/${params.orgId}/login`}>/login</Link>。
+          </Alert>
+        </PageHeader>
       </div>
     );
   }
 
   return (
     <div className="stack">
-      <section className="panel">
-        <h1 style={{ marginTop: 0 }}>Circulation Policies</h1>
-        <p className="muted">
-          對應 API：<code>GET/POST/PATCH /api/v1/orgs/:orgId/circulation-policies</code>
-        </p>
-
+      <PageHeader
+        title="Circulation Policies"
+        description={
+          <>
+            對應 API：<code>GET/POST/PATCH /api/v1/orgs/:orgId/circulation-policies</code>
+          </>
+        }
+      >
         <p className="muted">
           提醒：建立新政策後會<strong>自動</strong>設為有效（active），並停用同角色的舊有效政策（保留做為歷史版本）。
         </p>
@@ -338,17 +337,25 @@ export default function CirculationPoliciesPage({ params }: { params: { orgId: s
             <input type="number" value={overdueBlockDays} onChange={(e) => setOverdueBlockDays(e.target.value)} />
           </label>
 
-          <button type="submit" disabled={creating}>
+          <button type="submit" className="btnPrimary" disabled={creating}>
             {creating ? '建立中…' : '建立 Policy（並設為有效）'}
           </button>
         </form>
 
-        {error ? <p className="error">錯誤：{error}</p> : null}
-        {success ? <p className="success">{success}</p> : null}
-      </section>
+        {error ? (
+          <Alert variant="danger" title="操作失敗">
+            {error}
+          </Alert>
+        ) : null}
+        {success ? (
+          <Alert variant="success" title="已完成" role="status">
+            {success}
+          </Alert>
+        ) : null}
+      </PageHeader>
 
       <section className="panel">
-        <h2 style={{ marginTop: 0 }}>列表</h2>
+        <SectionHeader title="列表" />
         {loading ? <p className="muted">載入中…</p> : null}
 
         {!loading && policies && policies.length === 0 ? <p className="muted">目前沒有 policies。</p> : null}
@@ -375,11 +382,11 @@ export default function CirculationPoliciesPage({ params }: { params: { orgId: s
                     </div>
 
                     <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-                      <button type="button" onClick={() => startEdit(p)} disabled={isUpdating || isEditing}>
+                      <button type="button" className="btnSmall" onClick={() => startEdit(p)} disabled={isUpdating || isEditing}>
                         編輯
                       </button>
                       {!p.is_active ? (
-                        <button type="button" onClick={() => void activatePolicy(p)} disabled={isUpdating}>
+                        <button type="button" className={['btnSmall', 'btnPrimary'].join(' ')} onClick={() => void activatePolicy(p)} disabled={isUpdating}>
                           設為有效
                         </button>
                       ) : null}
@@ -444,10 +451,10 @@ export default function CirculationPoliciesPage({ params }: { params: { orgId: s
                         </label>
 
                         <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-                          <button type="submit" disabled={updatingId === p.id}>
+                          <button type="submit" className="btnPrimary" disabled={updatingId === p.id}>
                             {updatingId === p.id ? '儲存中…' : '儲存'}
                           </button>
-                          <button type="button" onClick={cancelEdit} disabled={updatingId === p.id}>
+                          <button type="button" className="btnSmall" onClick={cancelEdit} disabled={updatingId === p.id}>
                             取消
                           </button>
                         </div>
@@ -463,4 +470,3 @@ export default function CirculationPoliciesPage({ params }: { params: { orgId: s
     </div>
   );
 }
-

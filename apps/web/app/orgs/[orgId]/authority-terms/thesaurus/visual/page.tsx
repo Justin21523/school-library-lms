@@ -52,6 +52,11 @@ import {
 import { formatErrorMessage } from '../../../../../lib/error';
 import { useStaffSession } from '../../../../../lib/use-staff-session';
 import { ThesaurusGraph } from '../../../../../components/thesaurus/thesaurus-graph';
+import { Alert } from '../../../../../components/ui/alert';
+import { EmptyState } from '../../../../../components/ui/empty-state';
+import { Field, Form, FormActions, FormSection } from '../../../../../components/ui/form';
+import { PageHeader, SectionHeader } from '../../../../../components/ui/page-header';
+import { SkeletonText } from '../../../../../components/ui/skeleton';
 
 function parseLines(value: string) {
   const items = value
@@ -72,7 +77,7 @@ type TermDragInfo = {
   status: AuthorityTerm['status'];
 };
 
-type DragMode = 'reparent' | 'merge';
+type DragMode = 'reparent' | 'related' | 'merge';
 
 type PendingReparent = {
   child: TermDragInfo;
@@ -139,7 +144,7 @@ export default function ThesaurusVisualEditorPage({ params }: { params: { orgId:
   const searchParams = useSearchParams();
 
   // ----------------------------
-  // 0) Drag & Drop（更人性化：re-parent / merge）
+  // 0) Drag & Drop（更人性化：re-parent / related / merge）
   // ----------------------------
   //
   // 你希望 A) thesaurus 可以「拖拉式 re-parent」與「merge 預覽內嵌」：
@@ -149,6 +154,40 @@ export default function ThesaurusVisualEditorPage({ params }: { params: { orgId:
 
   const [pendingReparent, setPendingReparent] = useState<PendingReparent | null>(null);
   const [applyingReparent, setApplyingReparent] = useState(false);
+  const [linkingRelatedByDrag, setLinkingRelatedByDrag] = useState(false);
+
+  // re-parent UX preferences（local-only）：
+  // - 預設仍採「drop → preview → 手動套用」避免誤操作
+  // - 但如果你在大量治理時想要更快，可以開啟 auto apply（ROOT 仍保留預覽）
+  const [reparentAutoApply, setReparentAutoApply] = useState(false);
+  const [reparentKeepOtherBroadersDefault, setReparentKeepOtherBroadersDefault] = useState(false);
+
+  useEffect(() => {
+    try {
+      const auto = window.localStorage.getItem('thesaurus.visual.reparentAutoApply');
+      const keep = window.localStorage.getItem('thesaurus.visual.reparentKeepOtherBroadersDefault');
+      setReparentAutoApply(auto === '1');
+      setReparentKeepOtherBroadersDefault(keep === '1');
+    } catch {
+      // localStorage 失敗不阻擋主要功能（例如瀏覽器禁用 storage）
+    }
+  }, []);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem('thesaurus.visual.reparentAutoApply', reparentAutoApply ? '1' : '0');
+    } catch {
+      // ignore
+    }
+  }, [reparentAutoApply]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem('thesaurus.visual.reparentKeepOtherBroadersDefault', reparentKeepOtherBroadersDefault ? '1' : '0');
+    } catch {
+      // ignore
+    }
+  }, [reparentKeepOtherBroadersDefault]);
 
   // ----------------------------
   // 1) Filters（整頁的「視角」）
@@ -682,16 +721,36 @@ export default function ThesaurusVisualEditorPage({ params }: { params: { orgId:
   // ----------------------------
 
   function beginReparent(child: TermDragInfo, parent: TermDragInfo | null) {
+    if (applyingReparent) {
+      setError('re-parent 套用中，請稍候再操作。');
+      return;
+    }
+
     // beginReparent：只建立「預覽狀態」，不直接寫 DB（避免拖拉一下就不可逆）
     // - child：被拖拉的 term（我們要移動的節點）
     // - parent：drop 的目標 term；null 代表 drop 在 ROOT（移除所有 BT）
-    setPendingReparent({ child, parent, keep_other_broaders: false });
+    const plan: PendingReparent = {
+      child,
+      parent,
+      // keep_other_broaders：若使用者開了「預設保留其他 BT」，就直接用（但 ROOT drop 不適用）
+      keep_other_broaders: Boolean(parent && reparentKeepOtherBroadersDefault),
+    };
 
     // UX：re-parent 預覽最需要看「child 的現有 BT」，因此把 inspector 切到 child。
     setSelectedTermId(child.id);
 
     // 若你剛好正在做 merge preview，這裡保守清掉，避免兩個「危險操作」同時存在。
     setMergePreview(null);
+
+    // 重要 UX：ROOT drop zone 永遠保留預覽（避免一次誤拖就把所有 BT 清光）
+    if (parent === null || !reparentAutoApply) {
+      setPendingReparent(plan);
+      return;
+    }
+
+    // 進階：auto apply（不顯示預覽）
+    setPendingReparent(null);
+    void onApplyReparent(plan);
   }
 
   function beginMerge(source: TermDragInfo, target: TermDragInfo) {
@@ -714,6 +773,36 @@ export default function ThesaurusVisualEditorPage({ params }: { params: { orgId:
     setPendingReparent(null);
   }
 
+  async function beginRelated(source: TermDragInfo, target: TermDragInfo) {
+    if (linkingRelatedByDrag) return;
+    if (!sessionReady || !session) {
+      setError('需要 staff 登入才能修改 thesaurus');
+      return;
+    }
+    if (source.id === target.id) return;
+
+    setLinkingRelatedByDrag(true);
+    setError(null);
+    setSuccess(null);
+    try {
+      // related（RT）：用 target 作為「操作視角」比較直覺（你 drop 到誰身上，就更新誰的 inspector）
+      await addAuthorityTermRelation(params.orgId, target.id, { kind: 'related', target_term_id: source.id });
+
+      // RT 不影響 roots/tree 結構，因此不必 refreshRoots；但 inspector/graph 要更新
+      setPendingReparent(null);
+      setMergePreview(null);
+      setMergeTarget(null);
+
+      setSelectedTermId(target.id);
+      await Promise.all([refreshInspector(target.id), refreshGraph(target.id)]);
+      setSuccess(`已建立 related：${source.preferred_label} ↔ ${target.preferred_label}`);
+    } catch (e) {
+      setError(formatErrorMessage(e));
+    } finally {
+      setLinkingRelatedByDrag(false);
+    }
+  }
+
   async function safeAddBroaderRelation(childId: string, parentId: string) {
     // safeAddBroaderRelation：addRelation 如果遇到 409（已存在）視為成功
     try {
@@ -734,15 +823,16 @@ export default function ThesaurusVisualEditorPage({ params }: { params: { orgId:
     }
   }
 
-  async function onApplyReparent() {
-    if (!pendingReparent) return;
+  async function onApplyReparent(planOverride?: PendingReparent) {
+    const plan = planOverride ?? pendingReparent;
+    if (!plan) return;
     if (!sessionReady || !session) {
       setError('需要 staff 登入才能修改 thesaurus');
       return;
     }
 
-    const childId = pendingReparent.child.id;
-    const parentId = pendingReparent.parent?.id ?? null;
+    const childId = plan.child.id;
+    const parentId = plan.parent?.id ?? null;
 
     setApplyingReparent(true);
     setError(null);
@@ -769,7 +859,7 @@ export default function ThesaurusVisualEditorPage({ params }: { params: { orgId:
         for (const rel of current.relations.broader ?? []) {
           await safeDeleteRelation(childId, rel.relation_id);
         }
-      } else if (!pendingReparent.keep_other_broaders) {
+      } else if (!plan.keep_other_broaders) {
         // 2b) replace：刪掉「不是新 parent」的所有 BT
         const current = await getAuthorityTerm(params.orgId, childId);
         const toDelete = (current.relations.broader ?? []).filter((x) => x.term.id !== parentId).map((x) => x.relation_id);
@@ -923,6 +1013,7 @@ export default function ThesaurusVisualEditorPage({ params }: { params: { orgId:
         renderNode={renderNode}
         dragMode={dragMode}
         onBeginReparent={(child, parent) => beginReparent(child, parent)}
+        onBeginRelated={(source, target) => void beginRelated(source, target)}
         onBeginMerge={(source, target) => beginMerge(source, target)}
       />
     );
@@ -948,9 +1039,9 @@ export default function ThesaurusVisualEditorPage({ params }: { params: { orgId:
       <div className="stack">
         <section className="panel">
           <h1 style={{ marginTop: 0 }}>Thesaurus Visual Editor</h1>
-          <p className="muted">
+          <Alert variant="danger" title="需要登入">
             這頁需要 staff 登入。請先前往 <Link href={`/orgs/${params.orgId}/login`}>/login</Link>。
-          </p>
+          </Alert>
         </section>
       </div>
     );
@@ -962,89 +1053,130 @@ export default function ThesaurusVisualEditorPage({ params }: { params: { orgId:
 
   return (
     <div className="stack">
+      <PageHeader
+        title="Thesaurus Visual Editor"
+        description="樹狀瀏覽（lazy-load）＋右側 inspector（BT/NT/RT 編修）＋局部關係圖（graph），支援拖拉式 re-parent / related / merge。"
+        actions={
+          <>
+            <Link href={`/orgs/${params.orgId}/authority`}>Authority Control</Link>
+            <Link
+              href={`/orgs/${params.orgId}/authority-terms/thesaurus?kind=${encodeURIComponent(
+                kind,
+              )}&vocabulary_code=${encodeURIComponent(vocabularyCode.trim() || 'builtin-zh')}`}
+            >
+              Browser
+            </Link>
+            <Link
+              href={`/orgs/${params.orgId}/authority-terms/thesaurus/quality?kind=${encodeURIComponent(
+                kind,
+              )}&vocabulary_code=${encodeURIComponent(vocabularyCode.trim() || 'builtin-zh')}`}
+            >
+              Quality
+            </Link>
+            <Link href={`/orgs/${params.orgId}/authority-terms`}>Terms</Link>
+          </>
+        }
+      >
+        {error ? (
+          <Alert variant="danger" title="操作失敗">
+            {error}
+          </Alert>
+        ) : null}
+        {success ? (
+          <Alert variant="success" title="已完成" role="status">
+            {success}
+          </Alert>
+        ) : null}
+      </PageHeader>
+
       <section className="panel">
-        <h1 style={{ marginTop: 0 }}>Thesaurus Visual Editor（樹 + 詳情 + Graph）</h1>
-        <p className="muted">
-          這頁讓你用「視覺化」治理主題詞：左側是樹狀瀏覽，右側可直接新增/連結/刪除 BT/NT/RT，並用 graph 理解 polyhierarchy。
-        </p>
+        <SectionHeader
+          title="Filters"
+          description="先選定 kind/vocabulary_code，再用 roots query 作入口；children 只在展開時載入（lazy-load）。"
+          actions={
+            <button type="button" className="btnSmall" onClick={() => void refreshRoots()} disabled={loadingRoots}>
+              {loadingRoots ? '載入中…' : '重新整理 roots'}
+            </button>
+          }
+        />
 
-        {error ? <p className="error">錯誤：{error}</p> : null}
-        {success ? <p className="success">{success}</p> : null}
-
-        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 12 }}>
-          <Link href={`/orgs/${params.orgId}/authority`}>Authority Control（主控入口）</Link>
-          <Link
-            href={`/orgs/${params.orgId}/authority-terms/thesaurus?kind=${encodeURIComponent(
-              kind,
-            )}&vocabulary_code=${encodeURIComponent(vocabularyCode.trim() || 'builtin-zh')}`}
-          >
-            回 Thesaurus Browser
-          </Link>
-          <Link
-            href={`/orgs/${params.orgId}/authority-terms/thesaurus/quality?kind=${encodeURIComponent(
-              kind,
-            )}&vocabulary_code=${encodeURIComponent(vocabularyCode.trim() || 'builtin-zh')}`}
-          >
-            Thesaurus Quality
-          </Link>
-          <Link href={`/orgs/${params.orgId}/authority-terms`}>Authority Terms</Link>
-        </div>
-      </section>
-
-      <section className="panel">
-        <h2 style={{ marginTop: 0 }}>Filters</h2>
-
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
-          <label>
-            kind（controlled vocab）
-            <select value={kind} onChange={(e) => setKind(e.target.value as any)}>
-              <option value="subject">subject（MARC 650）</option>
-              <option value="geographic">geographic（MARC 651）</option>
-              <option value="genre">genre（MARC 655）</option>
-            </select>
-          </label>
-          <label>
-            vocabulary_code（必填）
-            <input value={vocabularyCode} onChange={(e) => setVocabularyCode(e.target.value)} placeholder="builtin-zh / local" />
-          </label>
-          <label>
-            status
-            <select value={status} onChange={(e) => setStatus(e.target.value as any)}>
-              <option value="active">active（只看啟用）</option>
-              <option value="inactive">inactive（只看停用）</option>
-              <option value="all">all（全部）</option>
-            </select>
-          </label>
-        </div>
-
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginTop: 12 }}>
-          <label>
-            roots query（只過濾 roots；模糊搜尋 label + variants）
-            <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="例如：盤點 / 汰舊 / 魔法" />
-          </label>
-          <label>
-            roots limit（1..500）
-            <input value={limit} onChange={(e) => setLimit(e.target.value)} />
-          </label>
-        </div>
-
-        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'flex-end', marginTop: 12 }}>
-          <button type="button" onClick={() => void refreshRoots()} disabled={loadingRoots}>
-            {loadingRoots ? '載入中…' : '重新整理 roots'}
-          </button>
-
-          <div style={{ flex: 1 }} />
-
-          <label style={{ minWidth: 320 }}>
-            快速跳轉（搜尋 term）
-            <div style={{ display: 'flex', gap: 8 }}>
-              <input value={jumpQuery} onChange={(e) => setJumpQuery(e.target.value)} placeholder="輸入關鍵字…" />
-              <button type="button" onClick={() => void onJumpSuggest()} disabled={jumping || !jumpQuery.trim()}>
-                {jumping ? '搜尋中…' : '搜尋'}
-              </button>
+        <Form
+          onSubmit={(e) => {
+            e.preventDefault();
+            void refreshRoots();
+          }}
+        >
+          <FormSection title="Roots filters" description="query 只會過濾 roots（不會過濾已展開的 children）。">
+            <div className="grid3">
+              <Field label="kind（controlled vocab）" htmlFor="thesaurus_kind">
+                <select id="thesaurus_kind" value={kind} onChange={(e) => setKind(e.target.value as any)}>
+                  <option value="subject">subject（MARC 650）</option>
+                  <option value="geographic">geographic（MARC 651）</option>
+                  <option value="genre">genre（MARC 655）</option>
+                </select>
+              </Field>
+              <Field label="vocabulary_code（必填）" htmlFor="thesaurus_vocab">
+                <input
+                  id="thesaurus_vocab"
+                  value={vocabularyCode}
+                  onChange={(e) => setVocabularyCode(e.target.value)}
+                  placeholder="builtin-zh / local"
+                />
+              </Field>
+              <Field label="status" htmlFor="thesaurus_status">
+                <select id="thesaurus_status" value={status} onChange={(e) => setStatus(e.target.value as any)}>
+                  <option value="active">active（只看啟用）</option>
+                  <option value="inactive">inactive（只看停用）</option>
+                  <option value="all">all（全部）</option>
+                </select>
+              </Field>
             </div>
-          </label>
-        </div>
+
+            <div className="grid2" style={{ marginTop: 12 }}>
+              <Field label="roots query（模糊搜尋 label + variants）" htmlFor="thesaurus_query">
+                <input
+                  id="thesaurus_query"
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder="例如：盤點 / 汰舊 / 魔法"
+                />
+              </Field>
+              <Field label="roots limit（1..500）" htmlFor="thesaurus_limit">
+                <input id="thesaurus_limit" value={limit} onChange={(e) => setLimit(e.target.value)} />
+              </Field>
+            </div>
+
+            <FormActions>
+              <button type="submit" className="btnPrimary" disabled={loadingRoots}>
+                {loadingRoots ? '載入中…' : '套用 filters / 重新整理'}
+              </button>
+            </FormActions>
+          </FormSection>
+        </Form>
+
+        <Form
+          onSubmit={(e) => {
+            e.preventDefault();
+            void onJumpSuggest();
+          }}
+          style={{ marginTop: 12 }}
+        >
+          <FormSection title="快速跳轉" description="用 suggest 搜尋 term；點選結果會切換右側 inspector。">
+            <Field label="jump query" htmlFor="thesaurus_jump_query">
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                <input
+                  id="thesaurus_jump_query"
+                  value={jumpQuery}
+                  onChange={(e) => setJumpQuery(e.target.value)}
+                  placeholder="輸入關鍵字…"
+                />
+                <button type="submit" className="btnPrimary" disabled={jumping || !jumpQuery.trim()}>
+                  {jumping ? '搜尋中…' : '搜尋'}
+                </button>
+              </div>
+            </Field>
+          </FormSection>
+        </Form>
 
         {jumpSuggestions ? (
           jumpSuggestions.length === 0 ? (
@@ -1059,6 +1191,7 @@ export default function ThesaurusVisualEditorPage({ params }: { params: { orgId:
                   <button
                     key={t.id}
                     type="button"
+                    className="btnSmall"
                     onClick={() => {
                       setSelectedTermId(t.id);
                       setJumpSuggestions(null);
@@ -1079,11 +1212,15 @@ export default function ThesaurusVisualEditorPage({ params }: { params: { orgId:
 
       {/* 主體：左樹右詳情 */}
       <section className="panel">
-        <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: 16 }}>
+        <SectionHeader
+          title="Workspace"
+          description="左側 Tree 用於瀏覽與拖拉；右側 Inspector 用於編修關係與查看 graph。"
+        />
+
+        <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: 16, marginTop: 12 }}>
           {/* LEFT：tree */}
           <div>
-            <h2 style={{ marginTop: 0 }}>Tree</h2>
-            <p className="muted">點節點選取；按 ▸ 展開 children（lazy-load）。也支援拖拉式 re-parent / merge（下方切換模式）。</p>
+            <SectionHeader title="Tree" description="點節點選取；按 ▸ 展開 children（lazy-load）；拖拉式 re-parent / merge。" />
 
             <div className="callout" style={{ marginTop: 10 }}>
               <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'flex-end' }}>
@@ -1091,15 +1228,41 @@ export default function ThesaurusVisualEditorPage({ params }: { params: { orgId:
                   Drag mode
                   <select value={dragMode} onChange={(e) => setDragMode(e.target.value as DragMode)}>
                     <option value="reparent">re-parent（移動/改 BT）</option>
+                    <option value="related">related（建立 RT）</option>
                     <option value="merge">merge（併入/redirect）</option>
                   </select>
                 </label>
                 <div className="muted" style={{ flex: 1 }}>
                   {dragMode === 'reparent'
-                    ? '拖「子詞」到「新上位詞」上 → 右側預覽後套用；也可拖到 ROOT 區移除 BT。'
-                    : '拖「來源詞」到「目標詞」上 → 右側按「預覽 merge」確認後套用。'}
+                    ? '拖「子詞」到「新上位詞」上 → 預覽後套用；也可拖到 ROOT 區移除 BT。'
+                    : dragMode === 'related'
+                      ? '拖「來源詞」到「目標詞」上 → 立即建立 RT（related）；右側 inspector 會更新。'
+                      : '拖「來源詞」到「目標詞」上 → 右側按「預覽 merge」確認後套用。'}
                 </div>
               </div>
+
+              {dragMode === 'reparent' ? (
+                <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginTop: 10, alignItems: 'center' }}>
+                  <label style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                    <input
+                      type="checkbox"
+                      checked={reparentAutoApply}
+                      onChange={(e) => setReparentAutoApply(e.target.checked)}
+                      disabled={applyingReparent}
+                    />
+                    <span className="muted">drop 後自動套用（ROOT 仍保留預覽）</span>
+                  </label>
+                  <label style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                    <input
+                      type="checkbox"
+                      checked={reparentKeepOtherBroadersDefault}
+                      onChange={(e) => setReparentKeepOtherBroadersDefault(e.target.checked)}
+                      disabled={applyingReparent}
+                    />
+                    <span className="muted">預設保留其他 BT（polyhierarchy）</span>
+                  </label>
+                </div>
+              ) : null}
             </div>
 
             {/* ROOT drop zone：只在 re-parent 模式顯示 */}
@@ -1109,7 +1272,7 @@ export default function ThesaurusVisualEditorPage({ params }: { params: { orgId:
               />
             ) : null}
 
-            {loadingRoots ? <div className="muted">載入中…</div> : null}
+            {loadingRoots ? <SkeletonText lines={2} /> : null}
             {!loadingRoots && roots && roots.items.length === 0 ? <div className="muted">（沒有 roots）</div> : null}
 
             {roots && roots.items.length > 0 ? (
@@ -1123,7 +1286,7 @@ export default function ThesaurusVisualEditorPage({ params }: { params: { orgId:
                 </ul>
 
                 {roots.next_cursor ? (
-                  <button type="button" onClick={() => void loadMoreRoots()} disabled={loadingMoreRoots || loadingRoots}>
+                  <button type="button" className="btnSmall" onClick={() => void loadMoreRoots()} disabled={loadingMoreRoots || loadingRoots}>
                     {loadingMoreRoots ? '載入中…' : '載入更多 roots'}
                   </button>
                 ) : null}
@@ -1133,10 +1296,10 @@ export default function ThesaurusVisualEditorPage({ params }: { params: { orgId:
 
           {/* RIGHT：inspector */}
           <div>
-            <h2 style={{ marginTop: 0 }}>Inspector</h2>
+            <SectionHeader title="Inspector" description="選取 term 後可編修 BT/NT/RT、查看 breadcrumbs 與 graph。" />
 
-            {!selectedTermId ? <div className="muted">請先在左側選一個 term。</div> : null}
-            {loadingInspector ? <div className="muted">載入中…</div> : null}
+            {!selectedTermId ? <EmptyState title="尚未選擇 term" description="請先在左側 Tree 點選一個 term。" /> : null}
+            {loadingInspector ? <SkeletonText lines={3} /> : null}
 
             {selectedTerm ? (
               <div className="stack">
@@ -1207,10 +1370,10 @@ export default function ThesaurusVisualEditorPage({ params }: { params: { orgId:
                           <strong>{pendingReparent.parent ? pendingReparent.parent.preferred_label : 'ROOT（移除 BT）'}</strong>
                         </div>
                         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                          <button type="button" onClick={() => setSelectedTermId(pendingReparent.child.id)}>
+                          <button type="button" className="btnSmall" onClick={() => setSelectedTermId(pendingReparent.child.id)}>
                             切換到 child（看 BT 預覽）
                           </button>
-                          <button type="button" onClick={() => setPendingReparent(null)}>
+                          <button type="button" className="btnSmall" onClick={() => setPendingReparent(null)}>
                             取消
                           </button>
                         </div>
@@ -1258,10 +1421,10 @@ export default function ThesaurusVisualEditorPage({ params }: { params: { orgId:
                         )}
 
                         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                          <button type="button" onClick={() => void onApplyReparent()} disabled={applyingReparent}>
+                          <button type="button" className="btnPrimary" onClick={() => void onApplyReparent()} disabled={applyingReparent}>
                             {applyingReparent ? '套用中…' : '套用 re-parent'}
                           </button>
-                          <button type="button" onClick={() => setPendingReparent(null)} disabled={applyingReparent}>
+                          <button type="button" className="btnSmall" onClick={() => setPendingReparent(null)} disabled={applyingReparent}>
                             取消
                           </button>
                         </div>
@@ -1282,7 +1445,7 @@ export default function ThesaurusVisualEditorPage({ params }: { params: { orgId:
                       target term（搜尋或用 drag/drop）
                       <div style={{ display: 'flex', gap: 8 }}>
                         <input value={mergeTargetQuery} onChange={(e) => setMergeTargetQuery(e.target.value)} placeholder="輸入關鍵字…" />
-                        <button type="button" onClick={() => void onSuggestMergeTargets()} disabled={suggestingMergeTarget || !mergeTargetQuery.trim()}>
+                        <button type="button" className={['btnSmall', 'btnPrimary'].join(' ')} onClick={() => void onSuggestMergeTargets()} disabled={suggestingMergeTarget || !mergeTargetQuery.trim()}>
                           {suggestingMergeTarget ? '查詢中…' : '查詢'}
                         </button>
                       </div>
@@ -1299,6 +1462,7 @@ export default function ThesaurusVisualEditorPage({ params }: { params: { orgId:
                               <button
                                 key={t.id}
                                 type="button"
+                                className="btnSmall"
                                 onClick={() => setMergeTarget(toTermDragInfo(t))}
                                 style={{
                                   textAlign: 'left',
@@ -1343,13 +1507,13 @@ export default function ThesaurusVisualEditorPage({ params }: { params: { orgId:
                     </label>
 
                     <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                      <button type="button" onClick={() => void onPreviewMerge()} disabled={previewingMerge || !mergeTarget}>
+                      <button type="button" className="btnSmall" onClick={() => void onPreviewMerge()} disabled={previewingMerge || !mergeTarget}>
                         {previewingMerge ? '預覽中…' : '預覽 merge'}
                       </button>
-                      <button type="button" onClick={() => void onApplyMerge()} disabled={applyingMerge || !mergeTarget || !mergePreview}>
+                      <button type="button" className="btnDanger" onClick={() => void onApplyMerge()} disabled={applyingMerge || !mergeTarget || !mergePreview}>
                         {applyingMerge ? '套用中…' : '套用 merge'}
                       </button>
-                      <button type="button" onClick={() => { setMergeTarget(null); setMergePreview(null); }} disabled={previewingMerge || applyingMerge}>
+                      <button type="button" className="btnSmall" onClick={() => { setMergeTarget(null); setMergePreview(null); }} disabled={previewingMerge || applyingMerge}>
                         清除
                       </button>
                     </div>
@@ -1441,7 +1605,7 @@ export default function ThesaurusVisualEditorPage({ params }: { params: { orgId:
                       note（選填）
                       <textarea value={newChildNote} onChange={(e) => setNewChildNote(e.target.value)} rows={2} disabled={creatingChild} />
                     </label>
-                    <button type="submit" disabled={creatingChild}>
+                    <button type="submit" className="btnPrimary" disabled={creatingChild}>
                       {creatingChild ? '建立中…' : '建立並連結'}
                     </button>
                   </form>
@@ -1468,7 +1632,7 @@ export default function ThesaurusVisualEditorPage({ params }: { params: { orgId:
                       搜尋 target（subject）
                       <div style={{ display: 'flex', gap: 8 }}>
                         <input value={linkQuery} onChange={(e) => setLinkQuery(e.target.value)} placeholder="輸入關鍵字…" disabled={linking} />
-                        <button type="button" onClick={() => void onSuggestLinkTargets()} disabled={suggestingLink || linking || !linkQuery.trim()}>
+                        <button type="button" className={['btnSmall', 'btnPrimary'].join(' ')} onClick={() => void onSuggestLinkTargets()} disabled={suggestingLink || linking || !linkQuery.trim()}>
                           {suggestingLink ? '查詢中…' : '查詢'}
                         </button>
                       </div>
@@ -1485,6 +1649,7 @@ export default function ThesaurusVisualEditorPage({ params }: { params: { orgId:
                               <button
                                 key={t.id}
                                 type="button"
+                                className="btnSmall"
                                 onClick={() => setSelectedLinkTarget(t)}
                                 style={{
                                   textAlign: 'left',
@@ -1509,7 +1674,7 @@ export default function ThesaurusVisualEditorPage({ params }: { params: { orgId:
                       </div>
                     ) : null}
 
-                    <button type="button" onClick={() => void onApplyLink()} disabled={linking || !selectedLinkTarget}>
+                    <button type="button" className="btnPrimary" onClick={() => void onApplyLink()} disabled={linking || !selectedLinkTarget}>
                       {linking ? '連結中…' : '新增關係'}
                     </button>
                   </div>
@@ -1548,7 +1713,7 @@ export default function ThesaurusVisualEditorPage({ params }: { params: { orgId:
                   </div>
 
                   <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 12 }}>
-                    <button type="button" onClick={() => (selectedTermId ? void refreshGraph(selectedTermId) : undefined)} disabled={loadingGraph || !selectedTermId}>
+                    <button type="button" className="btnSmall" onClick={() => (selectedTermId ? void refreshGraph(selectedTermId) : undefined)} disabled={loadingGraph || !selectedTermId}>
                       {loadingGraph ? '載入中…' : '更新 graph'}
                     </button>
                   </div>
@@ -1607,7 +1772,7 @@ function RelationList({
                     （{x.term.vocabulary_code} / {x.term.status}）
                   </span>
                 </button>
-                <button type="button" onClick={() => onDelete(x.relation_id)} disabled={deletingRelationId === x.relation_id}>
+                <button type="button" className={['btnSmall', 'btnDanger'].join(' ')} onClick={() => onDelete(x.relation_id)} disabled={deletingRelationId === x.relation_id}>
                   {deletingRelationId === x.relation_id ? '刪除中…' : '刪除'}
                 </button>
               </div>
@@ -1634,11 +1799,12 @@ function ThesaurusTreeNode(props: {
   // drag/drop（re-parent / merge）
   dragMode: DragMode;
   onBeginReparent: (child: TermDragInfo, parent: TermDragInfo) => void;
+  onBeginRelated: (source: TermDragInfo, target: TermDragInfo) => void;
   onBeginMerge: (source: TermDragInfo, target: TermDragInfo) => void;
 }) {
-  const { term, level, isSelected, expanded, childrenState, onSelect, onToggle, onLoadMore, renderNode, dragMode, onBeginReparent, onBeginMerge } = props;
+  const { term, level, isSelected, expanded, childrenState, onSelect, onToggle, onLoadMore, renderNode, dragMode, onBeginReparent, onBeginRelated, onBeginMerge } = props;
 
-  const indent = level * 18;
+  const indent = level * 16;
   const hasChildren = term.has_children;
   const childrenPage = childrenState?.page ?? null;
   const childrenItems = childrenPage?.items ?? [];
@@ -1651,13 +1817,13 @@ function ThesaurusTreeNode(props: {
     const payload = serializeDragData(toTermDragInfo(term));
     e.dataTransfer.setData('application/x-library-system-term', payload);
     e.dataTransfer.setData('text/plain', payload);
-    e.dataTransfer.effectAllowed = dragMode === 'merge' ? 'link' : 'move';
+    e.dataTransfer.effectAllowed = dragMode === 'merge' || dragMode === 'related' ? 'link' : 'move';
   }
 
   function onDragOverRow(e: React.DragEvent) {
     // 只有 preventDefault 才能 drop（HTML5 DnD 規則）
     e.preventDefault();
-    e.dataTransfer.dropEffect = dragMode === 'merge' ? 'link' : 'move';
+    e.dataTransfer.dropEffect = dragMode === 'merge' || dragMode === 'related' ? 'link' : 'move';
     setDragOver(true);
   }
 
@@ -1676,11 +1842,18 @@ function ThesaurusTreeNode(props: {
 
     const target = toTermDragInfo(term);
     if (dragMode === 'merge') onBeginMerge(dragged, target);
+    else if (dragMode === 'related') onBeginRelated(dragged, target);
     else onBeginReparent(dragged, target);
   }
 
   return (
-    <div style={{ marginLeft: indent }}>
+    <div
+      style={{
+        marginLeft: indent,
+        paddingLeft: level > 0 ? 10 : 0,
+        borderLeft: level > 0 ? '1px solid rgba(123,177,255,0.16)' : undefined,
+      }}
+    >
       <div
         className={isSelected ? 'callout' : undefined}
         style={{
@@ -1697,13 +1870,19 @@ function ThesaurusTreeNode(props: {
         onDragLeave={onDragLeaveRow}
         onDrop={onDropRow}
       >
-        <button type="button" onClick={onToggle} disabled={!hasChildren} aria-label={expanded ? 'collapse' : 'expand'}>
+        <button type="button" className="btnSmall" onClick={onToggle} disabled={!hasChildren} aria-label={expanded ? 'collapse' : 'expand'}>
           {hasChildren ? (expanded ? '▾' : '▸') : '·'}
         </button>
 
         {/* drag handle：避免把整個 row 做 draggable（會跟點選/連結互搶） */}
         <span
-          title={dragMode === 'merge' ? '拖曳：merge source → drop 到 target' : '拖曳：re-parent child → drop 到新 parent'}
+          title={
+            dragMode === 'merge'
+              ? '拖曳：merge source → drop 到 target'
+              : dragMode === 'related'
+                ? '拖曳：related source → drop 到 target（建立 RT）'
+                : '拖曳：re-parent child → drop 到新 parent'
+          }
           draggable
           onDragStart={onDragStart}
           style={{
@@ -1751,7 +1930,7 @@ function ThesaurusTreeNode(props: {
       {expanded ? (
         <div style={{ marginTop: 6 }}>
           {childrenState?.loading ? <div className="muted">children 載入中…</div> : null}
-          {childrenState?.error ? <div className="error">children 錯誤：{childrenState.error}</div> : null}
+          {childrenState?.error ? <div className="fieldError">children 錯誤：{childrenState.error}</div> : null}
 
           {childrenItems.length > 0 ? (
             <ul style={{ marginTop: 8, listStyle: 'none', padding: 0 }}>
@@ -1764,7 +1943,7 @@ function ThesaurusTreeNode(props: {
           ) : null}
 
           {childrenPage?.next_cursor ? (
-            <button type="button" onClick={onLoadMore} disabled={childrenState?.loadingMore}>
+            <button type="button" className="btnSmall" onClick={onLoadMore} disabled={childrenState?.loadingMore}>
               {childrenState?.loadingMore ? '載入中…' : '載入更多 children'}
             </button>
           ) : null}

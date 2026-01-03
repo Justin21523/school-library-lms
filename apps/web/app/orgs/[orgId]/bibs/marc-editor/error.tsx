@@ -17,6 +17,9 @@ import { useEffect } from 'react';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
 
+import { Alert } from '../../../../components/ui/alert';
+import { PageHeader } from '../../../../components/ui/page-header';
+
 export default function MarcEditorErrorPage({
   error,
   reset,
@@ -35,11 +38,18 @@ export default function MarcEditorErrorPage({
 
   return (
     <div className="stack">
-      <section className="panel">
-        <h1 style={{ marginTop: 0 }}>MARC21 編輯器（發生錯誤）</h1>
-        <p className="error" style={{ whiteSpace: 'pre-wrap' }}>
-          {error.message}
-        </p>
+      <PageHeader
+        title="MARC21 編輯器（發生錯誤）"
+        description="這頁包含大量 client-side 編輯互動；若遇到錯誤，請先重試，或回到其他入口再重新進來。"
+        actions={
+          <button type="button" className="btnSmall btnPrimary" onClick={() => reset()}>
+            重試
+          </button>
+        }
+      >
+        <Alert variant="danger" title="錯誤訊息">
+          <div style={{ whiteSpace: 'pre-wrap' }}>{error.message}</div>
+        </Alert>
         {error.digest ? (
           <p className="muted">
             digest：<code>{error.digest}</code>
@@ -47,20 +57,30 @@ export default function MarcEditorErrorPage({
         ) : null}
 
         <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 12 }}>
-          <button type="button" onClick={() => reset()}>
-            重試
-          </button>
-          <Link href="/orgs">回到 org 列表</Link>
-          {orgId ? <Link href={`/orgs/${orgId}/login`}>Staff Login</Link> : null}
-          {orgId ? <Link href={`/orgs/${orgId}/authority-terms`}>Authority Terms</Link> : null}
-          {orgId ? <Link href={`/orgs/${orgId}/bibs`}>Bibs</Link> : null}
+          <Link className="btnSmall" href="/orgs">
+            回到 org 列表
+          </Link>
+          {orgId ? (
+            <Link className="btnSmall" href={`/orgs/${orgId}/login`}>
+              Staff Login
+            </Link>
+          ) : null}
+          {orgId ? (
+            <Link className="btnSmall" href={`/orgs/${orgId}/authority-terms`}>
+              Authority Terms
+            </Link>
+          ) : null}
+          {orgId ? (
+            <Link className="btnSmall" href={`/orgs/${orgId}/bibs`}>
+              Bibs
+            </Link>
+          ) : null}
         </div>
 
         <p className="muted" style={{ marginTop: 12 }}>
           若你方便，請把瀏覽器 console 的錯誤訊息貼給我（通常會比「頁面壞掉」更好定位）。
         </p>
-      </section>
+      </PageHeader>
     </div>
   );
 }
-

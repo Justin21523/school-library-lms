@@ -33,24 +33,42 @@ export default function OpacOrgLayout({
   return (
     <div className="stack">
       <section className="panel">
-        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
-          <div style={{ fontWeight: 800 }}>OPAC · Organization</div>
-          <span className="muted" style={{ wordBreak: 'break-all' }}>
-            orgId：{params.orgId}
-          </span>
+        <div className="toolbar">
+          <div className="toolbarLeft" style={{ minWidth: 0 }}>
+            <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+              <div style={{ fontWeight: 900 }}>OPAC · Organization</div>
+              <span className="muted" style={{ wordBreak: 'break-all' }}>
+                orgId：<code>{params.orgId}</code>
+              </span>
+            </div>
+          </div>
+          <div className="toolbarRight">
+            <Link className="btnSmall" href="/opac/orgs">
+              切換學校
+            </Link>
+          </div>
         </div>
 
-        <nav
-          aria-label="OPAC org navigation"
-          style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 10 }}
-        >
-          <Link href={`/opac/orgs/${params.orgId}`}>搜尋與預約</Link>
-          <Link href={`/opac/orgs/${params.orgId}/loans`}>我的借閱</Link>
-          <Link href={`/opac/orgs/${params.orgId}/holds`}>我的預約</Link>
-          <Link href="/opac/orgs">切換學校</Link>
-        </nav>
+        <div className="toolbar" style={{ marginTop: 12 }}>
+          <div className="toolbarLeft">
+            <Link className="btnSmall" href={`/opac/orgs/${params.orgId}`}>
+              搜尋與預約
+            </Link>
+            <Link className="btnSmall" href={`/opac/orgs/${params.orgId}/loans`}>
+              我的借閱
+            </Link>
+            <Link className="btnSmall" href={`/opac/orgs/${params.orgId}/holds`}>
+              我的預約
+            </Link>
+          </div>
+          <div className="toolbarRight">
+            <Link className="btnSmall" href="/orgs">
+              Web Console
+            </Link>
+          </div>
+        </div>
 
-        <hr style={{ border: 0, borderTop: '1px solid var(--border)', margin: '14px 0' }} />
+        <hr className="divider" />
 
         {/* Session 狀態是瀏覽器端資料（localStorage），因此必須用 Client Component 顯示。 */}
         <OpacSessionNav orgId={params.orgId} />
@@ -60,4 +78,3 @@ export default function OpacOrgLayout({
     </div>
   );
 }
-

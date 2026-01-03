@@ -54,6 +54,13 @@ import {
 import { formatErrorMessage } from '../../../../lib/error';
 import { useStaffSession } from '../../../../lib/use-staff-session';
 import { ThesaurusGraph } from '../../../../components/thesaurus/thesaurus-graph';
+import { Alert } from '../../../../components/ui/alert';
+import { CursorPagination } from '../../../../components/ui/cursor-pagination';
+import { DataTable } from '../../../../components/ui/data-table';
+import { EmptyState } from '../../../../components/ui/empty-state';
+import { Field, Form, FormActions, FormSection } from '../../../../components/ui/form';
+import { PageHeader, SectionHeader } from '../../../../components/ui/page-header';
+import { SkeletonTable } from '../../../../components/ui/skeleton';
 
 function parseLines(value: string) {
   const items = value
@@ -591,10 +598,7 @@ export default function AuthorityTermDetailPage({ params }: { params: { orgId: s
   if (!sessionReady) {
     return (
       <div className="stack">
-        <section className="panel">
-          <h1 style={{ marginTop: 0 }}>Authority Term</h1>
-          <p className="muted">載入登入狀態中…</p>
-        </section>
+        <PageHeader title="Authority Term" description="載入登入狀態中…" />
       </div>
     );
   }
@@ -602,46 +606,149 @@ export default function AuthorityTermDetailPage({ params }: { params: { orgId: s
   if (!session) {
     return (
       <div className="stack">
-        <section className="panel">
-          <h1 style={{ marginTop: 0 }}>Authority Term</h1>
-          <p className="muted">
+        <PageHeader
+          title="Authority Term"
+          description="這頁需要 staff 登入（StaffAuthGuard），才能檢視/治理單筆權威詞。"
+          actions={
+            <Link className="btnSmall btnPrimary" href={`/orgs/${params.orgId}/login`}>
+              前往登入
+            </Link>
+          }
+        >
+          <Alert variant="danger" title="需要登入">
             這頁需要 staff 登入。請先前往 <Link href={`/orgs/${params.orgId}/login`}>/login</Link>。
-          </p>
-        </section>
+          </Alert>
+        </PageHeader>
       </div>
     );
   }
 
   return (
     <div className="stack">
-      <section className="panel">
-        <h1 style={{ marginTop: 0 }}>Authority Term（權威控制款目）</h1>
-
-        <div className="muted" style={{ display: 'grid', gap: 4, marginTop: 8 }}>
-          <div>
-            orgId：<code>{params.orgId}</code>
+      <PageHeader
+        title={
+          currentTerm ? (
+            <span style={{ display: 'inline-flex', gap: 10, flexWrap: 'wrap', alignItems: 'baseline' }}>
+              <span>{currentTerm.preferred_label}</span>
+              <span className="badge badge--info">{currentTerm.kind}</span>
+              <span className={['badge', currentTerm.status === 'active' ? 'badge--success' : 'badge--danger'].join(' ')}>
+                {currentTerm.status}
+              </span>
+            </span>
+          ) : (
+            'Authority Term'
+          )
+        }
+        description={
+          currentTerm ? (
+            <>
+              權威控制款目（term_id-driven）· vocabulary=<code>{currentTerm.vocabulary_code}</code> · source=<code>{currentTerm.source}</code>
+            </>
+          ) : (
+            <>權威控制款目（term_id-driven）</>
+          )
+        }
+        actions={
+          <>
+            <button type="button" className="btnSmall" onClick={() => void refresh()} disabled={loading}>
+              {loading ? '載入中…' : '重新整理'}
+            </button>
+            <Link
+              className="btnSmall"
+              href={
+                currentTerm
+                  ? `/orgs/${params.orgId}/authority-terms?kind=${encodeURIComponent(currentTerm.kind)}`
+                  : `/orgs/${params.orgId}/authority-terms`
+              }
+            >
+              回 Terms
+            </Link>
+            <Link className="btnSmall" href={`/orgs/${params.orgId}/authority`}>
+              主控入口
+            </Link>
+            {bibsFilterHref ? (
+              <Link className="btnSmall btnPrimary" href={bibsFilterHref}>
+                Bibs 過濾
+              </Link>
+            ) : null}
+            {currentTerm && isHierarchyKind ? (
+              <Link
+                className="btnSmall"
+                href={`/orgs/${params.orgId}/authority-terms/thesaurus/visual?kind=${encodeURIComponent(currentTerm.kind)}&vocabulary_code=${encodeURIComponent(
+                  currentTerm.vocabulary_code,
+                )}`}
+              >
+                Visual
+              </Link>
+            ) : null}
+          </>
+        }
+      >
+        <div className="grid3">
+          <div className="callout">
+            <div className="muted">orgId</div>
+            <div style={{ fontFamily: 'var(--font-mono)' }}>{params.orgId}</div>
           </div>
-          <div>
-            termId：<code>{params.termId}</code>
+          <div className="callout">
+            <div className="muted">term_id</div>
+            <div style={{ fontFamily: 'var(--font-mono)', wordBreak: 'break-all' }}>{params.termId}</div>
+          </div>
+          <div className="callout">
+            <div className="muted">API</div>
+            <div className="muted">
+              <code>GET /api/v1/orgs/:orgId/authority-terms/:termId</code>
+            </div>
           </div>
         </div>
 
-        {loading ? <p className="muted">載入中…</p> : null}
-        {error ? <p className="error">錯誤：{error}</p> : null}
-        {success ? <p className="success">{success}</p> : null}
-
-        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 12 }}>
-          <button type="button" onClick={() => void refresh()} disabled={loading}>
-            重新整理
-          </button>
-          <Link href={`/orgs/${params.orgId}/authority-terms`}>回到 Authority Terms</Link>
-          <Link href={`/orgs/${params.orgId}`}>回到 Dashboard</Link>
+        <div className="toolbar">
+          <div className="toolbarLeft">
+            {currentTerm && isHierarchyKind ? (
+              <>
+                <Link
+                  className="btnSmall"
+                  href={`/orgs/${params.orgId}/authority-terms/thesaurus?kind=${encodeURIComponent(currentTerm.kind)}&vocabulary_code=${encodeURIComponent(
+                    currentTerm.vocabulary_code,
+                  )}`}
+                >
+                  Thesaurus Browser
+                </Link>
+                <Link
+                  className="btnSmall"
+                  href={`/orgs/${params.orgId}/authority-terms/thesaurus/quality?kind=${encodeURIComponent(currentTerm.kind)}&vocabulary_code=${encodeURIComponent(
+                    currentTerm.vocabulary_code,
+                  )}`}
+                >
+                  Quality
+                </Link>
+                <Link
+                  className="btnSmall"
+                  href={`/orgs/${params.orgId}/authority-terms/thesaurus/visual?kind=${encodeURIComponent(currentTerm.kind)}&vocabulary_code=${encodeURIComponent(
+                    currentTerm.vocabulary_code,
+                  )}`}
+                >
+                  Visual
+                </Link>
+              </>
+            ) : (
+              <span className="muted">（此 kind 不支援 Thesaurus：只支援 subject/geographic/genre）</span>
+            )}
+          </div>
         </div>
-      </section>
+
+        {loading ? <Alert variant="info" title="載入中…" role="status" /> : null}
+
+        {error ? (
+          <Alert variant="danger" title="操作失敗">
+            {error}
+          </Alert>
+        ) : null}
+        {success ? <Alert variant="success" title={success} role="status" /> : null}
+      </PageHeader>
 
       {currentTerm ? (
         <section className="panel">
-          <h2 style={{ marginTop: 0 }}>款目資訊</h2>
+          <SectionHeader title="款目資訊" description="主檔欄位（preferred/variants/vocab/status/note/source）。" />
           <div style={{ display: 'grid', gap: 6 }}>
             <div style={{ fontWeight: 700 }}>
               {currentTerm.preferred_label}{' '}
@@ -657,128 +764,221 @@ export default function AuthorityTermDetailPage({ params }: { params: { orgId: s
             {currentTerm.note ? <div className="muted">note：{currentTerm.note}</div> : null}
           </div>
 
-          <hr style={{ border: 0, borderTop: '1px solid var(--border)', margin: '16px 0' }} />
+          <hr className="divider" />
 
-          <h3 style={{ marginTop: 0 }}>編修 term</h3>
+          <div style={{ fontWeight: 850 }}>編修 term</div>
           <p className="muted">
             這裡更新的是 <code>authority_terms</code> 主檔（preferred/variants/vocab/status/note/source）。
             若你要改「書目使用的 term」，請用下方的 <strong>merge/redirect</strong>（會批次更新 junction tables）。
           </p>
 
-          <form onSubmit={onSaveTerm} className="stack" style={{ marginTop: 12 }}>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-              <label>
-                preferred_label（必填）
-                <input value={editPreferredLabel} onChange={(e) => setEditPreferredLabel(e.target.value)} />
-              </label>
-              <label>
-                vocabulary_code（必填；例：local / builtin-zh）
-                <input value={editVocabularyCode} onChange={(e) => setEditVocabularyCode(e.target.value)} />
-              </label>
-            </div>
+          <Form onSubmit={onSaveTerm} style={{ marginTop: 12 }}>
+            <FormSection title="主檔欄位" description="這裡只改 authority_terms；不會批次影響書目（請用 merge/redirect）。">
+              <div className="grid2">
+                <Field label="preferred_label（必填）" htmlFor="term_preferred_label">
+                  <input
+                    id="term_preferred_label"
+                    value={editPreferredLabel}
+                    onChange={(e) => setEditPreferredLabel(e.target.value)}
+                  />
+                </Field>
+                <Field label="vocabulary_code（必填）" htmlFor="term_vocabulary_code" hint="例：local / builtin-zh">
+                  <input
+                    id="term_vocabulary_code"
+                    value={editVocabularyCode}
+                    onChange={(e) => setEditVocabularyCode(e.target.value)}
+                  />
+                </Field>
+              </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-              <label>
-                status
-                <select value={editStatus} onChange={(e) => setEditStatus(e.target.value as AuthorityTerm['status'])}>
-                  <option value="active">active</option>
-                  <option value="inactive">inactive</option>
-                </select>
-              </label>
-              <label>
-                source（追溯用；例：local / seed-demo / bib-subject-backfill）
-                <input value={editSource} onChange={(e) => setEditSource(e.target.value)} />
-              </label>
-            </div>
+              <div className="grid2">
+                <Field label="status" htmlFor="term_status">
+                  <select
+                    id="term_status"
+                    value={editStatus}
+                    onChange={(e) => setEditStatus(e.target.value as AuthorityTerm['status'])}
+                  >
+                    <option value="active">active</option>
+                    <option value="inactive">inactive</option>
+                  </select>
+                </Field>
+                <Field label="source（追溯用）" htmlFor="term_source" hint="例：local / seed-demo / bib-subject-backfill">
+                  <input id="term_source" value={editSource} onChange={(e) => setEditSource(e.target.value)} />
+                </Field>
+              </div>
 
-            <label>
-              variant_labels（每行一個；同義詞/別名）
-              <textarea value={editVariantLabels} onChange={(e) => setEditVariantLabels(e.target.value)} rows={3} />
-            </label>
+              <Field label="variant_labels（每行一個）" htmlFor="term_variant_labels" hint="UF（同義詞/別名/常見錯寫）。">
+                <textarea
+                  id="term_variant_labels"
+                  value={editVariantLabels}
+                  onChange={(e) => setEditVariantLabels(e.target.value)}
+                  rows={3}
+                />
+              </Field>
 
-            <label>
-              note（可選）
-              <textarea value={editNote} onChange={(e) => setEditNote(e.target.value)} rows={3} />
-            </label>
+              <Field label="note（可選）" htmlFor="term_note">
+                <textarea id="term_note" value={editNote} onChange={(e) => setEditNote(e.target.value)} rows={3} />
+              </Field>
 
-            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
-              <button type="submit" disabled={savingTerm}>
-                {savingTerm ? '儲存中…' : '儲存變更'}
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setError(null);
-                  setSuccess(null);
-                  setEditPreferredLabel(currentTerm.preferred_label ?? '');
-                  setEditVariantLabels((currentTerm.variant_labels ?? []).join('\n'));
-                  setEditVocabularyCode(currentTerm.vocabulary_code ?? 'local');
-                  setEditStatus(currentTerm.status);
-                  setEditNote(currentTerm.note ?? '');
-                  setEditSource(currentTerm.source ?? '');
-                }}
-                disabled={savingTerm}
-              >
-                重置
-              </button>
-            </div>
-          </form>
+              <FormActions>
+                <button type="submit" className="btnPrimary" disabled={savingTerm}>
+                  {savingTerm ? '儲存中…' : '儲存變更'}
+                </button>
+                <button
+                  type="button"
+                  className="btnSmall"
+                  onClick={() => {
+                    setError(null);
+                    setSuccess(null);
+                    setEditPreferredLabel(currentTerm.preferred_label ?? '');
+                    setEditVariantLabels((currentTerm.variant_labels ?? []).join('\n'));
+                    setEditVocabularyCode(currentTerm.vocabulary_code ?? 'local');
+                    setEditStatus(currentTerm.status);
+                    setEditNote(currentTerm.note ?? '');
+                    setEditSource(currentTerm.source ?? '');
+                  }}
+                  disabled={savingTerm}
+                >
+                  重置
+                </button>
+              </FormActions>
+            </FormSection>
+          </Form>
         </section>
       ) : null}
 
       {currentTerm ? (
         <section className="panel">
-          <h2 style={{ marginTop: 0 }}>Usage（被哪些書目使用）</h2>
-          <p className="muted">
-            v1.3+ 對 <code>subject/name/geographic/genre</code> term 提供 usage（資料來源：<code>{usageSourceTable ?? '—'}</code>）。
-          </p>
-          {bibsFilterHref ? (
-            <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
-              <Link href={bibsFilterHref}>在 Bibs 以此 term 過濾</Link>
-              <span className="muted">（會自動套用 term_id filter）</span>
-            </div>
-          ) : null}
+          <SectionHeader
+            title="Usage（被哪些書目使用）"
+            description={
+              <>
+                v1.3+ 對 <code>subject/name/geographic/genre</code> term 提供 usage（資料來源：<code>{usageSourceTable ?? '—'}</code>）。
+              </>
+            }
+            actions={
+              bibsFilterHref ? (
+                <Link className="btnSmall" href={bibsFilterHref}>
+                  在 Bibs 過濾
+                </Link>
+              ) : null
+            }
+          />
 
           {!usageSourceTable ? (
-            <p className="muted">此 term.kind 暫不支援 usage（尚未落地對應 junction table）。</p>
+            <Alert variant="info" title="此 term.kind 暫不支援 usage" role="status">
+              尚未落地對應的 junction table，因此無法列出「被哪些書目使用」。
+            </Alert>
           ) : (
             <>
-              <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
-                <button type="button" onClick={() => void refreshUsage()} disabled={loadingUsage}>
-                  {loadingUsage ? '載入中…' : '重新載入 usage'}
-                </button>
-                {usage ? (
-                  <span className="muted">
-                    total_bibs={usage.total_bibs} · showing={usage.items.length} · next_cursor={usage.next_cursor ? '有' : '無'}
-                  </span>
-                ) : null}
+              <div className="toolbar" style={{ marginTop: 12 }}>
+                <div className="toolbarLeft">
+                  <button type="button" className="btnSmall" onClick={() => void refreshUsage()} disabled={loadingUsage}>
+                    {loadingUsage ? '載入中…' : '重新載入 usage'}
+                  </button>
+                </div>
+                <div className="toolbarRight">
+                  {usage ? (
+                    <span className="muted">
+                      total_bibs=<code>{usage.total_bibs}</code> · showing=<code>{usage.items.length}</code>
+                    </span>
+                  ) : (
+                    <span className="muted">—</span>
+                  )}
+                </div>
               </div>
 
-              {usage && usage.items.length === 0 ? <p className="muted" style={{ marginTop: 12 }}>（目前沒有書目使用此 term）</p> : null}
+              {loadingUsage && !usage ? <SkeletonTable columns={5} rows={6} /> : null}
+
+              {!loadingUsage && !usage ? (
+                <EmptyState
+                  title="尚未載入 usage"
+                  description="你可以重新載入 usage，或先處理上方錯誤訊息。"
+                  actions={
+                    <button type="button" className="btnPrimary" onClick={() => void refreshUsage()}>
+                      重新載入 usage
+                    </button>
+                  }
+                />
+              ) : null}
+
+              {usage && usage.items.length === 0 ? (
+                <EmptyState title="目前沒有書目使用此 term" description="這通常代表此 term 還沒被編目採用，或已被 merge 走。" />
+              ) : null}
 
               {usage && usage.items.length > 0 ? (
-                <div style={{ marginTop: 12 }}>
-                  <ul>
-                    {usage.items.map((b) => (
-                      <li key={b.bibliographic_id} style={{ marginBottom: 8 }}>
-                        <Link href={`/orgs/${params.orgId}/bibs/${b.bibliographic_id}`}>{b.title}</Link>{' '}
-                        <span className="muted">
-                          (isbn={b.isbn ?? '—'} · classification={b.classification ?? '—'})
-                        </span>
-                        {b.roles && b.roles.length > 0 ? (
-                          <span className="muted" style={{ marginLeft: 8 }}>
-                            roles={b.roles.join(',')}
-                          </span>
-                        ) : null}
-                      </li>
-                    ))}
-                  </ul>
+                <div className="stack" style={{ marginTop: 12 }}>
+                  <DataTable
+                    rows={usage.items}
+                    getRowKey={(b) => b.bibliographic_id}
+                    initialSort={{ columnId: 'title', direction: 'asc' }}
+                    sortHint="排序僅影響目前已載入資料（cursor pagination）。"
+                    columns={[
+                      {
+                        id: 'title',
+                        header: 'title',
+                        cell: (b) => (
+                          <Link href={`/orgs/${params.orgId}/bibs/${b.bibliographic_id}`}>
+                            <span style={{ fontWeight: 700 }}>{b.title}</span>
+                          </Link>
+                        ),
+                        sortValue: (b) => b.title,
+                      },
+                      {
+                        id: 'isbn',
+                        header: 'isbn',
+                        cell: (b) => <span className="muted">{b.isbn ?? '—'}</span>,
+                        sortValue: (b) => b.isbn ?? '',
+                        width: 190,
+                      },
+                      {
+                        id: 'classification',
+                        header: 'classification',
+                        cell: (b) => <span className="muted">{b.classification ?? '—'}</span>,
+                        sortValue: (b) => b.classification ?? '',
+                        width: 160,
+                      },
+                      {
+                        id: 'roles',
+                        header: 'roles',
+                        cell: (b) =>
+                          b.roles && b.roles.length > 0 ? (
+                            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                              {b.roles.map((r) => (
+                                <span key={r} className="badge badge--info">
+                                  {r}
+                                </span>
+                              ))}
+                            </div>
+                          ) : (
+                            <span className="muted">—</span>
+                          ),
+                        sortValue: (b) => (b.roles?.[0] ?? ''),
+                        width: 170,
+                      },
+                      {
+                        id: 'created_at',
+                        header: 'created_at',
+                        cell: (b) => <code>{b.created_at.slice(0, 10)}</code>,
+                        sortValue: (b) => b.created_at,
+                        width: 140,
+                      },
+                    ]}
+                  />
 
-                  {usage.next_cursor ? (
-                    <button type="button" onClick={() => void loadMoreUsage()} disabled={loadingMoreUsage || loadingUsage}>
-                      {loadingMoreUsage ? '載入中…' : '載入更多'}
-                    </button>
-                  ) : null}
+                  <CursorPagination
+                    showing={usage.items.length}
+                    nextCursor={usage.next_cursor}
+                    loadingMore={loadingMoreUsage}
+                    loading={loadingUsage}
+                    onLoadMore={() => void loadMoreUsage()}
+                    meta={
+                      <>
+                        total_bibs=<code>{usage.total_bibs}</code> · showing=<code>{usage.items.length}</code> · next_cursor=
+                        {usage.next_cursor ? '有' : '無'}
+                      </>
+                    }
+                  />
                 </div>
               ) : null}
             </>
@@ -788,11 +988,15 @@ export default function AuthorityTermDetailPage({ params }: { params: { orgId: s
 
       {currentTerm && supportsUsageAndMerge ? (
         <section className="panel">
-          <h2 style={{ marginTop: 0 }}>Merge / Redirect（治理）</h2>
-          <p className="muted">
-            用於把「重複/錯用/新建 local」的 term 收斂成唯一款目：
-            merge 會批次更新 <code>{usageSourceTable}</code>，並可把舊詞收進 target 的 <code>variant_labels</code>。
-          </p>
+          <SectionHeader
+            title="Merge / Redirect（治理）"
+            description={
+              <>
+                用於把「重複/錯用/新建 local」的 term 收斂成唯一款目：merge 會批次更新 <code>{usageSourceTable}</code>，並可把舊詞收進 target 的{' '}
+                <code>variant_labels</code>。
+              </>
+            }
+          />
 
           <div className="callout warn">
             <div className="muted">
@@ -809,7 +1013,12 @@ export default function AuthorityTermDetailPage({ params }: { params: { orgId: s
                   onChange={(e) => setMergeTargetQuery(e.target.value)}
                   placeholder="輸入關鍵字…"
                 />
-                <button type="button" onClick={() => void runSuggestMergeTarget()} disabled={suggestingMergeTarget}>
+                <button
+                  type="button"
+                  className="btnPrimary"
+                  onClick={() => void runSuggestMergeTarget()}
+                  disabled={suggestingMergeTarget}
+                >
                   {suggestingMergeTarget ? '搜尋中…' : '搜尋'}
                 </button>
               </div>
@@ -818,18 +1027,26 @@ export default function AuthorityTermDetailPage({ params }: { params: { orgId: s
             {mergeSuggestions && mergeSuggestions.length > 0 ? (
               <div>
                 <div className="muted">點選一筆作為 merge target：</div>
-                <ul style={{ marginTop: 8 }}>
+                <div className="list" style={{ marginTop: 8 }}>
                   {mergeSuggestions.map((s) => (
-                    <li key={s.id} style={{ marginBottom: 6 }}>
-                      <button type="button" onClick={() => setSelectedMergeTarget(s)} style={{ textAlign: 'left' }}>
-                        {s.preferred_label}{' '}
-                        <span className="muted">
-                          ({s.status} · {s.vocabulary_code} · {s.source})
+                    <button
+                      key={s.id}
+                      type="button"
+                      className={['listRow', selectedMergeTarget?.id === s.id ? 'active' : ''].join(' ')}
+                      onClick={() => setSelectedMergeTarget(s)}
+                    >
+                      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'baseline' }}>
+                        <span style={{ fontWeight: 800 }}>{s.preferred_label}</span>
+                        <span className="muted" style={{ fontSize: 12 }}>
+                          {s.status} · {s.vocabulary_code} · {s.source}
                         </span>
-                      </button>
-                    </li>
+                      </div>
+                      <div className="muted" style={{ fontSize: 12, fontFamily: 'var(--font-mono)', marginTop: 2 }}>
+                        {s.id}
+                      </div>
+                    </button>
                   ))}
-                </ul>
+                </div>
               </div>
             ) : null}
 
@@ -875,10 +1092,10 @@ export default function AuthorityTermDetailPage({ params }: { params: { orgId: s
             </label>
 
             <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-              <button type="button" onClick={() => void runMergePreview()} disabled={previewingMerge}>
+              <button type="button" className="btnSmall" onClick={() => void runMergePreview()} disabled={previewingMerge}>
                 {previewingMerge ? '預覽中…' : 'Preview'}
               </button>
-              <button type="button" onClick={() => void runMergeApply()} disabled={applyingMerge}>
+              <button type="button" className="btnDanger" onClick={() => void runMergeApply()} disabled={applyingMerge}>
                 {applyingMerge ? '套用中…' : 'Apply'}
               </button>
             </div>
@@ -893,9 +1110,11 @@ export default function AuthorityTermDetailPage({ params }: { params: { orgId: s
                     warnings：{mergePreview.summary.warnings.join(' · ')}
                   </div>
                 ) : null}
-                <details style={{ marginTop: 8 }}>
-                  <summary className="muted">檢視 merge preview JSON</summary>
-                  <pre style={{ overflowX: 'auto', marginTop: 8 }}>{JSON.stringify(mergePreview, null, 2)}</pre>
+                <details className="details" style={{ marginTop: 8 }}>
+                  <summary>檢視 merge preview JSON</summary>
+                  <div className="detailsBody">
+                    <pre style={{ overflowX: 'auto' }}>{JSON.stringify(mergePreview, null, 2)}</pre>
+                  </div>
                 </details>
               </div>
             ) : null}
@@ -905,9 +1124,11 @@ export default function AuthorityTermDetailPage({ params }: { params: { orgId: s
                 <div className="muted">
                   已套用：audit_event_id=<code>{mergeApplyResult.audit_event_id}</code>
                 </div>
-                <details style={{ marginTop: 8 }}>
-                  <summary className="muted">檢視 merge apply JSON</summary>
-                  <pre style={{ overflowX: 'auto', marginTop: 8 }}>{JSON.stringify(mergeApplyResult, null, 2)}</pre>
+                <details className="details" style={{ marginTop: 8 }}>
+                  <summary>檢視 merge apply JSON</summary>
+                  <div className="detailsBody">
+                    <pre style={{ overflowX: 'auto' }}>{JSON.stringify(mergeApplyResult, null, 2)}</pre>
+                  </div>
                 </details>
               </div>
             ) : null}
@@ -917,13 +1138,20 @@ export default function AuthorityTermDetailPage({ params }: { params: { orgId: s
 
       {ancestors ? (
         <section className="panel">
-          <h2 style={{ marginTop: 0 }}>Breadcrumbs（Ancestors）</h2>
-          <p className="muted">
-            polyhierarchy 可能會有多條路徑；這裡最多顯示 <code>{ancestors.max_paths}</code> 條（depth={ancestors.depth}）。
-            {ancestors.truncated ? <span>（已截斷）</span> : null}
-          </p>
-
-          {loadingAncestors ? <p className="muted">載入中…</p> : null}
+          <SectionHeader
+            title="Breadcrumbs（Ancestors）"
+            description={
+              <>
+                polyhierarchy 可能會有多條路徑；這裡最多顯示 <code>{ancestors.max_paths}</code> 條（depth={ancestors.depth}）。
+                {ancestors.truncated ? <span>（已截斷）</span> : null}
+              </>
+            }
+            actions={
+              <button type="button" className="btnSmall" onClick={() => void refreshAncestors()} disabled={loadingAncestors}>
+                {loadingAncestors ? '載入中…' : '重新載入'}
+              </button>
+            }
+          />
 
           {ancestors.paths.length === 0 ? <p className="muted">（無 ancestors；可能是 root term 或 depth=0）</p> : null}
 
@@ -945,22 +1173,45 @@ export default function AuthorityTermDetailPage({ params }: { params: { orgId: s
         </section>
       ) : (
         <section className="panel">
-          <h2 style={{ marginTop: 0 }}>Breadcrumbs（Ancestors）</h2>
-          <p className="muted">（尚未載入）</p>
-          <button type="button" onClick={() => void refreshAncestors()} disabled={loadingAncestors}>
-            {loadingAncestors ? '載入中…' : '重新載入 Breadcrumbs'}
-          </button>
+          <SectionHeader
+            title="Breadcrumbs（Ancestors）"
+            description="（尚未載入）"
+            actions={
+              <button type="button" className="btnSmall" onClick={() => void refreshAncestors()} disabled={loadingAncestors}>
+                {loadingAncestors ? '載入中…' : '重新載入'}
+              </button>
+            }
+          />
         </section>
       )}
 
       {isHierarchyKind ? (
         <section className="panel">
-          <h2 style={{ marginTop: 0 }}>Graph（局部視覺化）</h2>
-          <p className="muted">
-            這裡用 <code>thesaurus/graph</code>（depth-limited）呈現 BT/NT 關係；點節點可快速跳到該 term。
-            若你想要更完整的「樹 + 右側詳情」操作，請用{' '}
-            <Link href={`/orgs/${params.orgId}/authority-terms/thesaurus/visual`}>Thesaurus Visual Editor</Link>。
-          </p>
+          <SectionHeader
+            title="Graph（局部視覺化）"
+            description={
+              <>
+                用 <code>thesaurus/graph</code>（depth-limited）呈現 BT/NT；點節點可快速跳到該 term。
+              </>
+            }
+            actions={
+              <>
+                <button type="button" className="btnSmall" onClick={() => void refreshGraph()} disabled={loadingGraph}>
+                  {loadingGraph ? '載入中…' : '更新 graph'}
+                </button>
+                {currentTerm ? (
+                  <Link
+                    className="btnSmall"
+                    href={`/orgs/${params.orgId}/authority-terms/thesaurus/visual?kind=${encodeURIComponent(currentTerm.kind)}&vocabulary_code=${encodeURIComponent(
+                      currentTerm.vocabulary_code,
+                    )}`}
+                  >
+                    Visual Editor
+                  </Link>
+                ) : null}
+              </>
+            }
+          />
 
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginTop: 12 }}>
             <label>
@@ -974,12 +1225,6 @@ export default function AuthorityTermDetailPage({ params }: { params: { orgId: s
               depth（0..5）
               <input value={graphDepth} onChange={(e) => setGraphDepth(e.target.value)} disabled={loadingGraph} />
             </label>
-          </div>
-
-          <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 12 }}>
-            <button type="button" onClick={() => void refreshGraph()} disabled={loadingGraph}>
-              {loadingGraph ? '載入中…' : '更新 graph'}
-            </button>
           </div>
 
           {graph ? (
@@ -1004,7 +1249,7 @@ export default function AuthorityTermDetailPage({ params }: { params: { orgId: s
 
       {detail ? (
         <section className="panel">
-          <h2 style={{ marginTop: 0 }}>關係（BT/NT/RT）</h2>
+          <SectionHeader title="關係（BT/NT/RT）" description="thesaurus relations（同 kind + 同 vocabulary_code）。" />
 
           <div style={{ display: 'grid', gap: 12 }}>
             <RelationList title="BT（broader terms）" items={detail.relations.broader} onDelete={onDeleteRelation} orgId={params.orgId} />
@@ -1016,10 +1261,14 @@ export default function AuthorityTermDetailPage({ params }: { params: { orgId: s
 
       {currentTerm ? (
         <section className="panel">
-          <h2 style={{ marginTop: 0 }}>新增關係</h2>
-          <p className="muted">
-            v1.4 規則：關係必須同 <code>kind</code> + 同 <code>vocabulary_code</code>；BT/NT 支援 <code>subject/geographic/genre</code>。
-          </p>
+          <SectionHeader
+            title="新增關係"
+            description={
+              <>
+                v1.4 規則：關係必須同 <code>kind</code> + 同 <code>vocabulary_code</code>；BT/NT 支援 <code>subject/geographic/genre</code>。
+              </>
+            }
+          />
 
           <div style={{ display: 'grid', gap: 12, marginTop: 12 }}>
             <label>
@@ -1039,7 +1288,7 @@ export default function AuthorityTermDetailPage({ params }: { params: { orgId: s
               搜尋 target term（會限制同 vocabulary_code：{currentTerm.vocabulary_code}）
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
                 <input value={targetQuery} onChange={(e) => setTargetQuery(e.target.value)} placeholder="輸入關鍵字…" />
-                <button type="button" onClick={() => void runSuggest()} disabled={suggesting}>
+                <button type="button" className="btnPrimary" onClick={() => void runSuggest()} disabled={suggesting}>
                   {suggesting ? '搜尋中…' : '搜尋'}
                 </button>
               </div>
@@ -1048,22 +1297,26 @@ export default function AuthorityTermDetailPage({ params }: { params: { orgId: s
             {suggestions && suggestions.length > 0 ? (
               <div>
                 <div className="muted">點選一筆作為 target：</div>
-                <ul style={{ marginTop: 8 }}>
+                <div className="list" style={{ marginTop: 8 }}>
                   {suggestions.map((s) => (
-                    <li key={s.id} style={{ marginBottom: 6 }}>
-                      <button
-                        type="button"
-                        onClick={() => setSelectedTarget(s)}
-                        style={{ textAlign: 'left' }}
-                      >
-                        {s.preferred_label}{' '}
-                        <span className="muted">
-                          ({s.status} · {s.vocabulary_code} · {s.source})
+                    <button
+                      key={s.id}
+                      type="button"
+                      className={['listRow', selectedTarget?.id === s.id ? 'active' : ''].join(' ')}
+                      onClick={() => setSelectedTarget(s)}
+                    >
+                      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'baseline' }}>
+                        <span style={{ fontWeight: 800 }}>{s.preferred_label}</span>
+                        <span className="muted" style={{ fontSize: 12 }}>
+                          {s.status} · {s.vocabulary_code} · {s.source}
                         </span>
-                      </button>
-                    </li>
+                      </div>
+                      <div className="muted" style={{ fontSize: 12, fontFamily: 'var(--font-mono)', marginTop: 2 }}>
+                        {s.id}
+                      </div>
+                    </button>
                   ))}
-                </ul>
+                </div>
               </div>
             ) : null}
 
@@ -1075,7 +1328,7 @@ export default function AuthorityTermDetailPage({ params }: { params: { orgId: s
               </div>
             ) : null}
 
-            <button type="button" onClick={() => void onAddRelation()} disabled={adding}>
+            <button type="button" className="btnPrimary" onClick={() => void onAddRelation()} disabled={adding || !selectedTarget}>
               {adding ? '新增中…' : '新增關係'}
             </button>
           </div>
@@ -1084,10 +1337,14 @@ export default function AuthorityTermDetailPage({ params }: { params: { orgId: s
 
       {currentTerm ? (
         <section className="panel">
-          <h2 style={{ marginTop: 0 }}>展開（expand）預覽</h2>
-          <p className="muted">
-            這是給「檢索擴充」用的 API 預覽：<code>GET /authority-terms/:termId/expand</code>
-          </p>
+          <SectionHeader
+            title="展開（expand）預覽"
+            description={
+              <>
+                這是給「檢索擴充」用的 API 預覽：<code>GET /authority-terms/:termId/expand</code>
+              </>
+            }
+          />
 
           <label style={{ marginTop: 8 }}>
             depth（0..5）
@@ -1095,16 +1352,18 @@ export default function AuthorityTermDetailPage({ params }: { params: { orgId: s
           </label>
 
           <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 12, alignItems: 'center' }}>
-            <button type="button" onClick={() => void onExpandPreview()} disabled={expanding}>
+            <button type="button" className="btnSmall" onClick={() => void onExpandPreview()} disabled={expanding}>
               {expanding ? '展開中…' : '執行 expand'}
             </button>
             {expandResult ? <span className="muted">labels：{expandResult.labels.length}</span> : null}
           </div>
 
           {expandResult ? (
-            <details style={{ marginTop: 12 }} open>
+            <details className="details" style={{ marginTop: 12 }} open>
               <summary>expand result（JSON）</summary>
-              <pre style={{ overflowX: 'auto', marginTop: 8 }}>{JSON.stringify(expandResult, null, 2)}</pre>
+              <div className="detailsBody">
+                <pre style={{ overflowX: 'auto' }}>{JSON.stringify(expandResult, null, 2)}</pre>
+              </div>
             </details>
           ) : null}
         </section>
@@ -1135,7 +1394,7 @@ function RelationList(props: {
                     ({x.term.status} · {x.term.vocabulary_code} · {x.term.source})
                   </span>
                 </span>
-                <button type="button" onClick={() => onDelete(x.relation_id)}>
+                <button type="button" className="btnSmall btnDanger" onClick={() => onDelete(x.relation_id)}>
                   刪除
                 </button>
               </div>

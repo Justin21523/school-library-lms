@@ -23,6 +23,8 @@ import { usePathname } from 'next/navigation';
 import { getOrgConsoleNav, type OrgConsoleNavGroup, type OrgConsoleNavItem, type OrgConsoleNavNode } from '../../lib/console-nav';
 
 import { NavIcon } from './nav-icons';
+import { ApiStatusPanel } from './api-status-panel';
+import { StaffSessionPanel } from './staff-session-panel';
 
 type GroupOpenState = Record<string, boolean>;
 
@@ -217,8 +219,12 @@ export function OrgShell({ orgId, children }: { orgId: string; children: ReactNo
         {/* footer：留給後續「快捷工具」/「最近使用」等 UX 強化 */}
         {!collapsed ? (
           <div className="sidebarFooter">
-            <div className="muted" style={{ fontSize: 12 }}>
-              提示：按 <code>Ctrl/Cmd + K</code> 可快速跳轉功能
+            <div className="sidebarStatus">
+              <StaffSessionPanel orgId={orgId} />
+              <ApiStatusPanel />
+              <div className="muted" style={{ fontSize: 12 }}>
+                提示：按 <code>Ctrl/Cmd + K</code> 可快速跳轉功能
+              </div>
             </div>
           </div>
         ) : null}

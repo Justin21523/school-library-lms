@@ -30,6 +30,9 @@ import type { User } from '../../../lib/api';
 import { createUser, listUsers, setStaffPassword, updateUser } from '../../../lib/api';
 import { formatErrorMessage } from '../../../lib/error';
 import { useStaffSession } from '../../../lib/use-staff-session';
+import { Alert } from '../../../components/ui/alert';
+import { Field, Form, FormActions, FormSection } from '../../../components/ui/form';
+import { PageHeader, SectionHeader } from '../../../components/ui/page-header';
 
 export default function UsersPage({ params }: { params: { orgId: string } }) {
   // staff session：/users 端點受 StaffAuthGuard 保護，因此需先登入。
@@ -382,10 +385,7 @@ export default function UsersPage({ params }: { params: { orgId: string } }) {
   if (!sessionReady) {
     return (
       <div className="stack">
-        <section className="panel">
-          <h1 style={{ marginTop: 0 }}>Users</h1>
-          <p className="muted">載入登入狀態中…</p>
-        </section>
+        <PageHeader title="Users" description="載入登入狀態中…" />
       </div>
     );
   }
@@ -393,144 +393,150 @@ export default function UsersPage({ params }: { params: { orgId: string } }) {
   if (!session) {
     return (
       <div className="stack">
-        <section className="panel">
-          <h1 style={{ marginTop: 0 }}>Users</h1>
-          <p className="error">
+        <PageHeader title="Users">
+          <Alert variant="danger" title="需要登入">
             這頁需要 staff 登入才能管理 users。請先前往 <Link href={`/orgs/${params.orgId}/login`}>/login</Link>。
-          </p>
-        </section>
+          </Alert>
+        </PageHeader>
       </div>
     );
   }
 
   return (
     <div className="stack">
-      <section className="panel">
-        <h1 style={{ marginTop: 0 }}>Users</h1>
-        <p className="muted">
-          對應 API：<code>GET/POST /api/v1/orgs/:orgId/users</code>（可用 <code>?query=</code>{' '}
-          搜尋）。
-        </p>
+      <PageHeader
+        title="Users"
+        description={
+          <>
+            對應 API：<code>GET/POST /api/v1/orgs/:orgId/users</code>（可用 <code>?query=</code> 搜尋）。
+          </>
+        }
+      >
         <p className="muted">
           批次名冊匯入（US-010）：<Link href={`/orgs/${params.orgId}/users/import`}>Users CSV Import</Link>
         </p>
 
-        <p className="muted">
-          actor_user_id（操作者）已鎖定為：<code>{session.user.id}</code>（{session.user.name} /{' '}
-          {session.user.role}）
-        </p>
+        <Alert variant="info" title="操作者（actor_user_id）" role="status">
+          已鎖定為：<code>{session.user.id}</code>（{session.user.name} / {session.user.role}）
+        </Alert>
 
-        <label>
-          note（選填；寫入 audit metadata：停用/啟用/重設密碼等動作都會共用這個備註）
-          <input
-            value={actionNote}
-            onChange={(e) => setActionNote(e.target.value)}
-            placeholder="例：113-1 畢業名單停用 / 班級升級更正"
-          />
-        </label>
+        {error ? (
+          <Alert variant="danger" title="操作失敗">
+            {error}
+          </Alert>
+        ) : null}
+        {success ? (
+          <Alert variant="success" title="已完成" role="status">
+            {success}
+          </Alert>
+        ) : null}
 
-        {/* 搜尋表單 */}
-        <form onSubmit={onSearch} style={{ display: 'flex', gap: 12, alignItems: 'end', flexWrap: 'wrap' }}>
-          <label style={{ minWidth: 260 }}>
-            搜尋（external_id / name / org_unit）
-            <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="例：501 / 王小明 / S1130123" />
-          </label>
-
-          <label>
-            role（選填）
-            <select value={roleFilter} onChange={(e) => setRoleFilter(e.target.value as any)}>
-              <option value="">（全部）</option>
-              <option value="student">student</option>
-              <option value="teacher">teacher</option>
-              <option value="librarian">librarian</option>
-              <option value="admin">admin</option>
-              <option value="guest">guest</option>
-            </select>
-          </label>
-
-          <label>
-            status（選填）
-            <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as any)}>
-              <option value="">（全部）</option>
-              <option value="active">active</option>
-              <option value="inactive">inactive</option>
-            </select>
-          </label>
-
-          <label style={{ width: 120 }}>
-            limit
-            <input value={limit} onChange={(e) => setLimit(e.target.value)} />
-          </label>
-
-          <div style={{ display: 'flex', gap: 12 }}>
-            <button type="submit" disabled={loading}>
-              {loading ? '查詢中…' : '搜尋'}
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setQuery('');
-                setRoleFilter('');
-                setStatusFilter('');
-                setLimit('200');
-                void refresh();
-              }}
-              disabled={loading}
-            >
-              清除
-            </button>
-          </div>
-        </form>
-
-        {/* 建立 user 表單 */}
-        <hr style={{ border: 0, borderTop: '1px solid var(--border)', margin: '16px 0' }} />
-
-        <form onSubmit={onCreate} className="stack">
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-            <label>
-              external_id（學號/員編；同 org 內唯一）
+        <Form onSubmit={onSearch}>
+          <FormSection title="查詢" description="依 external_id / name / org_unit 搜尋；並可用 role/status 篩選。">
+            <Field label="note（選填；寫入 audit metadata）" htmlFor="users_action_note" hint="停用/啟用/重設密碼等動作會共用這個備註。">
               <input
-                value={externalId}
-                onChange={(e) => setExternalId(e.target.value)}
-                placeholder="例：S1130123"
+                id="users_action_note"
+                value={actionNote}
+                onChange={(e) => setActionNote(e.target.value)}
+                placeholder="例：113-1 畢業名單停用 / 班級升級更正"
               />
-            </label>
+            </Field>
 
-            <label>
-              name（姓名）
-              <input value={name} onChange={(e) => setName(e.target.value)} placeholder="例：王小明" />
-            </label>
-          </div>
+            <div className="grid4">
+              <Field label="搜尋（external_id / name / org_unit）" htmlFor="users_query">
+                <input id="users_query" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="例：501 / 王小明 / S1130123" />
+              </Field>
 
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-            <label>
-              role（角色）
-              <select value={role} onChange={(e) => setRole(e.target.value as User['role'])}>
-                <option value="student">student（學生）</option>
-                <option value="teacher">teacher（教師）</option>
-                <option value="librarian">librarian（館員）</option>
-                <option value="admin">admin（管理者）</option>
-                <option value="guest">guest（訪客）</option>
-              </select>
-            </label>
+              <Field label="role（選填）" htmlFor="users_role_filter">
+                <select id="users_role_filter" value={roleFilter} onChange={(e) => setRoleFilter(e.target.value as any)}>
+                  <option value="">（全部）</option>
+                  <option value="student">student</option>
+                  <option value="teacher">teacher</option>
+                  <option value="librarian">librarian</option>
+                  <option value="admin">admin</option>
+                  <option value="guest">guest</option>
+                </select>
+              </Field>
 
-            <label>
-              org_unit（班級/單位，選填）
-              <input value={orgUnit} onChange={(e) => setOrgUnit(e.target.value)} placeholder="例：501" />
-            </label>
-          </div>
+              <Field label="status（選填）" htmlFor="users_status_filter">
+                <select id="users_status_filter" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as any)}>
+                  <option value="">（全部）</option>
+                  <option value="active">active</option>
+                  <option value="inactive">inactive</option>
+                </select>
+              </Field>
 
-          <button type="submit" disabled={creating}>
-            {creating ? '建立中…' : '建立 User'}
-          </button>
-        </form>
+              <Field label="limit" htmlFor="users_limit">
+                <input id="users_limit" value={limit} onChange={(e) => setLimit(e.target.value)} />
+              </Field>
+            </div>
 
-        {error ? <p className="error">錯誤：{error}</p> : null}
-        {success ? <p className="success">{success}</p> : null}
-      </section>
+            <FormActions>
+              <button type="submit" className="btnPrimary" disabled={loading}>
+                {loading ? '查詢中…' : '搜尋'}
+              </button>
+              <button
+                type="button"
+                className="btnSmall"
+                onClick={() => {
+                  setQuery('');
+                  setRoleFilter('');
+                  setStatusFilter('');
+                  setLimit('200');
+                  void refresh();
+                }}
+                disabled={loading}
+              >
+                清除
+              </button>
+            </FormActions>
+          </FormSection>
+        </Form>
+
+        <Form onSubmit={onCreate}>
+          <FormSection title="建立 User" description="建立 student/teacher/librarian/admin；密碼請用下方列表的「設定/重設密碼」。">
+            <div className="grid2">
+              <Field label="external_id（學號/員編；同 org 內唯一）" htmlFor="create_user_external_id">
+                <input
+                  id="create_user_external_id"
+                  value={externalId}
+                  onChange={(e) => setExternalId(e.target.value)}
+                  placeholder="例：S1130123"
+                />
+              </Field>
+
+              <Field label="name（姓名）" htmlFor="create_user_name">
+                <input id="create_user_name" value={name} onChange={(e) => setName(e.target.value)} placeholder="例：王小明" />
+              </Field>
+            </div>
+
+            <div className="grid2">
+              <Field label="role（角色）" htmlFor="create_user_role">
+                <select id="create_user_role" value={role} onChange={(e) => setRole(e.target.value as User['role'])}>
+                  <option value="student">student（學生）</option>
+                  <option value="teacher">teacher（教師）</option>
+                  <option value="librarian">librarian（館員）</option>
+                  <option value="admin">admin（管理者）</option>
+                  <option value="guest">guest（訪客）</option>
+                </select>
+              </Field>
+
+              <Field label="org_unit（班級/單位，選填）" htmlFor="create_user_org_unit">
+                <input id="create_user_org_unit" value={orgUnit} onChange={(e) => setOrgUnit(e.target.value)} placeholder="例：501" />
+              </Field>
+            </div>
+
+            <FormActions>
+              <button type="submit" className="btnPrimary" disabled={creating}>
+                {creating ? '建立中…' : '建立 User'}
+              </button>
+            </FormActions>
+          </FormSection>
+        </Form>
+      </PageHeader>
 
       <section className="panel">
-        <h2 style={{ marginTop: 0 }}>列表</h2>
+        <SectionHeader title="列表" />
 
         {loading ? <p className="muted">載入中…</p> : null}
         {!loading && users && users.length === 0 ? <p className="muted">沒有符合條件的 users。</p> : null}
@@ -563,6 +569,7 @@ export default function UsersPage({ params }: { params: { orgId: string } }) {
                       {session.user.role === 'librarian' && (u.role === 'admin' || u.role === 'librarian') ? (
                         <button
                           type="button"
+                          className="btnSmall"
                           disabled
                           title="librarian 不可修改 staff（admin/librarian）帳號；需由 admin 操作"
                         >
@@ -571,6 +578,7 @@ export default function UsersPage({ params }: { params: { orgId: string } }) {
                       ) : (
                         <button
                           type="button"
+                          className="btnSmall"
                           onClick={() => startEdit(u)}
                           disabled={!actorUserId || loading}
                           title={!actorUserId ? '缺少 actor_user_id（請先登入）' : undefined}
@@ -581,6 +589,7 @@ export default function UsersPage({ params }: { params: { orgId: string } }) {
 
                       <button
                         type="button"
+                        className={['btnSmall', u.status === 'active' ? 'btnDanger' : 'btnPrimary'].join(' ')}
                         onClick={() => void toggleUserStatus(u)}
                         disabled={
                           !actorUserId ||
@@ -600,6 +609,7 @@ export default function UsersPage({ params }: { params: { orgId: string } }) {
 
                       <button
                         type="button"
+                        className={['btnSmall', 'btnPrimary'].join(' ')}
                         onClick={() => void onSetPassword(u)}
                         disabled={
                           !actorUserId ||
@@ -688,10 +698,10 @@ export default function UsersPage({ params }: { params: { orgId: string } }) {
                         </label>
 
                         <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-                          <button type="submit" disabled={savingEdit || loading}>
+                          <button type="submit" className="btnPrimary" disabled={savingEdit || loading}>
                             {savingEdit ? '儲存中…' : '儲存更正'}
                           </button>
-                          <button type="button" onClick={cancelEdit} disabled={savingEdit || loading}>
+                          <button type="button" className="btnSmall" onClick={cancelEdit} disabled={savingEdit || loading}>
                             取消
                           </button>
                         </div>
@@ -703,7 +713,7 @@ export default function UsersPage({ params }: { params: { orgId: string } }) {
             </ul>
 
             {nextCursor ? (
-              <button type="button" onClick={() => void loadMore()} disabled={loadingMore || loading}>
+              <button type="button" className="btnSmall" onClick={() => void loadMore()} disabled={loadingMore || loading}>
                 {loadingMore ? '載入中…' : '載入更多'}
               </button>
             ) : null}

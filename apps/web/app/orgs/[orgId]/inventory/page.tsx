@@ -42,6 +42,10 @@ import {
   listLocations,
   scanInventoryItem,
 } from '../../../lib/api';
+import { Alert } from '../../../components/ui/alert';
+import { DataTable } from '../../../components/ui/data-table';
+import { EmptyState } from '../../../components/ui/empty-state';
+import { Field, Form, FormActions, FormSection } from '../../../components/ui/form';
 import { formatErrorMessage } from '../../../lib/error';
 import { useStaffSession } from '../../../lib/use-staff-session';
 
@@ -488,7 +492,7 @@ export default function InventoryPage({ params }: { params: { orgId: string } })
       <div className="stack">
         <section className="panel">
           <h1 style={{ marginTop: 0 }}>Inventory</h1>
-          <p className="muted">載入登入狀態中…</p>
+          <Alert variant="info" title="載入登入狀態中…" role="status" />
         </section>
       </div>
     );
@@ -499,9 +503,9 @@ export default function InventoryPage({ params }: { params: { orgId: string } })
       <div className="stack">
         <section className="panel">
           <h1 style={{ marginTop: 0 }}>Inventory</h1>
-          <p className="error">
+          <Alert variant="danger" title="需要登入">
             這頁需要 staff 登入才能操作。請先前往 <Link href={`/orgs/${params.orgId}/login`}>/login</Link>。
-          </p>
+          </Alert>
         </section>
       </div>
     );
@@ -525,16 +529,24 @@ export default function InventoryPage({ params }: { params: { orgId: string } })
           {session.user.role}）
         </p>
 
-        {loadingLocations ? <p className="muted">載入 locations 中…</p> : null}
-        {loadingSessions ? <p className="muted">載入盤點 sessions 中…</p> : null}
-        {error ? <p className="error">錯誤：{error}</p> : null}
-        {success ? <p className="success">{success}</p> : null}
+        {loadingLocations ? <Alert variant="info" title="載入 locations 中…" role="status" /> : null}
+        {loadingSessions ? <Alert variant="info" title="載入盤點 sessions 中…" role="status" /> : null}
+        {error ? (
+          <Alert variant="danger" title="操作失敗">
+            {error}
+          </Alert>
+        ) : null}
+        {success ? <Alert variant="success" title={success} role="status" /> : null}
 
-        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
-          <button type="button" onClick={() => void refreshSessionsList()} disabled={loadingSessions}>
-            Refresh sessions
-          </button>
-          <Link href={`/orgs/${params.orgId}/audit-events`}>前往 Audit Events</Link>
+        <div className="toolbar">
+          <div className="toolbarLeft">
+            <button type="button" className="btnSmall" onClick={() => void refreshSessionsList()} disabled={loadingSessions}>
+              Refresh sessions
+            </button>
+          </div>
+          <div className="toolbarRight">
+            <Link href={`/orgs/${params.orgId}/audit-events`}>前往 Audit Events</Link>
+          </div>
         </div>
       </section>
 
@@ -542,117 +554,159 @@ export default function InventoryPage({ params }: { params: { orgId: string } })
       <section className="panel">
         <h2 style={{ marginTop: 0 }}>選擇盤點 session</h2>
 
-        {/* sessions filters：小缺口補齊（location/status） */}
-        <form
+        <Form
           onSubmit={(e) => {
             e.preventDefault();
             void refreshSessionsList();
           }}
-          style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'end' }}
         >
-          <label>
-            篩選 location（選填）
-            <select value={sessionsLocationFilter} onChange={(e) => setSessionsLocationFilter(e.target.value)}>
-              <option value="">（全部 locations）</option>
-              {(locations ?? []).map((l) => (
-                <option key={l.id} value={l.id}>
-                  {l.code} · {l.name}
-                  {l.status === 'inactive' ? '（inactive）' : ''}
-                </option>
-              ))}
-            </select>
-          </label>
+          <FormSection title="篩選條件" description="用 location/status/limit 快速定位要回看的那一次盤點。">
+            <div className="grid3">
+              <Field label="篩選 location（選填）" htmlFor="inventory_sessions_location">
+                <select
+                  id="inventory_sessions_location"
+                  value={sessionsLocationFilter}
+                  onChange={(e) => setSessionsLocationFilter(e.target.value)}
+                  disabled={loadingSessions}
+                >
+                  <option value="">（全部 locations）</option>
+                  {(locations ?? []).map((l) => (
+                    <option key={l.id} value={l.id}>
+                      {l.code} · {l.name}
+                      {l.status === 'inactive' ? '（inactive）' : ''}
+                    </option>
+                  ))}
+                </select>
+              </Field>
 
-          <label>
-            篩選 status
-            <select
-              value={sessionsStatusFilter}
-              onChange={(e) => setSessionsStatusFilter(e.target.value as 'all' | 'open' | 'closed')}
-            >
-              <option value="all">all（全部）</option>
-              <option value="open">open（未關閉）</option>
-              <option value="closed">closed（已關閉）</option>
-            </select>
-          </label>
+              <Field label="篩選 status" htmlFor="inventory_sessions_status">
+                <select
+                  id="inventory_sessions_status"
+                  value={sessionsStatusFilter}
+                  onChange={(e) => setSessionsStatusFilter(e.target.value as 'all' | 'open' | 'closed')}
+                  disabled={loadingSessions}
+                >
+                  <option value="all">all（全部）</option>
+                  <option value="open">open（未關閉）</option>
+                  <option value="closed">closed（已關閉）</option>
+                </select>
+              </Field>
 
-          <label>
-            limit（最近 N 筆）
-            <input value={sessionsLimit} onChange={(e) => setSessionsLimit(e.target.value)} placeholder="50" />
-          </label>
+              <Field label="limit（最近 N 筆）" htmlFor="inventory_sessions_limit" hint="預設 50">
+                <input
+                  id="inventory_sessions_limit"
+                  value={sessionsLimit}
+                  onChange={(e) => setSessionsLimit(e.target.value)}
+                  placeholder="50"
+                  disabled={loadingSessions}
+                />
+              </Field>
+            </div>
 
-          <button type="submit" disabled={loadingSessions}>
-            {loadingSessions ? '查詢中…' : '套用篩選'}
-          </button>
-        </form>
+            <FormActions>
+              <button type="submit" className="btnPrimary" disabled={loadingSessions}>
+                {loadingSessions ? '查詢中…' : '套用篩選'}
+              </button>
+            </FormActions>
+          </FormSection>
 
-        <label>
-          最近 sessions（最新在最上方）
-          <select
-            value={currentSessionId}
-            onChange={(e) => {
-              setCurrentSessionId(e.target.value);
-              setLastScan(null);
-              setScanHistory([]);
-              setCloseResult(null);
-              setDiff(null);
-              setError(null);
-              setSuccess(null);
-            }}
-            disabled={!sessions || sessions.length === 0}
-          >
-            {!sessions || sessions.length === 0 ? <option value="">（尚無盤點 session）</option> : null}
-            {(sessions ?? []).map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.closed_at ? 'closed' : 'open'} · {s.location_code} · {s.started_at} · scanned={s.scanned_count} · unexpected=
-                {s.unexpected_count} · {s.id.slice(0, 8)}
-              </option>
-            ))}
-          </select>
-        </label>
+          <FormSection title="最近 sessions（最新在最上方）" description="切換 session 後會清空掃描/差異清單的 UI 狀態。">
+            <Field label="選擇 session" htmlFor="inventory_current_session_id">
+              <select
+                id="inventory_current_session_id"
+                value={currentSessionId}
+                onChange={(e) => {
+                  setCurrentSessionId(e.target.value);
+                  setLastScan(null);
+                  setScanHistory([]);
+                  setCloseResult(null);
+                  setDiff(null);
+                  setError(null);
+                  setSuccess(null);
+                }}
+                disabled={!sessions || sessions.length === 0}
+              >
+                {!sessions || sessions.length === 0 ? <option value="">（尚無盤點 session）</option> : null}
+                {(sessions ?? []).map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.closed_at ? 'closed' : 'open'} · {s.location_code} · {s.started_at} · scanned={s.scanned_count} · unexpected=
+                    {s.unexpected_count} · {s.id.slice(0, 8)}
+                  </option>
+                ))}
+              </select>
+            </Field>
 
-        {currentSession ? (
-          <div className="muted" style={{ marginTop: 12, wordBreak: 'break-all' }}>
-            session_id=<code>{currentSession.id}</code> · location={currentSession.location_code} · started_at=
-            {currentSession.started_at}
-            {currentSession.closed_at ? ` · closed_at=${currentSession.closed_at}` : ''}
-          </div>
-        ) : (
-          <p className="muted" style={{ marginTop: 12 }}>
-            請先開始一個盤點 session。
-          </p>
-        )}
+            {currentSession ? (
+              <Alert variant="info" title="目前 session" role="status">
+                <span style={{ wordBreak: 'break-all' }}>
+                  session_id=<code>{currentSession.id}</code> · location=<code>{currentSession.location_code}</code> · started_at=
+                  <code>{currentSession.started_at}</code>
+                  {currentSession.closed_at ? (
+                    <>
+                      {' '}
+                      · closed_at=<code>{currentSession.closed_at}</code>
+                    </>
+                  ) : null}
+                </span>
+              </Alert>
+            ) : (
+              <EmptyState title="尚未選擇 session" description="請先開始一個盤點 session。" />
+            )}
+          </FormSection>
+        </Form>
       </section>
 
       {/* 開始新 session */}
       <section className="panel">
         <h2 style={{ marginTop: 0 }}>開始新盤點</h2>
 
-        <form onSubmit={onStartSession} className="stack" style={{ marginTop: 12 }}>
-          <label>
-            盤點 location（建議一次盤點只做一個分區/書架）
-            <select
-              value={newLocationId}
-              onChange={(e) => setNewLocationId(e.target.value)}
-              disabled={loadingLocations}
-            >
-              <option value="">（請選擇）</option>
-              {activeLocations.map((l) => (
-                <option key={l.id} value={l.id}>
-                  {l.code} · {l.name}
-                </option>
-              ))}
-            </select>
-          </label>
+        <Form onSubmit={onStartSession} style={{ marginTop: 12 }}>
+          <FormSection title="建立 session" description="建議一次盤點只做一個分區/書架（location）。">
+            {activeLocations.length === 0 ? (
+              <Alert variant="warning" title="沒有可用的 locations">
+                你目前沒有任何 <code>active</code> locations。請先到 <Link href={`/orgs/${params.orgId}/locations`}>Locations</Link> 建立地點。
+              </Alert>
+            ) : null}
 
-          <label>
-            note（選填；寫入 audit metadata）
-            <input value={newNote} onChange={(e) => setNewNote(e.target.value)} placeholder="例：113-1 期末盤點（A 區）" />
-          </label>
+            <div className="grid2">
+              <Field label="盤點 location" htmlFor="inventory_new_location_id">
+                <select
+                  id="inventory_new_location_id"
+                  value={newLocationId}
+                  onChange={(e) => setNewLocationId(e.target.value)}
+                  disabled={loadingLocations || creatingSession}
+                >
+                  <option value="">（請選擇）</option>
+                  {activeLocations.map((l) => (
+                    <option key={l.id} value={l.id}>
+                      {l.code} · {l.name}
+                    </option>
+                  ))}
+                </select>
+              </Field>
 
-          <button type="submit" disabled={creatingSession}>
-            {creatingSession ? '建立 session 中…' : '開始盤點（Create session）'}
-          </button>
-        </form>
+              <Field label="note（選填；寫入 audit metadata）" htmlFor="inventory_new_note" hint="例：113-1 期末盤點（A 區）">
+                <input
+                  id="inventory_new_note"
+                  value={newNote}
+                  onChange={(e) => setNewNote(e.target.value)}
+                  placeholder="例：113-1 期末盤點（A 區）"
+                  disabled={creatingSession}
+                />
+              </Field>
+            </div>
+
+            <FormActions>
+              <button
+                type="submit"
+                className="btnPrimary"
+                disabled={creatingSession || loadingLocations || activeLocations.length === 0 || !newLocationId}
+              >
+                {creatingSession ? '建立 session 中…' : '開始盤點（Create session）'}
+              </button>
+            </FormActions>
+          </FormSection>
+        </Form>
       </section>
 
       {/* 掃描工作台（只有 open session 才顯示） */}
@@ -663,45 +717,52 @@ export default function InventoryPage({ params }: { params: { orgId: string } })
             本次盤點地點：{currentSession.location_code} · {currentSession.location_name}
           </p>
 
-          <form onSubmit={onScan} className="stack" style={{ marginTop: 12 }}>
-            <label>
-              item_barcode（冊條碼）
-              <input
-                ref={(node) => {
-                  scanInputRef.current = node;
-                }}
-                value={scanBarcode}
-                onChange={(e) => setScanBarcode(e.target.value)}
-                placeholder="例：LIB-00001234"
-                autoFocus
-              />
-            </label>
-            <button type="submit" disabled={scanning}>
-              {scanning ? '掃描中…' : '掃描'}
-            </button>
-          </form>
+          <Form onSubmit={onScan} style={{ marginTop: 12 }}>
+            <FormSection title="掃描" description="建議使用條碼掃描器；掃描成功後會自動清空輸入框並 focus，方便連續掃描。">
+              <Field label="item_barcode（冊條碼）" htmlFor="inventory_scan_barcode" hint="例：LIB-00001234">
+                <input
+                  id="inventory_scan_barcode"
+                  ref={(node) => {
+                    scanInputRef.current = node;
+                  }}
+                  value={scanBarcode}
+                  onChange={(e) => setScanBarcode(e.target.value)}
+                  placeholder="例：LIB-00001234"
+                  autoFocus
+                  disabled={scanning || closingSession}
+                />
+              </Field>
+
+              <FormActions>
+                <button type="submit" className="btnPrimary" disabled={scanning || closingSession}>
+                  {scanning ? '掃描中…' : '掃描'}
+                </button>
+              </FormActions>
+            </FormSection>
+          </Form>
 
           {lastScan ? (
-            <div style={{ marginTop: 12 }}>
-              <p className="muted" style={{ marginBottom: 6 }}>
-                最近掃描：{lastScan.item.barcode} · {lastScan.item.bibliographic_title}
-              </p>
+            <div className="stack">
+              <Alert variant="info" title="最近掃描" role="status">
+                <code>{lastScan.item.barcode}</code> · {lastScan.item.bibliographic_title}
+              </Alert>
 
               {lastScan.flags.location_mismatch ? (
-                <p className="error">
-                  位置不一致：系統顯示 <code>{lastScan.item.location_code}</code>，但你正在盤點{' '}
-                  <code>{lastScan.session_location.code}</code>
-                </p>
+                <Alert variant="danger" title="位置不一致">
+                  系統顯示 <code>{lastScan.item.location_code}</code>，但你正在盤點 <code>{lastScan.session_location.code}</code>。
+                </Alert>
               ) : null}
 
               {lastScan.flags.status_unexpected ? (
-                <p className="error">
-                  狀態異常：此冊狀態為 <code>{lastScan.item.status}</code>（盤點在架預期為 <code>available</code>）
-                </p>
+                <Alert variant="danger" title="狀態異常">
+                  此冊狀態為 <code>{lastScan.item.status}</code>（盤點在架預期為 <code>available</code>）。
+                </Alert>
               ) : null}
 
               {!lastScan.flags.location_mismatch && !lastScan.flags.status_unexpected ? (
-                <p className="success">此冊符合在架期待（available + location 正確）</p>
+                <Alert variant="success" title="在架期待符合" role="status">
+                  available + location 正確
+                </Alert>
               ) : null}
             </div>
           ) : null}
@@ -709,67 +770,93 @@ export default function InventoryPage({ params }: { params: { orgId: string } })
           {scanHistory.length > 0 ? (
             <div style={{ marginTop: 12 }}>
               <p className="muted">最近 {scanHistory.length} 筆掃描紀錄（僅 UI 顯示；權威資料在 DB）</p>
-              <div style={{ overflowX: 'auto' }}>
-                <table>
-                  <thead>
-                    <tr>
-                      <th>scanned_at</th>
-                      <th>barcode</th>
-                      <th>title</th>
-                      <th>status</th>
-                      <th>location</th>
-                      <th>flags</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {scanHistory.map((s) => (
-                      <tr key={s.scan_id}>
-                        <td>{s.scanned_at}</td>
-                        <td>
-                          <code>{s.item.barcode}</code>
-                        </td>
-                        <td>{s.item.bibliographic_title}</td>
-                        <td>
-                          <code>{s.item.status}</code>
-                        </td>
-                        <td>
-                          {s.item.location_code} · {s.item.location_name}
-                        </td>
-                        <td>
-                          {s.flags.location_mismatch ? 'location_mismatch ' : ''}
-                          {s.flags.status_unexpected ? 'status_unexpected' : ''}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+              <DataTable
+                rows={scanHistory}
+                getRowKey={(r) => r.scan_id}
+                columns={[
+                  { id: 'scanned_at', header: 'scanned_at', sortValue: (r) => r.scanned_at, cell: (r) => r.scanned_at, width: 180 },
+                  {
+                    id: 'barcode',
+                    header: 'barcode',
+                    sortValue: (r) => r.item.barcode,
+                    cell: (r) => <code>{r.item.barcode}</code>,
+                    width: 160,
+                  },
+                  {
+                    id: 'title',
+                    header: 'title',
+                    sortValue: (r) => r.item.bibliographic_title,
+                    cell: (r) => r.item.bibliographic_title,
+                  },
+                  {
+                    id: 'status',
+                    header: 'status',
+                    sortValue: (r) => r.item.status,
+                    cell: (r) => <code>{r.item.status}</code>,
+                    width: 130,
+                  },
+                  {
+                    id: 'location',
+                    header: 'location',
+                    sortValue: (r) => `${r.item.location_code} ${r.item.location_name}`,
+                    cell: (r) => (
+                      <span className="muted">
+                        {r.item.location_code} · {r.item.location_name}
+                      </span>
+                    ),
+                    width: 220,
+                  },
+                  {
+                    id: 'flags',
+                    header: 'flags',
+                    cell: (r) => (
+                      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                        {r.flags.location_mismatch ? <span className="badge badge--danger">location_mismatch</span> : null}
+                        {r.flags.status_unexpected ? <span className="badge badge--warning">status_unexpected</span> : null}
+                        {!r.flags.location_mismatch && !r.flags.status_unexpected ? <span className="badge badge--success">ok</span> : null}
+                      </div>
+                    ),
+                    width: 220,
+                  },
+                ]}
+              />
             </div>
           ) : null}
 
-          <hr style={{ border: 0, borderTop: '1px solid var(--border)', margin: '16px 0' }} />
+          <hr className="divider" />
 
           <h3 style={{ marginTop: 0 }}>結束盤點（Close session）</h3>
           <p className="muted">
             關閉後會寫入 <code>audit_events</code>，並可在下方產出差異清單/CSV。
           </p>
 
-          <label>
-            note（選填；寫入 audit metadata）
-            <input value={closeNote} onChange={(e) => setCloseNote(e.target.value)} placeholder="例：盤點完成（有 3 本找不到）" />
-          </label>
+          <Form onSubmit={(e) => e.preventDefault()} style={{ marginTop: 12 }}>
+            <FormSection title="關閉 session" description="關閉後將無法再掃描；但仍可回看與匯出差異清單。">
+              <Field label="note（選填；寫入 audit metadata）" htmlFor="inventory_close_note" hint="例：盤點完成（有 3 本找不到）">
+                <input
+                  id="inventory_close_note"
+                  value={closeNote}
+                  onChange={(e) => setCloseNote(e.target.value)}
+                  placeholder="例：盤點完成（有 3 本找不到）"
+                  disabled={closingSession}
+                />
+              </Field>
 
-          <button type="button" onClick={() => void onCloseSession()} disabled={closingSession}>
-            {closingSession ? '關閉中…' : '關閉 session'}
-          </button>
+              <FormActions>
+                <button type="button" className="btnPrimary" onClick={() => void onCloseSession()} disabled={closingSession}>
+                  {closingSession ? '關閉中…' : '關閉 session'}
+                </button>
+              </FormActions>
 
-          {closeResult ? (
-            <p className="muted" style={{ marginTop: 12 }}>
-              close summary：expected_available={closeResult.summary.expected_available_count} · scanned=
-              {closeResult.summary.scanned_count} · missing={closeResult.summary.missing_count} · unexpected=
-              {closeResult.summary.unexpected_count} · audit_event_id={closeResult.audit_event_id}
-            </p>
-          ) : null}
+              {closeResult ? (
+                <Alert variant="info" title="close summary" role="status">
+                  expected_available=<code>{closeResult.summary.expected_available_count}</code> · scanned=
+                  <code>{closeResult.summary.scanned_count}</code> · missing=<code>{closeResult.summary.missing_count}</code> · unexpected=
+                  <code>{closeResult.summary.unexpected_count}</code> · audit_event_id=<code>{closeResult.audit_event_id}</code>
+                </Alert>
+              ) : null}
+            </FormSection>
+          </Form>
         </section>
       ) : null}
 
@@ -781,112 +868,112 @@ export default function InventoryPage({ params }: { params: { orgId: string } })
             對應 API：<code>GET /reports/inventory-diff</code>（JSON/CSV）
           </p>
 
-          <label>
-            limit（避免一次拉太大；預設 5000）
-            <input value={diffLimit} onChange={(e) => setDiffLimit(e.target.value)} placeholder="5000" />
-          </label>
+          <Form onSubmit={(e) => e.preventDefault()} style={{ marginTop: 12 }}>
+            <FormSection title="產出/匯出" description="open session 時可隨掃描刷新；closed session 可視為最終結果。">
+              <Field label="limit（避免一次拉太大；預設 5000）" htmlFor="inventory_diff_limit" hint="留空代表用預設值（5000）。">
+                <input
+                  id="inventory_diff_limit"
+                  value={diffLimit}
+                  onChange={(e) => setDiffLimit(e.target.value)}
+                  placeholder="5000"
+                  disabled={loadingDiff || downloadingCsv}
+                />
+              </Field>
 
-          <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 12 }}>
-            <button type="button" onClick={() => void runDiff()} disabled={loadingDiff}>
-              {loadingDiff ? '產生中…' : '產生/刷新差異清單'}
-            </button>
-            <button type="button" onClick={() => void onDownloadCsv()} disabled={downloadingCsv}>
-              {downloadingCsv ? '下載中…' : '下載 CSV'}
-            </button>
-          </div>
+              <FormActions>
+                <button type="button" className="btnPrimary" onClick={() => void runDiff()} disabled={loadingDiff || downloadingCsv}>
+                  {loadingDiff ? '產生中…' : '產生/刷新差異清單'}
+                </button>
+                <button type="button" className="btnSmall" onClick={() => void onDownloadCsv()} disabled={downloadingCsv || loadingDiff}>
+                  {downloadingCsv ? '下載中…' : '下載 CSV'}
+                </button>
+              </FormActions>
+
+              {loadingDiff ? <Alert variant="info" title="產生差異清單中…" role="status" /> : null}
+              {downloadingCsv ? <Alert variant="info" title="下載中…" role="status" /> : null}
+            </FormSection>
+          </Form>
 
           {diff ? (
-            <div style={{ marginTop: 12 }}>
-              <p className="muted">
-                summary：expected_available={diff.summary.expected_available_count} · scanned={diff.summary.scanned_count} · missing=
-                {diff.summary.missing_count} · unexpected={diff.summary.unexpected_count}
-              </p>
+            <div className="stack">
+              <Alert variant="info" title="summary" role="status">
+                expected_available=<code>{diff.summary.expected_available_count}</code> · scanned=<code>{diff.summary.scanned_count}</code> ·
+                missing=<code>{diff.summary.missing_count}</code> · unexpected=<code>{diff.summary.unexpected_count}</code>
+              </Alert>
 
               {/* missing */}
-              <h3 style={{ marginTop: 16 }}>在架但未掃（missing）</h3>
-              <p className="muted">
-                定義：該 location 內 <code>status=available</code> 的冊，但在本 session 沒有掃到。
-              </p>
+              <div>
+                <h3 style={{ marginTop: 0 }}>在架但未掃（missing）</h3>
+                <p className="muted">
+                  定義：該 location 內 <code>status=available</code> 的冊，但在本 session 沒有掃到。
+                </p>
 
-              {diff.missing.length === 0 ? (
-                <p className="muted">（目前沒有 missing）</p>
-              ) : (
-                <div style={{ overflowX: 'auto' }}>
-                  <table>
-                    <thead>
-                      <tr>
-                        <th>barcode</th>
-                        <th>call_number</th>
-                        <th>title</th>
-                        <th>last_inventory_at</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {diff.missing.map((r) => (
-                        <tr key={r.item_id}>
-                          <td>
-                            <code>{r.item_barcode}</code>
-                          </td>
-                          <td>{r.item_call_number}</td>
-                          <td>{r.bibliographic_title}</td>
-                          <td>{r.last_inventory_at ?? ''}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
+                {diff.missing.length === 0 ? (
+                  <EmptyState title="目前沒有 missing" description="代表「系統預期在架」的冊都有被掃到。" />
+                ) : (
+                  <DataTable
+                    rows={diff.missing}
+                    getRowKey={(r) => r.item_id}
+                    columns={[
+                      { id: 'barcode', header: 'barcode', sortValue: (r) => r.item_barcode, cell: (r) => <code>{r.item_barcode}</code>, width: 160 },
+                      { id: 'call_number', header: 'call_number', sortValue: (r) => r.item_call_number, cell: (r) => r.item_call_number, width: 180 },
+                      { id: 'title', header: 'title', sortValue: (r) => r.bibliographic_title, cell: (r) => r.bibliographic_title },
+                      { id: 'last_inventory_at', header: 'last_inventory_at', sortValue: (r) => r.last_inventory_at ?? '', cell: (r) => r.last_inventory_at ?? '—', width: 180 },
+                    ]}
+                  />
+                )}
+              </div>
 
               {/* unexpected */}
-              <h3 style={{ marginTop: 16 }}>掃到但系統顯示非在架（unexpected）</h3>
-              <p className="muted">
-                定義：本 session 掃到的冊，但 <code>status != available</code> 或系統 <code>location</code> 與盤點 location 不一致。
-              </p>
+              <div>
+                <h3 style={{ marginTop: 0 }}>掃到但系統顯示非在架（unexpected）</h3>
+                <p className="muted">
+                  定義：本 session 掃到的冊，但 <code>status != available</code> 或系統 <code>location</code> 與盤點 location 不一致。
+                </p>
 
-              {diff.unexpected.length === 0 ? (
-                <p className="muted">（目前沒有 unexpected）</p>
-              ) : (
-                <div style={{ overflowX: 'auto' }}>
-                  <table>
-                    <thead>
-                      <tr>
-                        <th>scanned_at</th>
-                        <th>barcode</th>
-                        <th>title</th>
-                        <th>status</th>
-                        <th>location</th>
-                        <th>flags</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {diff.unexpected.map((r) => (
-                        <tr key={r.scan_id}>
-                          <td>{r.scanned_at}</td>
-                          <td>
-                            <code>{r.item_barcode}</code>
-                          </td>
-                          <td>{r.bibliographic_title}</td>
-                          <td>
-                            <code>{r.item_status}</code>
-                          </td>
-                          <td>
+                {diff.unexpected.length === 0 ? (
+                  <EmptyState title="目前沒有 unexpected" description="代表掃到的冊都符合「在架」期待。" />
+                ) : (
+                  <DataTable
+                    rows={diff.unexpected}
+                    getRowKey={(r) => r.scan_id}
+                    columns={[
+                      { id: 'scanned_at', header: 'scanned_at', sortValue: (r) => r.scanned_at, cell: (r) => r.scanned_at, width: 180 },
+                      { id: 'barcode', header: 'barcode', sortValue: (r) => r.item_barcode, cell: (r) => <code>{r.item_barcode}</code>, width: 160 },
+                      { id: 'title', header: 'title', sortValue: (r) => r.bibliographic_title, cell: (r) => r.bibliographic_title },
+                      { id: 'status', header: 'status', sortValue: (r) => r.item_status, cell: (r) => <code>{r.item_status}</code>, width: 130 },
+                      {
+                        id: 'location',
+                        header: 'location',
+                        sortValue: (r) => `${r.item_location_code} ${r.item_location_name}`,
+                        cell: (r) => (
+                          <span className="muted">
                             {r.item_location_code} · {r.item_location_name}
-                          </td>
-                          <td>
-                            {r.location_mismatch ? 'location_mismatch ' : ''}
-                            {r.status_unexpected ? 'status_unexpected' : ''}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
+                          </span>
+                        ),
+                        width: 220,
+                      },
+                      {
+                        id: 'flags',
+                        header: 'flags',
+                        cell: (r) => (
+                          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                            {r.location_mismatch ? <span className="badge badge--danger">location_mismatch</span> : null}
+                            {r.status_unexpected ? <span className="badge badge--warning">status_unexpected</span> : null}
+                          </div>
+                        ),
+                        width: 220,
+                      },
+                    ]}
+                  />
+                )}
+              </div>
             </div>
           ) : (
-            <p className="muted" style={{ marginTop: 12 }}>
-              尚未產生差異清單。你可以在盤點中途刷新（結果會變），或關閉 session 後產出最終清單。
-            </p>
+            <EmptyState
+              title="尚未產生差異清單"
+              description="你可以在盤點中途刷新（結果會變），或關閉 session 後產出最終清單。"
+            />
           )}
         </section>
       ) : null}

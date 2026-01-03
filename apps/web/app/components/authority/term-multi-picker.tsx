@@ -22,8 +22,9 @@ import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 
 import type { ThesaurusChildrenPage, ThesaurusRootsPage } from '../../lib/api';
-import { listThesaurusChildren, listThesaurusRoots, suggestAuthorityTerms } from '../../lib/api';
+import { ApiError, createAuthorityTerm, listThesaurusChildren, listThesaurusRoots, suggestAuthorityTerms } from '../../lib/api';
 import { formatErrorMessage } from '../../lib/error';
+import { Alert } from '../ui/alert';
 
 // AuthorityTermLite：編目 UI 最常用的 term shape（id + label + vocab）。
 // - 盡量小：避免每次操作都需要完整 term detail。
@@ -85,7 +86,15 @@ export function TermMultiPicker(props: {
   const [searchVocabularyCode, setSearchVocabularyCode] = useState<string>(''); // '' = all
   const [suggestions, setSuggestions] = useState<AuthorityTermLite[] | null>(null);
   const [suggesting, setSuggesting] = useState(false);
+  const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const createVocabularyCode = useMemo(() => {
+    // 建議的預設：一律落在 local（避免把「人為新增」混進 builtin 詞彙庫）
+    // - 若館員真的要指定詞彙庫，可以在上方輸入 vocabulary_code（同時也會變成 suggest filter）。
+    const v = searchVocabularyCode.trim();
+    return v || 'local';
+  }, [searchVocabularyCode]);
 
   async function runSuggest() {
     const q = searchQuery.trim();
@@ -108,6 +117,42 @@ export function TermMultiPicker(props: {
       setError(formatErrorMessage(e));
     } finally {
       setSuggesting(false);
+    }
+  }
+
+  async function createFromSearchQuery() {
+    const label = searchQuery.trim();
+    if (!label) return;
+
+    setCreating(true);
+    setError(null);
+    try {
+      const created = await createAuthorityTerm(props.orgId, {
+        kind: props.kind,
+        preferred_label: label,
+        vocabulary_code: createVocabularyCode,
+        // source：讓日後治理/追溯看得出「這筆是 UI 即時新增」
+        source: 'web-ui',
+      });
+
+      addTerm({ id: created.id, vocabulary_code: created.vocabulary_code, preferred_label: created.preferred_label });
+
+      // UX：新增成功後清掉查詢（避免使用者連按造成重複/混淆）
+      setSearchQuery('');
+      setSuggestions(null);
+    } catch (e) {
+      // 409 CONFLICT：同 org/kind/vocabulary_code 下 preferred_label 已存在
+      // - 這不是「真正的錯誤」，多半是使用者已經建過，或其他人同時建了
+      // - 我們直接重新跑一次 suggest，讓使用者用「加入」完成動作
+      if (e instanceof ApiError && e.body?.error?.code === 'CONFLICT') {
+        setError('同名款目已存在（已重新載入建議；請從建議中加入）');
+        await runSuggest();
+        return;
+      }
+
+      setError(`新增款目失敗：${formatErrorMessage(e)}`);
+    } finally {
+      setCreating(false);
     }
   }
 
@@ -239,17 +284,18 @@ export function TermMultiPicker(props: {
                 主檔
               </Link>
               <span style={{ marginLeft: 10, display: 'inline-flex', gap: 6 }}>
-                <button type="button" onClick={() => moveTerm(t.id, 'up')} disabled={disabled || idx === 0}>
+                <button type="button" className="btnSmall" onClick={() => moveTerm(t.id, 'up')} disabled={disabled || idx === 0}>
                   ↑
                 </button>
                 <button
                   type="button"
+                  className="btnSmall"
                   onClick={() => moveTerm(t.id, 'down')}
                   disabled={disabled || idx === props.value.length - 1}
                 >
                   ↓
                 </button>
-                <button type="button" onClick={() => removeTerm(t.id)} disabled={disabled}>
+                <button type="button" className={['btnSmall', 'btnDanger'].join(' ')} onClick={() => removeTerm(t.id)} disabled={disabled}>
                   移除
                 </button>
               </span>
@@ -276,7 +322,7 @@ export function TermMultiPicker(props: {
             placeholder="vocabulary_code（選填）"
             disabled={disabled}
           />
-          <button type="button" onClick={() => void runSuggest()} disabled={disabled || suggesting}>
+          <button type="button" className={['btnSmall', 'btnPrimary'].join(' ')} onClick={() => void runSuggest()} disabled={disabled || suggesting}>
             {suggesting ? '搜尋中…' : '搜尋'}
           </button>
         </div>
@@ -284,10 +330,27 @@ export function TermMultiPicker(props: {
         {suggestions && suggestions.length > 0 ? (
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 8 }}>
             {suggestions.map((t) => (
-              <button key={t.id} type="button" onClick={() => addTerm(t)} disabled={disabled || ids.has(t.id)}>
+              <button key={t.id} type="button" className="btnSmall" onClick={() => addTerm(t)} disabled={disabled || ids.has(t.id)}>
                 {ids.has(t.id) ? '已選' : '加入'}：{t.preferred_label}（{t.vocabulary_code}）
               </button>
             ))}
+          </div>
+        ) : null}
+
+        {/* quick create：避免「沒有任何 authority terms → 編目卡住」 */}
+        {searchQuery.trim() ? (
+          <div style={{ marginTop: 10, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+            <button
+              type="button"
+              className={['btnSmall', 'btnPrimary'].join(' ')}
+              onClick={() => void createFromSearchQuery()}
+              disabled={disabled || creating}
+            >
+              {creating ? '新增中…' : `新增款目：${searchQuery.trim()}`}
+            </button>
+            <span className="muted">
+              vocabulary_code：<code>{createVocabularyCode}</code>（可在上方輸入框改成你要的詞彙庫）
+            </span>
           </div>
         ) : null}
       </div>
@@ -312,11 +375,12 @@ export function TermMultiPicker(props: {
               placeholder="roots filter（選填；用 ILIKE）"
               disabled={disabled}
             />
-            <button type="button" onClick={() => void refreshRoots()} disabled={disabled || loadingRoots}>
+            <button type="button" className="btnSmall" onClick={() => void refreshRoots()} disabled={disabled || loadingRoots}>
               {loadingRoots ? '載入中…' : '刷新 roots'}
             </button>
             <button
               type="button"
+              className="btnSmall"
               onClick={() => {
                 setBrowseQuery('');
                 void refreshRoots();
@@ -332,14 +396,14 @@ export function TermMultiPicker(props: {
               {rootsPage.items.map((n) => (
                 <div key={n.id} style={{ marginBottom: 6 }}>
                   <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-                    <button type="button" onClick={() => addTerm({ id: n.id, vocabulary_code: n.vocabulary_code, preferred_label: n.preferred_label })} disabled={disabled || ids.has(n.id)}>
+                    <button type="button" className="btnSmall" onClick={() => addTerm({ id: n.id, vocabulary_code: n.vocabulary_code, preferred_label: n.preferred_label })} disabled={disabled || ids.has(n.id)}>
                       {ids.has(n.id) ? '已選' : '加入'}
                     </button>
                     <span>
                       {n.preferred_label} <span className="muted">({n.vocabulary_code})</span>
                     </span>
                     {n.has_children ? (
-                      <button type="button" onClick={() => void toggleExpand(n.id)} disabled={disabled}>
+                      <button type="button" className="btnSmall" onClick={() => void toggleExpand(n.id)} disabled={disabled}>
                         {expandedIds.has(n.id) ? '收合' : '展開'}
                       </button>
                     ) : (
@@ -356,6 +420,7 @@ export function TermMultiPicker(props: {
                             <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
                               <button
                                 type="button"
+                                className="btnSmall"
                                 onClick={() =>
                                   addTerm({
                                     id: edge.term.id,
@@ -372,7 +437,7 @@ export function TermMultiPicker(props: {
                                 <span className="muted">({edge.term.vocabulary_code})</span>
                               </span>
                               {edge.term.has_children ? (
-                                <button type="button" onClick={() => void toggleExpand(edge.term.id)} disabled={disabled}>
+                                <button type="button" className="btnSmall" onClick={() => void toggleExpand(edge.term.id)} disabled={disabled}>
                                   {expandedIds.has(edge.term.id) ? '收合' : '展開'}
                                 </button>
                               ) : null}
@@ -389,7 +454,7 @@ export function TermMultiPicker(props: {
               ))}
 
               {rootsPage.next_cursor ? (
-                <button type="button" onClick={() => void refreshRoots(rootsPage.next_cursor!)} disabled={disabled || loadingRoots}>
+                <button type="button" className="btnSmall" onClick={() => void refreshRoots(rootsPage.next_cursor!)} disabled={disabled || loadingRoots}>
                   載入更多 roots
                 </button>
               ) : null}
@@ -402,7 +467,11 @@ export function TermMultiPicker(props: {
         </div>
       ) : null}
 
-      {error ? <div className="error">{error}</div> : null}
+      {error ? (
+        <Alert variant="danger" title="無法載入權威詞">
+          {error}
+        </Alert>
+      ) : null}
     </div>
   );
 }

@@ -20,6 +20,12 @@ import type { ThesaurusQualityIssueType, ThesaurusQualityPage } from '../../../.
 import { getThesaurusQuality } from '../../../../../lib/api';
 import { formatErrorMessage } from '../../../../../lib/error';
 import { useStaffSession } from '../../../../../lib/use-staff-session';
+import { Alert } from '../../../../../components/ui/alert';
+import { DataTable } from '../../../../../components/ui/data-table';
+import { EmptyState } from '../../../../../components/ui/empty-state';
+import { Field, Form, FormActions, FormSection } from '../../../../../components/ui/form';
+import { PageHeader, SectionHeader } from '../../../../../components/ui/page-header';
+import { SkeletonText } from '../../../../../components/ui/skeleton';
 
 export default function ThesaurusQualityPage({ params }: { params: { orgId: string } }) {
   const { ready: sessionReady, session } = useStaffSession(params.orgId);
@@ -139,10 +145,7 @@ export default function ThesaurusQualityPage({ params }: { params: { orgId: stri
   if (!sessionReady) {
     return (
       <div className="stack">
-        <section className="panel">
-          <h1 style={{ marginTop: 0 }}>Thesaurus Quality</h1>
-          <p className="muted">載入登入狀態中…</p>
-        </section>
+        <PageHeader title="Thesaurus Quality" description="載入登入狀態中…" />
       </div>
     );
   }
@@ -150,108 +153,149 @@ export default function ThesaurusQualityPage({ params }: { params: { orgId: stri
   if (!session) {
     return (
       <div className="stack">
-        <section className="panel">
-          <h1 style={{ marginTop: 0 }}>Thesaurus Quality</h1>
-          <p className="muted">
-            這頁需要 staff 登入。請先前往 <Link href={`/orgs/${params.orgId}/login`}>/login</Link>。
-          </p>
-        </section>
+        <PageHeader title="Thesaurus Quality" description="這頁需要 staff 登入才能檢視治理清單。">
+          <Alert variant="danger" title="需要登入">
+            請先前往 <Link href={`/orgs/${params.orgId}/login`}>/login</Link>。
+          </Alert>
+        </PageHeader>
       </div>
     );
   }
 
   return (
     <div className="stack">
-      <section className="panel">
-        <h1 style={{ marginTop: 0 }}>Thesaurus Quality</h1>
-        <p className="muted">用於治理/清理：找出孤立詞、多重上位、或「有關係但未被書目使用」的詞。</p>
-
-        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 12 }}>
-          <Link href={`/orgs/${params.orgId}/authority-terms/thesaurus`}>回到 Thesaurus Browser</Link>
-          <Link href={`/orgs/${params.orgId}/authority`}>Authority Control（主控入口）</Link>
-          <Link href={`/orgs/${params.orgId}/authority-terms`}>回到 Authority Terms</Link>
+      <PageHeader
+        title="Thesaurus Quality"
+        description="用於治理/清理：找出孤立詞、多重上位、或「有關係但未被書目使用」的詞。"
+        actions={
+          <>
+            <Link className="btnSmall" href={`/orgs/${params.orgId}/authority`}>
+              Authority 主控
+            </Link>
+            <Link className="btnSmall" href={`/orgs/${params.orgId}/authority-terms`}>
+              Terms
+            </Link>
+            <Link className="btnSmall" href={`/orgs/${params.orgId}/authority-terms/thesaurus`}>
+              Browser
+            </Link>
+            <Link
+              className="btnSmall"
+              href={`/orgs/${params.orgId}/authority-terms/thesaurus/visual?kind=${encodeURIComponent(
+                kind,
+              )}&vocabulary_code=${encodeURIComponent(vocabularyCode.trim() || 'builtin-zh')}`}
+            >
+              Visual
+            </Link>
+          </>
+        }
+      >
+        <div className="muted" style={{ display: 'grid', gap: 4 }}>
+          <div>
+            kind：<code>{kind}</code> · vocabulary_code：<code>{vocabularyCode.trim() || '—'}</code> · status：
+            <code>{status}</code> · type：<code>{type}</code>
+          </div>
         </div>
 
-        {error ? <p className="error">錯誤：{error}</p> : null}
+        {error ? (
+          <Alert variant="danger" title="操作失敗">
+            {error}
+          </Alert>
+        ) : null}
+      </PageHeader>
+
+      <section className="panel">
+        <SectionHeader
+          title="Filters"
+          description="選擇 kind/vocabulary/type 後會自動刷新（也可手動重新整理）。"
+          actions={
+            <button type="button" className="btnSmall" onClick={() => void refresh()} disabled={loading}>
+              {loading ? '載入中…' : '重新整理'}
+            </button>
+          }
+        />
+
+        <Form onSubmit={(e) => e.preventDefault()}>
+          <FormSection title="篩選條件" description="vocabulary_code 建議對齊 thesaurus 的詞彙庫（例如 builtin-zh / local）。">
+            <div className="grid3">
+              <Field label="kind" htmlFor="thesaurus_quality_kind">
+                <select id="thesaurus_quality_kind" value={kind} onChange={(e) => setKind(e.target.value as any)}>
+                  <option value="subject">subject（650）</option>
+                  <option value="geographic">geographic（651）</option>
+                  <option value="genre">genre（655）</option>
+                </select>
+              </Field>
+
+              <Field label="vocabulary_code" htmlFor="thesaurus_quality_vocab">
+                <input id="thesaurus_quality_vocab" value={vocabularyCode} onChange={(e) => setVocabularyCode(e.target.value)} />
+              </Field>
+
+              <Field label="type" htmlFor="thesaurus_quality_type">
+                <select
+                  id="thesaurus_quality_type"
+                  value={type}
+                  onChange={(e) => setType(e.target.value as ThesaurusQualityIssueType)}
+                >
+                  <option value="orphans">orphans（完全孤立）</option>
+                  <option value="multi_broader">multi_broader（多重上位）</option>
+                  <option value="unused_with_relations">unused_with_relations（有關係但未被書目使用）</option>
+                </select>
+              </Field>
+            </div>
+
+            <div className="grid2">
+              <Field label="status" htmlFor="thesaurus_quality_status">
+                <select id="thesaurus_quality_status" value={status} onChange={(e) => setStatus(e.target.value as any)}>
+                  <option value="active">active</option>
+                  <option value="inactive">inactive</option>
+                  <option value="all">all</option>
+                </select>
+              </Field>
+
+              <Field label="limit（1..500）" htmlFor="thesaurus_quality_limit">
+                <input id="thesaurus_quality_limit" value={limit} onChange={(e) => setLimit(e.target.value)} />
+              </Field>
+            </div>
+          </FormSection>
+        </Form>
       </section>
 
       <section className="panel">
-        <h2 style={{ marginTop: 0 }}>Filters</h2>
+        <SectionHeader title="Results" description="清單中的 term 可點進 detail 進一步做 usage/merge/relations 治理。" />
 
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-          <label>
-            kind
-            <select value={kind} onChange={(e) => setKind(e.target.value as any)}>
-              <option value="subject">subject（650）</option>
-              <option value="geographic">geographic（651）</option>
-              <option value="genre">genre（655）</option>
-            </select>
-          </label>
-          <label>
-            vocabulary_code
-            <input value={vocabularyCode} onChange={(e) => setVocabularyCode(e.target.value)} />
-          </label>
-
-          <label>
-            type
-            <select value={type} onChange={(e) => setType(e.target.value as ThesaurusQualityIssueType)}>
-              <option value="orphans">orphans（完全孤立）</option>
-              <option value="multi_broader">multi_broader（多重上位）</option>
-              <option value="unused_with_relations">unused_with_relations（有關係但未被書目使用）</option>
-            </select>
-          </label>
-        </div>
-
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginTop: 12 }}>
-          <label>
-            status
-            <select value={status} onChange={(e) => setStatus(e.target.value as any)}>
-              <option value="active">active</option>
-              <option value="inactive">inactive</option>
-              <option value="all">all</option>
-            </select>
-          </label>
-
-          <label>
-            limit（1..500）
-            <input value={limit} onChange={(e) => setLimit(e.target.value)} />
-          </label>
-        </div>
-
-        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 12 }}>
-          <button type="button" onClick={() => void refresh()} disabled={loading}>
-            {loading ? '載入中…' : '重新整理'}
-          </button>
-        </div>
-      </section>
-
-      <section className="panel">
-        <h2 style={{ marginTop: 0 }}>Results</h2>
-        {loading ? <p className="muted">載入中…</p> : null}
-        {!loading && page && page.items.length === 0 ? <p className="muted">（沒有資料）</p> : null}
+        {loading ? <SkeletonText lines={4} /> : null}
+        {!loading && page && page.items.length === 0 ? <EmptyState title="沒有資料" description="可調整 filters（type/status/kind/vocabulary）。" /> : null}
 
         {page && page.items.length > 0 ? (
           <div className="stack">
-            <ul>
-              {page.items.map((t) => (
-                <li key={t.id} style={{ marginBottom: 12 }}>
-                  <div style={{ display: 'grid', gap: 4 }}>
-                    <div style={{ fontWeight: 700 }}>
-                      <Link href={`/orgs/${params.orgId}/authority-terms/${t.id}`}>{t.preferred_label}</Link>{' '}
-                      <span className="muted" style={{ fontWeight: 400 }}>
-                        ({t.status} · BT×{t.broader_count} · NT×{t.narrower_count} · {t.issue_type})
-                      </span>
+            <DataTable
+              rows={page.items}
+              getRowKey={(r) => r.id}
+              density="compact"
+              columns={[
+                {
+                  id: 'term',
+                  header: 'term',
+                  cell: (r) => (
+                    <div style={{ display: 'grid', gap: 2 }}>
+                      <Link href={`/orgs/${params.orgId}/authority-terms/${r.id}`} style={{ fontWeight: 800 }}>
+                        {r.preferred_label}
+                      </Link>
+                      <div className="muted" style={{ fontSize: 12, wordBreak: 'break-all' }}>
+                        <code>{r.id}</code>
+                      </div>
                     </div>
-                    <div className="muted" style={{ wordBreak: 'break-all' }}>
-                      id：<code>{t.id}</code>
-                    </div>
-                  </div>
-                </li>
-              ))}
-            </ul>
+                  ),
+                  sortValue: (r) => r.preferred_label,
+                },
+                { id: 'issue', header: 'issue', cell: (r) => <code>{r.issue_type}</code>, width: 170, sortValue: (r) => r.issue_type },
+                { id: 'status', header: 'status', cell: (r) => <code>{r.status}</code>, width: 110, sortValue: (r) => r.status },
+                { id: 'bt', header: 'BT', cell: (r) => <code>{r.broader_count}</code>, width: 70, align: 'right', sortValue: (r) => r.broader_count },
+                { id: 'nt', header: 'NT', cell: (r) => <code>{r.narrower_count}</code>, width: 70, align: 'right', sortValue: (r) => r.narrower_count },
+              ]}
+            />
 
             {page.next_cursor ? (
-              <button type="button" onClick={() => void loadMore()} disabled={loadingMore || loading}>
+              <button type="button" className="btnSmall" onClick={() => void loadMore()} disabled={loadingMore || loading}>
                 {loadingMore ? '載入中…' : '載入更多'}
               </button>
             ) : null}

@@ -34,6 +34,11 @@ import {
   listLocations,
   previewCatalogCsvImport,
 } from '../../../../lib/api';
+import { Alert } from '../../../../components/ui/alert';
+import { DataTable } from '../../../../components/ui/data-table';
+import { EmptyState } from '../../../../components/ui/empty-state';
+import { Field, Form, FormActions, FormSection } from '../../../../components/ui/form';
+import { PageHeader, SectionHeader } from '../../../../components/ui/page-header';
 import { formatErrorMessage } from '../../../../lib/error';
 import { useStaffSession } from '../../../../lib/use-staff-session';
 
@@ -247,10 +252,9 @@ export default function CatalogImportPage({ params }: { params: { orgId: string 
   if (!sessionReady) {
     return (
       <div className="stack">
-        <section className="panel">
-          <h1 style={{ marginTop: 0 }}>Catalog CSV Import</h1>
-          <p className="muted">載入登入狀態中…</p>
-        </section>
+        <PageHeader title="Catalog CSV Import" description="載入登入狀態中…">
+          <Alert variant="info" title="載入登入狀態中…" role="status" />
+        </PageHeader>
       </div>
     );
   }
@@ -258,12 +262,19 @@ export default function CatalogImportPage({ params }: { params: { orgId: string 
   if (!session) {
     return (
       <div className="stack">
-        <section className="panel">
-          <h1 style={{ marginTop: 0 }}>Catalog CSV Import</h1>
-          <p className="error">
+        <PageHeader
+          title="Catalog CSV Import"
+          description="匯入屬於高風險批次寫入（會建立/更新 items），因此需要 staff 登入。"
+          actions={
+            <Link className="btnSmall btnPrimary" href={`/orgs/${params.orgId}/login`}>
+              前往登入
+            </Link>
+          }
+        >
+          <Alert variant="danger" title="需要登入">
             這頁需要 staff 登入才能操作。請先前往 <Link href={`/orgs/${params.orgId}/login`}>/login</Link>。
-          </p>
-        </section>
+          </Alert>
+        </PageHeader>
       </div>
     );
   }
@@ -274,187 +285,274 @@ export default function CatalogImportPage({ params }: { params: { orgId: string 
 
   return (
     <div className="stack">
-      <section className="panel">
-        <h1 style={{ marginTop: 0 }}>Catalog CSV Import（US-022）</h1>
-        <p className="muted">
-          對應 API：<code>POST /api/v1/orgs/:orgId/bibs/import</code>（preview/apply）
-        </p>
-        <p className="muted">
-          actor_user_id：<code>{session.user.id}</code>（{session.user.name} / {session.user.role}）
-        </p>
-
-        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-          <button type="button" onClick={onDownloadTemplate}>
-            下載 CSV 範本
-          </button>
-          <Link href={`/orgs/${params.orgId}/audit-events`}>前往 Audit Events</Link>
-        </div>
-
-        {error ? <p className="error">錯誤：{error}</p> : null}
-        {success ? <p className="success">{success}</p> : null}
-      </section>
-
-      <section className="panel">
-        <h2 style={{ marginTop: 0 }}>1) CSV 檔案 / 文字</h2>
-
-        <label>
-          上傳檔案（CSV UTF-8）
-          <input type="file" accept=".csv,text/csv" onChange={(e) => void onPickFile(e.target.files?.[0] ?? null)} />
-        </label>
-
-        <label>
-          或貼上 CSV 文字
-          <textarea value={csvText} onChange={(e) => setCsvText(e.target.value)} rows={10} placeholder="barcode,call_number,location_code,..." />
-        </label>
-
-        <p className="muted">
-          建議：location_code 請使用 <code>locations.code</code>（可在 <Link href={`/orgs/${params.orgId}/locations`}>Locations</Link> 查看）。
-        </p>
-      </section>
-
-      <section className="panel">
-        <h2 style={{ marginTop: 0 }}>2) 匯入選項</h2>
-
-        <label>
-          default_location_id（選填；CSV 未提供 location 時的預設）
-          <select value={defaultLocationId} onChange={(e) => setDefaultLocationId(e.target.value)} disabled={loadingLocations}>
-            <option value="">（不指定）</option>
-            {activeLocations.map((l) => (
-              <option key={l.id} value={l.id}>
-                {l.code} · {l.name}
-              </option>
-            ))}
-          </select>
-        </label>
-
-        <label style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-          <input type="checkbox" checked={updateExistingItems} onChange={(e) => setUpdateExistingItems(e.target.checked)} />
-          update_existing_items（barcode 已存在時允許更新）
-        </label>
-
-        <label style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-          <input
-            type="checkbox"
-            checked={allowRelinkBibliographic}
-            onChange={(e) => setAllowRelinkBibliographic(e.target.checked)}
-          />
-          allow_relink_bibliographic（允許同 barcode 重新指到不同書目；高風險）
-        </label>
-
-        <label>
-          source_note（選填；寫入 audit metadata）
-          <input value={sourceNote} onChange={(e) => setSourceNote(e.target.value)} placeholder="例：113-1 初次導入（Excel 匯出）" />
-        </label>
-      </section>
-
-      <section className="panel">
-        <h2 style={{ marginTop: 0 }}>3) Preview / Apply</h2>
-
-        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-          <button type="button" onClick={() => void runPreview()} disabled={previewing}>
-            {previewing ? '預覽中…' : '預覽（preview）'}
-          </button>
-          <button type="button" onClick={() => void runApply()} disabled={applying}>
-            {applying ? '套用中…' : '套用（apply）'}
-          </button>
-        </div>
-
-        {importErrors && importErrors.length > 0 ? (
-          <div style={{ marginTop: 12 }}>
-            <p className="error">套用失敗（後端回傳列錯誤）：</p>
-            <ul>
-              {importErrors.slice(0, 50).map((e) => (
-                <li key={`${e.row_number}-${e.code}`}>
-                  row {e.row_number} · {e.code} · {e.message}
-                </li>
-              ))}
-            </ul>
-          </div>
+      <PageHeader
+        title="Catalog CSV Import（US-022）"
+        description={
+          <>
+            對應 API：<code>POST /api/v1/orgs/:orgId/bibs/import</code>（preview/apply）。actor_user_id：
+            <code>{session.user.id}</code>（{session.user.name} / {session.user.role}）
+          </>
+        }
+        actions={
+          <>
+            <button type="button" className="btnSmall" onClick={onDownloadTemplate}>
+              下載 CSV 範本
+            </button>
+            <Link className="btnSmall" href={`/orgs/${params.orgId}/audit-events`}>
+              Audit
+            </Link>
+            <Link className="btnSmall" href={`/orgs/${params.orgId}/bibs`}>
+              回 Bibs
+            </Link>
+          </>
+        }
+      >
+        {error ? (
+          <Alert variant="danger" title="操作失敗">
+            {error}
+          </Alert>
         ) : null}
+        {success ? <Alert variant="success" title={success} role="status" /> : null}
+      </PageHeader>
 
-        {preview ? (
-          <div style={{ marginTop: 12 }}>
-            <p className="muted">
-              summary：bibs_to_create={preview.summary.bibs_to_create} · items_to_create={preview.summary.items_to_create} · items_to_update={preview.summary.items_to_update} · errors={preview.errors.length}
-            </p>
+      <section className="panel">
+        <SectionHeader title="1) CSV 檔案 / 文字" description="上傳檔案或貼上 CSV 文字（建議 UTF-8）；每列代表一冊 item。" />
 
-            {preview.errors.length > 0 ? (
-              <div style={{ marginTop: 12 }}>
-                <p className="error">Preview errors（前 50 筆）：</p>
-                <ul>
-                  {preview.errors.slice(0, 50).map((e) => (
-                    <li key={`${e.row_number}-${e.code}`}>
-                      row {e.row_number} · {e.code} · {e.message}
-                      {e.field ? ` · field=${e.field}` : ''}
-                    </li>
-                  ))}
-                </ul>
-              </div>
+        <Form onSubmit={(e) => e.preventDefault()}>
+          <FormSection title="來源" description="你可以上傳檔案，或直接貼上 CSV 文字（建議 UTF-8）。">
+            <Field label="上傳檔案（CSV UTF-8）" htmlFor="catalog_import_file">
+              <input
+                id="catalog_import_file"
+                type="file"
+                accept=".csv,text/csv"
+                onChange={(e) => void onPickFile(e.target.files?.[0] ?? null)}
+                disabled={previewing || applying}
+              />
+            </Field>
+
+            <Field label="或貼上 CSV 文字" htmlFor="catalog_import_csv_text" hint="需包含 header；每列代表一冊 item。">
+              <textarea
+                id="catalog_import_csv_text"
+                value={csvText}
+                onChange={(e) => {
+                  setCsvText(e.target.value);
+                  setPreview(null);
+                  setApplyResult(null);
+                  setImportErrors(null);
+                }}
+                rows={10}
+                placeholder="barcode,call_number,location_code,..."
+                style={{ fontFamily: 'var(--font-mono)' }}
+                disabled={previewing || applying}
+              />
+            </Field>
+
+            <div className="muted">
+              目前檔名：{sourceFilename ?? '（未選擇）'} · 內容長度：{csvText.length.toLocaleString()} 字元
+            </div>
+
+            <Alert variant="info" title="小提示" role="status">
+              建議：<code>location_code</code> 請使用 <code>locations.code</code>（可在{' '}
+              <Link href={`/orgs/${params.orgId}/locations`}>Locations</Link> 查看）。
+            </Alert>
+          </FormSection>
+        </Form>
+      </section>
+
+      <section className="panel">
+        <SectionHeader title="2) 匯入選項" description="控制預設 location、更新策略與高風險 relink 行為。" />
+
+        <Form onSubmit={(e) => e.preventDefault()}>
+          <FormSection title="Options" description="高風險選項（relink）建議只在你完全理解資料後才開啟。">
+            {loadingLocations ? <Alert variant="info" title="載入 locations 中…" role="status" /> : null}
+            {!loadingLocations && activeLocations.length === 0 ? (
+              <Alert variant="warning" title="沒有可用的 locations">
+                你目前沒有任何 <code>active</code> locations。若 CSV 沒有提供 location，將無法套用預設 location。你可以先到{' '}
+                <Link href={`/orgs/${params.orgId}/locations`}>Locations</Link> 建立地點。
+              </Alert>
             ) : null}
 
-            {preview.bibs_to_create_preview.length > 0 ? (
-              <div style={{ marginTop: 12 }}>
-                <p className="muted">將建立的書目（前 {preview.bibs_to_create_preview.length} 筆）：</p>
-                <ul>
-                  {preview.bibs_to_create_preview.map((b) => (
-                    <li key={b.bib_key}>
-                      {b.isbn ? `isbn=${b.isbn}` : b.bib_key} · {b.title ?? '(no title)'}
-                    </li>
-                  ))}
-                </ul>
-              </div>
+            {allowRelinkBibliographic ? (
+              <Alert variant="warning" title="allow_relink_bibliographic 已開啟">
+                允許同一個 barcode 從「書目 A」改連到「書目 B」。這通常只在「初次導入後修正錯誤 mapping」時使用。
+              </Alert>
             ) : null}
 
-            {preview.rows.length > 0 ? (
-              <div style={{ marginTop: 12, overflowX: 'auto' }}>
-                <table>
-                  <thead>
-                    <tr>
-                      <th>row</th>
-                      <th>item_action</th>
-                      <th>bib_action</th>
-                      <th>barcode</th>
-                      <th>call_number</th>
-                      <th>location_id</th>
-                      <th>isbn</th>
-                      <th>title</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {preview.rows.map((r) => (
-                      <tr key={r.row_number}>
-                        <td>{r.row_number}</td>
-                        <td>{r.item_action}</td>
-                        <td>{r.bib_action}</td>
-                        <td>
-                          <code>{r.barcode}</code>
-                        </td>
-                        <td>{r.call_number}</td>
-                        <td>
-                          <code style={{ fontSize: 12 }}>{r.location_id}</code>
-                        </td>
-                        <td>{r.isbn ?? ''}</td>
-                        <td>{r.title ?? ''}</td>
-                      </tr>
+            <div className="grid2">
+              <Field label="default_location_id（選填）" htmlFor="catalog_import_default_location_id" hint="CSV 未提供 location 時的預設值">
+                <select
+                  id="catalog_import_default_location_id"
+                  value={defaultLocationId}
+                  onChange={(e) => setDefaultLocationId(e.target.value)}
+                  disabled={loadingLocations || previewing || applying}
+                >
+                  <option value="">（不指定）</option>
+                  {activeLocations.map((l) => (
+                    <option key={l.id} value={l.id}>
+                      {l.code} · {l.name}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+
+              <Field label="source_note（選填）" htmlFor="catalog_import_source_note" hint="寫入 audit metadata（追溯用）">
+                <input
+                  id="catalog_import_source_note"
+                  value={sourceNote}
+                  onChange={(e) => setSourceNote(e.target.value)}
+                  placeholder="例：113-1 初次導入（Excel 匯出）"
+                  disabled={previewing || applying}
+                />
+              </Field>
+            </div>
+
+            <div className="grid2">
+              <Field label="update_existing_items" htmlFor="catalog_import_update_existing_items" hint="barcode 已存在時允許更新">
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                  <input
+                    id="catalog_import_update_existing_items"
+                    type="checkbox"
+                    checked={updateExistingItems}
+                    onChange={(e) => setUpdateExistingItems(e.target.checked)}
+                    disabled={previewing || applying}
+                  />
+                  <span className="muted">update_existing_items</span>
+                </div>
+              </Field>
+
+              <Field
+                label="allow_relink_bibliographic"
+                htmlFor="catalog_import_allow_relink_bibliographic"
+                hint="允許同 barcode 重新指到不同書目（高風險）"
+              >
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                  <input
+                    id="catalog_import_allow_relink_bibliographic"
+                    type="checkbox"
+                    checked={allowRelinkBibliographic}
+                    onChange={(e) => setAllowRelinkBibliographic(e.target.checked)}
+                    disabled={previewing || applying}
+                  />
+                  <span className="muted">allow_relink_bibliographic</span>
+                </div>
+              </Field>
+            </div>
+          </FormSection>
+        </Form>
+      </section>
+
+      <section className="panel">
+        <SectionHeader title="3) Preview / Apply" description="先 preview 再 apply；有 errors 時 apply 會拒絕寫入。" />
+
+        <Form onSubmit={(e) => e.preventDefault()}>
+          <FormSection title="執行" description="建議先 preview，再 apply（有 errors 時 apply 會失敗）。">
+            <FormActions>
+              <button type="button" className="btnSmall" onClick={() => void runPreview()} disabled={previewing || applying || !csvText.trim()}>
+                {previewing ? '預覽中…' : '預覽（preview）'}
+              </button>
+              <button
+                type="button"
+                className="btnDanger"
+                onClick={() => void runApply()}
+                disabled={applying || previewing || !preview || preview.errors.length > 0}
+              >
+                {applying ? '套用中…' : '套用（apply）'}
+              </button>
+            </FormActions>
+
+            {previewing ? <Alert variant="info" title="預覽中…" role="status" /> : null}
+            {applying ? <Alert variant="info" title="套用中…" role="status" /> : null}
+
+            {applyResult ? (
+              <Alert variant="success" title="已套用匯入" role="status">
+                audit_event_id：<Link href={`/orgs/${params.orgId}/audit-events`}>{applyResult.audit_event_id}</Link>
+              </Alert>
+            ) : null}
+
+            {importErrors && importErrors.length > 0 ? (
+              <Alert variant="danger" title={`套用失敗（後端回傳列錯誤：${importErrors.length}）`}>
+                <details className="details">
+                  <summary>檢視前 50 筆錯誤</summary>
+                  <ul style={{ margin: 0, padding: '12px 18px' }}>
+                    {importErrors.slice(0, 50).map((e) => (
+                      <li key={`${e.row_number}-${e.code}`}>
+                        row {e.row_number} · {e.code} · {e.message}
+                      </li>
                     ))}
-                  </tbody>
-                </table>
-              </div>
+                  </ul>
+                </details>
+              </Alert>
             ) : null}
-          </div>
-        ) : (
-          <p className="muted" style={{ marginTop: 12 }}>
-            尚未預覽。建議先下載範本，或貼上 CSV 後按「預覽」。
-          </p>
-        )}
+          </FormSection>
+        </Form>
 
-        {applyResult ? (
-          <p className="muted" style={{ marginTop: 12 }}>
-            apply 結果：audit_event_id={applyResult.audit_event_id}
-          </p>
-        ) : null}
+        <div style={{ marginTop: 12 }}>
+          {!preview ? (
+            <EmptyState title="尚未預覽" description="建議先下載範本，或貼上 CSV 後按「預覽」。" />
+          ) : (
+            <div className="stack">
+              <Alert variant="info" title="preview summary" role="status">
+                bibs_to_create=<code>{preview.summary.bibs_to_create}</code> · items_to_create=
+                <code>{preview.summary.items_to_create}</code> · items_to_update=<code>{preview.summary.items_to_update}</code> · errors=
+                <code>{preview.errors.length}</code>
+              </Alert>
+
+              {preview.errors.length > 0 ? (
+                <details className="details">
+                  <summary>
+                    Preview errors（前 <code>{Math.min(50, preview.errors.length)}</code> 筆；請先修正再套用）
+                  </summary>
+                  <ul style={{ margin: 0, padding: '12px 18px' }}>
+                    {preview.errors.slice(0, 50).map((e) => (
+                      <li key={`${e.row_number}-${e.code}`}>
+                        row {e.row_number} · {e.code} · {e.message}
+                        {e.field ? ` · field=${e.field}` : ''}
+                      </li>
+                    ))}
+                  </ul>
+                </details>
+              ) : (
+                <Alert variant="success" title="preview 沒有 errors，可套用" role="status" />
+              )}
+
+              {preview.bibs_to_create_preview.length > 0 ? (
+                <details className="details">
+                  <summary>
+                    將建立的書目（前 <code>{preview.bibs_to_create_preview.length}</code> 筆）
+                  </summary>
+                  <ul style={{ margin: 0, padding: '12px 18px' }}>
+                    {preview.bibs_to_create_preview.map((b) => (
+                      <li key={b.bib_key}>
+                        {b.isbn ? `isbn=${b.isbn}` : b.bib_key} · {b.title ?? '(no title)'}
+                      </li>
+                    ))}
+                  </ul>
+                </details>
+              ) : null}
+
+              {preview.rows.length === 0 ? (
+                <EmptyState title="preview rows 為空" description="請確認 CSV 是否有資料列（不含 header）。" />
+              ) : (
+                <DataTable
+                  rows={preview.rows}
+                  getRowKey={(r) => String(r.row_number)}
+                  initialSort={{ columnId: 'row_number', direction: 'asc' }}
+                  columns={[
+                    { id: 'row_number', header: 'row', sortValue: (r) => r.row_number, cell: (r) => r.row_number, width: 80 },
+                    { id: 'item_action', header: 'item_action', sortValue: (r) => r.item_action, cell: (r) => r.item_action, width: 130 },
+                    { id: 'bib_action', header: 'bib_action', sortValue: (r) => r.bib_action, cell: (r) => r.bib_action, width: 130 },
+                    { id: 'barcode', header: 'barcode', sortValue: (r) => r.barcode, cell: (r) => <code>{r.barcode}</code>, width: 160 },
+                    { id: 'call_number', header: 'call_number', sortValue: (r) => r.call_number, cell: (r) => r.call_number, width: 180 },
+                    { id: 'location_id', header: 'location_id', sortValue: (r) => r.location_id, cell: (r) => <code style={{ fontSize: 12 }}>{r.location_id}</code>, width: 220 },
+                    { id: 'isbn', header: 'isbn', sortValue: (r) => r.isbn ?? '', cell: (r) => r.isbn ?? '—', width: 140 },
+                    { id: 'title', header: 'title', sortValue: (r) => r.title ?? '', cell: (r) => r.title ?? '' },
+                  ]}
+                />
+              )}
+            </div>
+          )}
+        </div>
       </section>
     </div>
   );
 }
-

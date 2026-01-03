@@ -26,8 +26,14 @@ import { useMemo, useState } from 'react';
 
 import Link from 'next/link';
 
-import type { MarcField, MarcImportDecision, MarcImportPreviewResult, MarcRecord } from '../../../../lib/api';
+import type { MarcField, MarcImportApplyResult, MarcImportDecision, MarcImportPreviewResult, MarcRecord } from '../../../../lib/api';
 import { MarcFieldsEditor } from '../../../../components/marc/marc-fields-editor';
+import { Alert } from '../../../../components/ui/alert';
+import { DataTable } from '../../../../components/ui/data-table';
+import { EmptyState } from '../../../../components/ui/empty-state';
+import { Field, Form, FormActions, FormSection } from '../../../../components/ui/form';
+import { PageHeader, SectionHeader } from '../../../../components/ui/page-header';
+import { SkeletonText } from '../../../../components/ui/skeleton';
 import { importMarcBatch } from '../../../../lib/api';
 import { formatErrorMessage } from '../../../../lib/error';
 import { useStaffSession } from '../../../../lib/use-staff-session';
@@ -157,6 +163,8 @@ export default function MarcImportPage({ params }: { params: { orgId: string } }
   const [previewing, setPreviewing] = useState(false);
   const [applying, setApplying] = useState(false);
 
+  const busy = parsing || previewing || applying;
+
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
@@ -169,14 +177,21 @@ export default function MarcImportPage({ params }: { params: { orgId: string } }
   // preview/apply 結果
   const [preview, setPreview] = useState<MarcImportPreviewResult | null>(null);
   const [decisionsByIndex, setDecisionsByIndex] = useState<Record<number, MarcImportDecision>>({});
-  const [applyAuditEventId, setApplyAuditEventId] = useState<string | null>(null);
+  const [applyResult, setApplyResult] = useState<MarcImportApplyResult | null>(null);
+
+  function patchSelectedDraft(patch: Partial<Draft>) {
+    setDrafts((prev) => (prev ? updateDraftAt(prev, selectedIndex, patch) : prev));
+    setPreview(null);
+    setDecisionsByIndex({});
+    setApplyResult(null);
+  }
 
   async function onPickFile(file: File | null) {
     setError(null);
     setSuccess(null);
     setPreview(null);
     setDecisionsByIndex({});
-    setApplyAuditEventId(null);
+    setApplyResult(null);
     setRecords(null);
     setDrafts(null);
     setSelectedIndex(0);
@@ -225,7 +240,7 @@ export default function MarcImportPage({ params }: { params: { orgId: string } }
     setSuccess(null);
     setPreview(null);
     setDecisionsByIndex({});
-    setApplyAuditEventId(null);
+    setApplyResult(null);
 
     try {
       if (!session) throw new Error('這頁需要 staff 登入');
@@ -270,7 +285,7 @@ export default function MarcImportPage({ params }: { params: { orgId: string } }
     setApplying(true);
     setError(null);
     setSuccess(null);
-    setApplyAuditEventId(null);
+    setApplyResult(null);
 
     try {
       if (!session) throw new Error('這頁需要 staff 登入');
@@ -306,8 +321,8 @@ export default function MarcImportPage({ params }: { params: { orgId: string } }
 
       if (result.mode !== 'apply') throw new Error('Unexpected response: expected apply');
 
-      setApplyAuditEventId(result.audit_event_id);
-      setSuccess(`已套用匯入：audit_event_id=${result.audit_event_id}`);
+      setApplyResult(result);
+      setSuccess(`已套用匯入：audit_event_id=${result.audit_event_id} · records=${result.summary.total_records}`);
     } catch (e) {
       setError(formatErrorMessage(e));
     } finally {
@@ -319,10 +334,9 @@ export default function MarcImportPage({ params }: { params: { orgId: string } }
   if (!sessionReady) {
     return (
       <div className="stack">
-        <section className="panel">
-          <h1 style={{ marginTop: 0 }}>MARC Import</h1>
-          <p className="muted">載入登入狀態中…</p>
-        </section>
+        <PageHeader title="MARC Import" description="載入登入狀態中…">
+          <Alert variant="info" title="載入登入狀態中…" role="status" />
+        </PageHeader>
       </div>
     );
   }
@@ -330,330 +344,493 @@ export default function MarcImportPage({ params }: { params: { orgId: string } }
   if (!session) {
     return (
       <div className="stack">
-        <section className="panel">
-          <h1 style={{ marginTop: 0 }}>MARC Import</h1>
-          <p className="muted">
-            這頁需要 staff 登入。請先前往 <Link href={`/orgs/${params.orgId}/login`}>/login</Link>。
-          </p>
-        </section>
+        <PageHeader
+          title="MARC Import"
+          description="匯入是高風險批次寫入（會建立/更新書目並寫入 marc_extras），因此需要 staff 登入。"
+          actions={
+            <Link className="btnSmall btnPrimary" href={`/orgs/${params.orgId}/login`}>
+              前往登入
+            </Link>
+          }
+        >
+          <Alert variant="danger" title="需要登入">
+            這頁需要 staff 登入才能操作。請先前往 <Link href={`/orgs/${params.orgId}/login`}>/login</Link>。
+          </Alert>
+        </PageHeader>
       </div>
     );
   }
 
   return (
     <div className="stack">
-      <section className="panel">
-        <h1 style={{ marginTop: 0 }}>MARC Import（v1：批次 preview/apply）</h1>
-        <p className="muted">
-          支援：<code>.mrc</code> / <code>.xml</code> / <code>.json</code>（可多筆 record）
-        </p>
-        <p className="muted">
-          批次匯入使用：<code>POST /bibs/import-marc</code>（preview/apply），可去重 ISBN/035、選擇 create/update/skip，並寫入一筆 audit。
-        </p>
-
-        <div className="muted" style={{ display: 'grid', gap: 4, marginTop: 8 }}>
-          <div>
-            orgId：<code>{params.orgId}</code>
+      <PageHeader
+        title="MARC Import（批次 preview/apply）"
+        description={
+          <>
+            支援：<code>.mrc</code> / <code>.xml</code> / <code>.json</code>（可多筆 record）。API：<code>POST /bibs/import-marc</code>（preview/apply），支援 ISBN/035
+            去重、逐筆決策（create/update/skip），並寫入一筆 audit。
+          </>
+        }
+        actions={
+          <>
+            <Link className="btnSmall" href={`/orgs/${params.orgId}/bibs`}>
+              回 Bibs
+            </Link>
+            <Link className="btnSmall" href={`/orgs/${params.orgId}/bibs/marc-dictionary`}>
+              欄位字典
+            </Link>
+            <Link className="btnSmall" href={`/orgs/${params.orgId}/bibs/marc-editor`}>
+              MARC 編輯器
+            </Link>
+            <Link className="btnSmall" href={`/orgs/${params.orgId}/audit-events`}>
+              Audit
+            </Link>
+          </>
+        }
+      >
+        <div className="grid3">
+          <div className="callout">
+            <div className="muted">orgId</div>
+            <div style={{ fontFamily: 'var(--font-mono)' }}>{params.orgId}</div>
           </div>
-          {sourceFilename ? (
+          <div className="callout">
+            <div className="muted">source</div>
+            <div>{sourceFilename ? <code>{sourceFilename}</code> : <span className="muted">（未選擇）</span>}</div>
+          </div>
+          <div className="callout">
+            <div className="muted">records</div>
             <div>
-              source：<code>{sourceFilename}</code>
+              <code>{records ? records.length : 0}</code>
             </div>
-          ) : null}
+          </div>
         </div>
 
-        {parsing ? <p className="muted">解析中…</p> : null}
-        {previewing ? <p className="muted">預覽中…</p> : null}
-        {applying ? <p className="muted">套用中…</p> : null}
-        {error ? <p className="error">錯誤：{error}</p> : null}
-        {success ? <p className="success">{success}</p> : null}
-
-        <div style={{ marginTop: 12 }}>
-          <input
-            type="file"
-            accept=".mrc,.xml,.json"
-            onChange={(e) => void onPickFile(e.target.files?.[0] ?? null)}
-            disabled={parsing || previewing || applying}
+        {busy ? (
+          <Alert
+            variant="info"
+            title={parsing ? '解析中…' : previewing ? '預覽中…' : '套用中…'}
+            role="status"
           />
-        </div>
-
-        {records && records.length > 1 ? (
-          <label style={{ marginTop: 12 }}>
-            選擇 record（共 {records.length} 筆）
-            <select
-              value={String(selectedIndex)}
-              onChange={(e) => setSelectedIndex(Number.parseInt(e.target.value, 10))}
-              disabled={parsing || previewing || applying}
-            >
-              {records.map((_, idx) => (
-                <option key={idx} value={String(idx)}>
-                  #{idx + 1}
-                </option>
-              ))}
-            </select>
-          </label>
         ) : null}
+        {parsing ? <SkeletonText lines={2} /> : null}
+
+        {error ? (
+          <Alert variant="danger" title="操作失敗">
+            {error}
+          </Alert>
+        ) : null}
+        {success ? <Alert variant="success" title={success} role="status" /> : null}
+      </PageHeader>
+
+      <section className="panel">
+        <SectionHeader title="來源檔案" description="選擇檔案後會先在瀏覽器端解析；preview/apply 才會送到 API。" />
+        <Form onSubmit={(e) => e.preventDefault()}>
+          <FormSection title="選擇檔案" description="（提示）建議先用 preview 檢查 warnings/errors，再做 apply。">
+            <Field label="MARC 檔案（.mrc / .xml / .json）" htmlFor="marc_import_file">
+              <input
+                id="marc_import_file"
+                type="file"
+                accept=".mrc,.xml,.json"
+                onChange={(e) => void onPickFile(e.target.files?.[0] ?? null)}
+                disabled={busy}
+              />
+            </Field>
+
+            {records && records.length > 1 ? (
+              <Field label={`選擇 record（共 ${records.length} 筆）`} htmlFor="marc_import_record_index">
+                <select
+                  id="marc_import_record_index"
+                  value={String(selectedIndex)}
+                  onChange={(e) => setSelectedIndex(Number.parseInt(e.target.value, 10))}
+                  disabled={busy}
+                >
+                  {records.map((_, idx) => (
+                    <option key={idx} value={String(idx)}>
+                      #{idx + 1}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+            ) : null}
+
+            {!records ? <EmptyState title="尚未選擇檔案" description="請先選擇 .mrc / .xml / .json 檔案以產生可編輯的草稿。" /> : null}
+          </FormSection>
+        </Form>
       </section>
 
       <section className="panel">
-        <h2 style={{ marginTop: 0 }}>匯入選項</h2>
-        <label>
-          <input type="checkbox" checked={saveMarcExtras} onChange={(e) => setSaveMarcExtras(e.target.checked)} />{' '}
-          保留未對映欄位到 <code>marc_extras</code>
-        </label>
-        <label>
-          <input
-            type="checkbox"
-            checked={upsertAuthorityTerms}
-            onChange={(e) => setUpsertAuthorityTerms(e.target.checked)}
-          />{' '}
-          自動建立缺少的 authority terms（name/subject/geographic/genre）
-        </label>
-        <label style={{ marginTop: 8 }}>
-          新建 authority terms 的 vocabulary_code（建議：local）
-          <input value={authorityVocabularyCode} onChange={(e) => setAuthorityVocabularyCode(e.target.value)} />
-        </label>
-        <label style={{ marginTop: 8 }}>
-          source_note（可選；會寫入 audit metadata）
-          <input value={sourceNote} onChange={(e) => setSourceNote(e.target.value)} placeholder="例：OCLC 匯出檔（2025-12）" />
-        </label>
+        <SectionHeader title="匯入選項" description="控制 marc_extras/authority term 建立策略；有 errors 時 apply 會拒絕寫入。" />
+        <Form onSubmit={(e) => e.preventDefault()}>
+          <FormSection title="匯入選項" description="建議先 preview 再 apply；有 errors 時 apply 會拒絕寫入。">
+            <Field label="保留未對映欄位到 marc_extras" htmlFor="marc_import_save_marc_extras" hint={<code>save_marc_extras</code>}>
+              <input
+                id="marc_import_save_marc_extras"
+                type="checkbox"
+                checked={saveMarcExtras}
+                onChange={(e) => setSaveMarcExtras(e.target.checked)}
+                disabled={busy}
+              />
+            </Field>
+
+            <Field
+              label="自動建立缺少的 authority terms（name/subject/geographic/genre）"
+              htmlFor="marc_import_upsert_authority_terms"
+              hint={<code>upsert_authority_terms</code>}
+            >
+              <input
+                id="marc_import_upsert_authority_terms"
+                type="checkbox"
+                checked={upsertAuthorityTerms}
+                onChange={(e) => setUpsertAuthorityTerms(e.target.checked)}
+                disabled={busy}
+              />
+            </Field>
+
+            <Field
+              label="新建 authority terms 的 vocabulary_code（建議：local）"
+              htmlFor="marc_import_authority_vocabulary_code"
+              hint={<code>authority_vocabulary_code</code>}
+            >
+              <input
+                id="marc_import_authority_vocabulary_code"
+                value={authorityVocabularyCode}
+                onChange={(e) => setAuthorityVocabularyCode(e.target.value)}
+                disabled={busy}
+              />
+            </Field>
+
+            <Field
+              label="source_note（可選；會寫入 audit metadata）"
+              htmlFor="marc_import_source_note"
+              hint="例：OCLC 匯出檔（2025-12）"
+            >
+              <input
+                id="marc_import_source_note"
+                value={sourceNote}
+                onChange={(e) => setSourceNote(e.target.value)}
+                placeholder="例：OCLC 匯出檔（2025-12）"
+                disabled={busy}
+              />
+            </Field>
+          </FormSection>
+        </Form>
       </section>
 
       <section className="panel">
         <h2 style={{ marginTop: 0 }}>映射到書目表單（逐筆可微調）</h2>
-        {!selectedDraft ? <p className="muted">請先選擇檔案並解析。</p> : null}
+        {!selectedDraft ? <EmptyState title="尚未產生草稿" description="請先選擇檔案並解析，才會出現可微調的書目欄位。" /> : null}
 
         {selectedDraft ? (
-          <div className="stack" style={{ marginTop: 12 }}>
-            <label>
-              title（必填）
-              <input
-                value={selectedDraft.title}
-                onChange={(e) => drafts && setDrafts(updateDraftAt(drafts, selectedIndex, { title: e.target.value }))}
-              />
-            </label>
-
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-              <label>
-                creators（每行一位）
-                <textarea
-                  value={selectedDraft.creators}
-                  onChange={(e) => drafts && setDrafts(updateDraftAt(drafts, selectedIndex, { creators: e.target.value }))}
-                  rows={4}
-                />
-              </label>
-              <label>
-                contributors（每行一位）
-                <textarea
-                  value={selectedDraft.contributors}
-                  onChange={(e) => drafts && setDrafts(updateDraftAt(drafts, selectedIndex, { contributors: e.target.value }))}
-                  rows={4}
-                />
-              </label>
-            </div>
-
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-              <label>
-                subjects（650；每行一個）
-                <textarea
-                  value={selectedDraft.subjects}
-                  onChange={(e) => drafts && setDrafts(updateDraftAt(drafts, selectedIndex, { subjects: e.target.value }))}
-                  rows={4}
-                />
-              </label>
-              <label>
-                geographics（651；每行一個）
-                <textarea
-                  value={selectedDraft.geographics}
-                  onChange={(e) =>
-                    drafts && setDrafts(updateDraftAt(drafts, selectedIndex, { geographics: e.target.value }))
-                  }
-                  rows={4}
-                />
-              </label>
-            </div>
-
-            <label>
-              genres（655；每行一個）
-              <textarea
-                value={selectedDraft.genres}
-                onChange={(e) => drafts && setDrafts(updateDraftAt(drafts, selectedIndex, { genres: e.target.value }))}
-                rows={4}
-              />
-            </label>
-
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 12 }}>
-              <label>
-                publisher
+          <Form onSubmit={(e) => e.preventDefault()} style={{ marginTop: 12 }}>
+            <FormSection title={`Record #${selectedIndex + 1}`} description="修改後請重新 preview（避免套用舊的比對/去重結果）。">
+              <Field label="title（必填）" htmlFor="marc_import_title">
                 <input
-                  value={selectedDraft.publisher}
-                  onChange={(e) => drafts && setDrafts(updateDraftAt(drafts, selectedIndex, { publisher: e.target.value }))}
+                  id="marc_import_title"
+                  value={selectedDraft.title}
+                  onChange={(e) => patchSelectedDraft({ title: e.target.value })}
+                  disabled={busy}
                 />
-              </label>
-              <label>
-                published_year
-                <input
-                  value={selectedDraft.publishedYear}
-                  onChange={(e) => drafts && setDrafts(updateDraftAt(drafts, selectedIndex, { publishedYear: e.target.value }))}
-                />
-              </label>
-              <label>
-                language
-                <input
-                  value={selectedDraft.language}
-                  onChange={(e) => drafts && setDrafts(updateDraftAt(drafts, selectedIndex, { language: e.target.value }))}
-                  placeholder="例：zh-TW / chi"
-                />
-              </label>
-              <label>
-                isbn
-                <input
-                  value={selectedDraft.isbn}
-                  onChange={(e) => drafts && setDrafts(updateDraftAt(drafts, selectedIndex, { isbn: e.target.value }))}
-                />
-              </label>
-            </div>
+              </Field>
 
-            <label>
-              classification
-              <input
-                value={selectedDraft.classification}
-                onChange={(e) => drafts && setDrafts(updateDraftAt(drafts, selectedIndex, { classification: e.target.value }))}
-              />
-            </label>
-
-            <details>
-              <summary>marc_extras（共 {selectedDraft.marcExtras.length} 個 fields；用於保留未對映欄位與進階子欄位）</summary>
-              <div style={{ marginTop: 12 }}>
-                <MarcFieldsEditor
-                  orgId={params.orgId}
-                  value={selectedDraft.marcExtras}
-                  onChange={(next) => drafts && setDrafts(updateDraftAt(drafts, selectedIndex, { marcExtras: next }))}
-                  disabled={parsing || previewing || applying}
-                />
+              <div className="grid2">
+                <Field label="creators（每行一位）" htmlFor="marc_import_creators">
+                  <textarea
+                    id="marc_import_creators"
+                    value={selectedDraft.creators}
+                    onChange={(e) => patchSelectedDraft({ creators: e.target.value })}
+                    rows={4}
+                    disabled={busy}
+                  />
+                </Field>
+                <Field label="contributors（每行一位）" htmlFor="marc_import_contributors">
+                  <textarea
+                    id="marc_import_contributors"
+                    value={selectedDraft.contributors}
+                    onChange={(e) => patchSelectedDraft({ contributors: e.target.value })}
+                    rows={4}
+                    disabled={busy}
+                  />
+                </Field>
               </div>
 
-              <details style={{ marginTop: 12 }}>
-                <summary className="muted">檢視 marc_extras JSON</summary>
+              <div className="grid2">
+                <Field label="subjects（650；每行一個）" htmlFor="marc_import_subjects">
+                  <textarea
+                    id="marc_import_subjects"
+                    value={selectedDraft.subjects}
+                    onChange={(e) => patchSelectedDraft({ subjects: e.target.value })}
+                    rows={4}
+                    disabled={busy}
+                  />
+                </Field>
+                <Field label="geographics（651；每行一個）" htmlFor="marc_import_geographics">
+                  <textarea
+                    id="marc_import_geographics"
+                    value={selectedDraft.geographics}
+                    onChange={(e) => patchSelectedDraft({ geographics: e.target.value })}
+                    rows={4}
+                    disabled={busy}
+                  />
+                </Field>
+              </div>
+
+              <Field label="genres（655；每行一個）" htmlFor="marc_import_genres">
                 <textarea
-                  value={JSON.stringify(selectedDraft.marcExtras, null, 2)}
-                  readOnly
-                  rows={10}
-                  style={{ marginTop: 8 }}
+                  id="marc_import_genres"
+                  value={selectedDraft.genres}
+                  onChange={(e) => patchSelectedDraft({ genres: e.target.value })}
+                  rows={4}
+                  disabled={busy}
                 />
+              </Field>
+
+              <div className="grid4">
+                <Field label="publisher" htmlFor="marc_import_publisher">
+                  <input
+                    id="marc_import_publisher"
+                    value={selectedDraft.publisher}
+                    onChange={(e) => patchSelectedDraft({ publisher: e.target.value })}
+                    disabled={busy}
+                  />
+                </Field>
+                <Field label="published_year" htmlFor="marc_import_published_year">
+                  <input
+                    id="marc_import_published_year"
+                    value={selectedDraft.publishedYear}
+                    onChange={(e) => patchSelectedDraft({ publishedYear: e.target.value })}
+                    disabled={busy}
+                  />
+                </Field>
+                <Field label="language" htmlFor="marc_import_language" hint="例：zh-TW / chi">
+                  <input
+                    id="marc_import_language"
+                    value={selectedDraft.language}
+                    onChange={(e) => patchSelectedDraft({ language: e.target.value })}
+                    placeholder="例：zh-TW / chi"
+                    disabled={busy}
+                  />
+                </Field>
+                <Field label="isbn" htmlFor="marc_import_isbn">
+                  <input
+                    id="marc_import_isbn"
+                    value={selectedDraft.isbn}
+                    onChange={(e) => patchSelectedDraft({ isbn: e.target.value })}
+                    disabled={busy}
+                  />
+                </Field>
+              </div>
+
+              <Field label="classification" htmlFor="marc_import_classification">
+                <input
+                  id="marc_import_classification"
+                  value={selectedDraft.classification}
+                  onChange={(e) => patchSelectedDraft({ classification: e.target.value })}
+                  disabled={busy}
+                />
+              </Field>
+
+              <details className="details">
+                <summary>
+                  marc_extras（共 <code>{selectedDraft.marcExtras.length}</code> 個 fields；用於保留未對映欄位與進階子欄位）
+                </summary>
+                <div style={{ padding: 12 }}>
+                  <MarcFieldsEditor
+                    orgId={params.orgId}
+                    value={selectedDraft.marcExtras}
+                    onChange={(next) => patchSelectedDraft({ marcExtras: next })}
+                    disabled={busy}
+                  />
+
+                  <details className="details" style={{ marginTop: 12 }}>
+                    <summary>檢視 marc_extras JSON</summary>
+                    <textarea value={JSON.stringify(selectedDraft.marcExtras, null, 2)} readOnly rows={10} style={{ marginTop: 8 }} />
+                  </details>
+                </div>
               </details>
-            </details>
 
-            <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
-              <button type="button" disabled={parsing || previewing || applying} onClick={() => void onPreview()}>
-                {previewing ? '預覽中…' : '預覽批次匯入'}
-              </button>
-              <button type="button" disabled={parsing || previewing || applying || !preview} onClick={() => void onApply()}>
-                {applying ? '套用中…' : '套用（apply）'}
-              </button>
-              <Link href={`/orgs/${params.orgId}/bibs`}>回到 Bibs</Link>
-            </div>
+              {preview && preview.errors.length > 0 ? (
+                <Alert variant="warning" title={`preview 有 errors（${preview.errors.length}）`} role="status">
+                  請先修正草稿內容並重新 preview；有 errors 時 apply 會拒絕寫入。
+                </Alert>
+              ) : null}
 
-            {applyAuditEventId ? (
-              <p className="success">
-                已寫入 audit：<Link href={`/orgs/${params.orgId}/audit-events`}>{applyAuditEventId}</Link>
-              </p>
-            ) : null}
-          </div>
+              <FormActions>
+                <button type="button" className="btnPrimary" disabled={busy || !drafts || drafts.length === 0} onClick={() => void onPreview()}>
+                  {previewing ? '預覽中…' : '預覽（Preview）'}
+                </button>
+                <button type="button" className="btnDanger" disabled={busy || !preview || preview.errors.length > 0} onClick={() => void onApply()}>
+                  {applying ? '套用中…' : '套用（Apply）'}
+                </button>
+              </FormActions>
+
+              {applyResult ? (
+                <Alert variant="success" title="已寫入 audit" role="status">
+                  <Link href={`/orgs/${params.orgId}/audit-events`}>{applyResult.audit_event_id}</Link>
+                </Alert>
+              ) : null}
+            </FormSection>
+          </Form>
         ) : null}
       </section>
 
       <section className="panel">
         <h2 style={{ marginTop: 0 }}>批次預覽結果</h2>
-        {!preview ? <p className="muted">尚未執行 preview。</p> : null}
+        {!preview ? <EmptyState title="尚未執行 preview" description="請先在上方完成草稿調整，並點選「預覽（Preview）」。" /> : null}
 
         {preview ? (
           <div className="stack">
-            <div className="muted" style={{ display: 'grid', gap: 4 }}>
+            <Alert variant="info" title="摘要" role="status">
               <div>
-                records：<code>{preview.source.records}</code>，sha256：<code>{preview.source.sha256.slice(0, 12)}…</code>
+                records=<code>{preview.source.records}</code> · sha256=<code>{preview.source.sha256.slice(0, 12)}…</code>
               </div>
-              <div>
-                summary：create=<code>{preview.summary.to_create}</code>，update=<code>{preview.summary.to_update}</code>，skip=<code>{preview.summary.to_skip}</code>
+              <div style={{ marginTop: 6 }}>
+                create=<code>{preview.summary.to_create}</code> · update=<code>{preview.summary.to_update}</code> · skip=
+                <code>{preview.summary.to_skip}</code>
               </div>
-              <div>
-                matched：ISBN=<code>{preview.summary.matched_by_isbn}</code>，035=<code>{preview.summary.matched_by_035}</code>
+              <div style={{ marginTop: 6 }}>
+                matched：ISBN=<code>{preview.summary.matched_by_isbn}</code> · 035=<code>{preview.summary.matched_by_035}</code>
               </div>
-              <div>
-                warnings=<code>{preview.warnings.length}</code>，errors=<code>{preview.errors.length}</code>
+              <div style={{ marginTop: 6 }}>
+                warnings=<code>{preview.warnings.length}</code> · errors=<code>{preview.errors.length}</code>
               </div>
-            </div>
+            </Alert>
 
             {preview.warnings.length > 0 ? (
-              <details>
-                <summary>Warnings（{preview.warnings.length}）</summary>
-                <pre style={{ overflowX: 'auto', marginTop: 8 }}>{JSON.stringify(preview.warnings, null, 2)}</pre>
+              <details className="details">
+                <summary>
+                  Warnings（<code>{preview.warnings.length}</code>）
+                </summary>
+                <pre style={{ overflowX: 'auto', padding: 12, margin: 0 }}>{JSON.stringify(preview.warnings, null, 2)}</pre>
               </details>
             ) : null}
 
             {preview.errors.length > 0 ? (
-              <details>
-                <summary>Errors（{preview.errors.length}；apply 會拒絕寫入）</summary>
-                <pre style={{ overflowX: 'auto', marginTop: 8 }}>{JSON.stringify(preview.errors, null, 2)}</pre>
+              <details className="details">
+                <summary>
+                  Errors（<code>{preview.errors.length}</code>；apply 會拒絕寫入）
+                </summary>
+                <pre style={{ overflowX: 'auto', padding: 12, margin: 0 }}>{JSON.stringify(preview.errors, null, 2)}</pre>
               </details>
             ) : null}
 
-            <div style={{ overflowX: 'auto' }}>
-              <table className="table" style={{ minWidth: 900 }}>
-                <thead>
-                  <tr>
-                    <th>#</th>
-                    <th>title</th>
-                    <th>isbn</th>
-                    <th>match</th>
-                    <th>suggested</th>
-                    <th>decision</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {preview.records.map((r) => {
-                    const canUpdate = Boolean(r.match.bib_id || r.target_bib_id);
-                    const decision = decisionsByIndex[r.record_index] ?? r.decision;
+            <DataTable
+              rows={preview.records}
+              getRowKey={(r) => String(r.record_index)}
+              initialSort={{ columnId: 'record_index', direction: 'asc' }}
+              sortHint={
+                <>
+                  排序僅影響此預覽表格的呈現；apply 仍以 <code>record_index</code> 作為逐筆決策對應鍵。
+                </>
+              }
+              columns={[
+                {
+                  id: 'record_index',
+                  header: '#（record_index）',
+                  sortValue: (r) => r.record_index,
+                  cell: (r) => <code>{r.record_index + 1}</code>,
+                  width: 130,
+                },
+                {
+                  id: 'title',
+                  header: 'title',
+                  sortValue: (r) => r.bib.title,
+                  cell: (r) => (
+                    <div style={{ maxWidth: 420, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {r.bib.title}
+                    </div>
+                  ),
+                },
+                { id: 'isbn', header: 'isbn', sortValue: (r) => r.isbn ?? '', cell: (r) => r.isbn ?? '—', width: 140 },
+                {
+                  id: 'match',
+                  header: 'match',
+                  sortValue: (r) => r.match.bib_id ?? '',
+                  cell: (r) => {
                     const matchLabel = r.match.bib_id
                       ? `${r.match.by ?? 'match'} → ${r.match.bib_title ?? r.match.bib_id}`
                       : '—';
                     return (
-                      <tr key={r.record_index}>
-                        <td>{r.record_index + 1}</td>
-                        <td style={{ maxWidth: 420, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                          {r.bib.title}
-                        </td>
-                        <td>{r.isbn ?? '—'}</td>
-                        <td style={{ maxWidth: 320, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                          {matchLabel}
-                        </td>
-                        <td>{r.suggested_decision}</td>
-                        <td>
-                          <select
-                            value={decision}
-                            onChange={(e) =>
-                              setDecisionsByIndex((prev) => ({
-                                ...prev,
-                                [r.record_index]: e.target.value as MarcImportDecision,
-                              }))
-                            }
-                          >
-                            <option value="create">create</option>
-                            <option value="update" disabled={!canUpdate}>
-                              update{!canUpdate ? '（no match）' : ''}
-                            </option>
-                            <option value="skip">skip</option>
-                          </select>
-                        </td>
-                      </tr>
+                      <div style={{ maxWidth: 320, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {matchLabel}
+                      </div>
                     );
-                  })}
-                </tbody>
-              </table>
-            </div>
+                  },
+                },
+                { id: 'suggested', header: 'suggested', sortValue: (r) => r.suggested_decision, cell: (r) => r.suggested_decision, width: 130 },
+                {
+                  id: 'decision',
+                  header: 'decision',
+                  cell: (r) => {
+                    const canUpdate = Boolean(r.match.bib_id || r.target_bib_id);
+                    const decision = decisionsByIndex[r.record_index] ?? r.decision;
+                    return (
+                      <select
+                        value={decision}
+                        onChange={(e) =>
+                          setDecisionsByIndex((prev) => ({
+                            ...prev,
+                            [r.record_index]: e.target.value as MarcImportDecision,
+                          }))
+                        }
+                        disabled={busy}
+                      >
+                        <option value="create">create</option>
+                        <option value="update" disabled={!canUpdate}>
+                          update{!canUpdate ? '（no match）' : ''}
+                        </option>
+                        <option value="skip">skip</option>
+                      </select>
+                    );
+                  },
+                  width: 180,
+                },
+              ]}
+            />
           </div>
         ) : null}
       </section>
+
+      {applyResult ? (
+        <section className="panel">
+          <h2 style={{ marginTop: 0 }}>批次套用結果</h2>
+
+          <Alert variant="success" title="已套用匯入" role="status">
+            audit_event_id：<Link href={`/orgs/${params.orgId}/audit-events`}>{applyResult.audit_event_id}</Link>
+          </Alert>
+
+          <Alert variant="info" title="摘要" role="status">
+            total=<code>{applyResult.summary.total_records}</code> · valid=<code>{applyResult.summary.valid_records}</code> · invalid=
+            <code>{applyResult.summary.invalid_records}</code> · create=<code>{applyResult.summary.to_create}</code> · update=
+            <code>{applyResult.summary.to_update}</code> · skip=<code>{applyResult.summary.to_skip}</code>
+          </Alert>
+
+          {applyResult.results.length === 0 ? (
+            <EmptyState title="沒有任何結果" description="（理論上不太會發生）若持續出現請檢查 API 回傳。" />
+          ) : (
+            <DataTable
+              rows={applyResult.results}
+              getRowKey={(r) => String(r.record_index)}
+              initialSort={{ columnId: 'record_index', direction: 'asc' }}
+              columns={[
+                {
+                  id: 'record_index',
+                  header: '#（record_index）',
+                  sortValue: (r) => r.record_index,
+                  cell: (r) => <code>{r.record_index + 1}</code>,
+                  width: 130,
+                },
+                { id: 'decision', header: 'decision', sortValue: (r) => r.decision, cell: (r) => r.decision, width: 140 },
+                {
+                  id: 'bib_id',
+                  header: 'bib_id',
+                  sortValue: (r) => r.bib_id ?? '',
+                  cell: (r) => (r.bib_id ? <Link href={`/orgs/${params.orgId}/bibs/${r.bib_id}`}>{r.bib_id}</Link> : '—'),
+                },
+              ]}
+            />
+          )}
+        </section>
+      ) : null}
     </div>
   );
 }

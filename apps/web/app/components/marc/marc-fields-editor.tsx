@@ -28,7 +28,7 @@ import {
 } from '@library-system/shared';
 
 import type { AuthorityTerm, MarcDataField, MarcField, MarcSubfield } from '../../lib/api';
-import { suggestAuthorityTerms } from '../../lib/api';
+import { ApiError, createAuthorityTerm, suggestAuthorityTerms } from '../../lib/api';
 import { MarcFixedFieldEditor } from './marc-fixed-field-editor';
 import {
   createEmptyFieldFromSpec,
@@ -225,6 +225,7 @@ type AuthorityPickerState = {
   q: string;
   vocabularyCode: string;
   suggesting: boolean;
+  creating: boolean;
   suggestions: AuthorityTerm[] | null;
   error: string | null;
 };
@@ -270,6 +271,7 @@ export function MarcFieldsEditor({ orgId, value, onChange, disabled }: Props) {
         q: '',
         vocabularyCode: '',
         suggesting: false,
+        creating: false,
         suggestions: null,
         error: null,
       };
@@ -294,6 +296,43 @@ export function MarcFieldsEditor({ orgId, value, onChange, disabled }: Props) {
       setAuthorityPicker((prev) => (prev ? { ...prev, suggesting: false, suggestions: result } : prev));
     } catch (e) {
       setAuthorityPicker((prev) => (prev ? { ...prev, suggesting: false, suggestions: null, error: formatErrorMessage(e) } : prev));
+    }
+  }
+
+  async function createAuthorityTermForActiveField() {
+    if (!authorityEnabled) return;
+    if (!authorityPicker) return;
+
+    const q = authorityPicker.q.trim();
+    if (!q) return;
+
+    // 新增 term 的預設策略：
+    // - vocabulary_code：空白就落在 local（避免把人為新增混入 builtin 詞彙庫）
+    // - source：標記 web-ui，方便後續治理/追溯
+    const vocabularyCode = authorityPicker.vocabularyCode.trim() || 'local';
+
+    setAuthorityPicker((prev) => (prev ? { ...prev, creating: true, error: null } : prev));
+    try {
+      const created = await createAuthorityTerm((orgId ?? '').trim(), {
+        kind: authorityPicker.kind,
+        preferred_label: q,
+        vocabulary_code: vocabularyCode,
+        source: 'web-ui',
+      });
+
+      applyAuthorityTermToActiveField(created);
+
+      // UX：新增後順便刷新 suggestions（讓使用者看得到「已存在」的證據，且可避免重複按）
+      setAuthorityPicker((prev) => (prev ? { ...prev, suggestions: [created] } : prev));
+    } catch (e) {
+      if (e instanceof ApiError && e.body?.error?.code === 'CONFLICT') {
+        setAuthorityPicker((prev) => (prev ? { ...prev, error: '同名款目已存在（已重新查詢；請從結果中套用）' } : prev));
+        await runAuthoritySuggest();
+        return;
+      }
+      setAuthorityPicker((prev) => (prev ? { ...prev, error: `新增款目失敗：${formatErrorMessage(e)}` } : prev));
+    } finally {
+      setAuthorityPicker((prev) => (prev ? { ...prev, creating: false } : prev));
     }
   }
 
@@ -567,16 +606,16 @@ export function MarcFieldsEditor({ orgId, value, onChange, disabled }: Props) {
 
               <div style={{ flex: 1 }} />
 
-              <button type="button" onClick={() => move(index, -1)} disabled={disabled || index === 0}>
+              <button type="button" className="btnSmall" onClick={() => move(index, -1)} disabled={disabled || index === 0}>
                 ↑
               </button>
-              <button type="button" onClick={() => move(index, 1)} disabled={disabled || index === value.length - 1}>
+              <button type="button" className="btnSmall" onClick={() => move(index, 1)} disabled={disabled || index === value.length - 1}>
                 ↓
               </button>
-              <button type="button" onClick={() => duplicateAt(index)} disabled={disabled}>
+              <button type="button" className="btnSmall" onClick={() => duplicateAt(index)} disabled={disabled}>
                 複製
               </button>
-              <button type="button" onClick={() => removeAt(index)} disabled={disabled}>
+              <button type="button" className={['btnSmall', 'btnDanger'].join(' ')} onClick={() => removeAt(index)} disabled={disabled}>
                 刪除
               </button>
             </div>
@@ -613,7 +652,7 @@ export function MarcFieldsEditor({ orgId, value, onChange, disabled }: Props) {
                         $2：<code>{current2}</code>
                       </div>
                     ) : null}
-                    <button type="button" onClick={() => toggleAuthorityPicker(index, String(tag))} disabled={disabled}>
+                    <button type="button" className="btnSmall" onClick={() => toggleAuthorityPicker(index, String(tag))} disabled={disabled}>
                       {isOpen ? '關閉' : '搜尋/連結'}
                     </button>
                   </div>
@@ -639,6 +678,7 @@ export function MarcFieldsEditor({ orgId, value, onChange, disabled }: Props) {
                         />
                         <button
                           type="button"
+                          className={['btnSmall', 'btnPrimary'].join(' ')}
                           onClick={() => void runAuthoritySuggest()}
                           disabled={disabled || state.suggesting || !state.q.trim()}
                         >
@@ -647,6 +687,23 @@ export function MarcFieldsEditor({ orgId, value, onChange, disabled }: Props) {
                       </div>
 
                       {state.error ? <div className="error">錯誤：{state.error}</div> : null}
+
+                      {/* quick create：MARC 編目現場很常遇到「想用的詞彙不存在」→ 直接在這裡建一筆並套用 */}
+                      {state.q.trim() ? (
+                        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
+                          <button
+                            type="button"
+                            className={['btnSmall', 'btnPrimary'].join(' ')}
+                            onClick={() => void createAuthorityTermForActiveField()}
+                            disabled={disabled || state.creating}
+                          >
+                            {state.creating ? '新增中…' : '新增款目並套用'}
+                          </button>
+                          <span className="muted">
+                            vocabulary_code：<code>{state.vocabularyCode.trim() || 'local'}</code>
+                          </span>
+                        </div>
+                      ) : null}
 
                       {state.suggestions ? (
                         state.suggestions.length === 0 ? (
@@ -658,7 +715,7 @@ export function MarcFieldsEditor({ orgId, value, onChange, disabled }: Props) {
                                 key={t.id}
                                 style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}
                               >
-                                <button type="button" onClick={() => applyAuthorityTermToActiveField(t)} disabled={disabled}>
+                                <button type="button" className={['btnSmall', 'btnPrimary'].join(' ')} onClick={() => applyAuthorityTermToActiveField(t)} disabled={disabled}>
                                   套用
                                 </button>
                                 <div>
@@ -809,6 +866,7 @@ export function MarcFieldsEditor({ orgId, value, onChange, disabled }: Props) {
                       <div style={{ display: 'flex', gap: 6 }}>
                         <button
                           type="button"
+                          className="btnSmall"
                           onClick={() => {
                             const target = sfIndex - 1;
                             if (target < 0) return;
@@ -824,6 +882,7 @@ export function MarcFieldsEditor({ orgId, value, onChange, disabled }: Props) {
                         </button>
                         <button
                           type="button"
+                          className="btnSmall"
                           onClick={() => {
                             const target = sfIndex + 1;
                             if (target >= field.subfields.length) return;
@@ -839,6 +898,7 @@ export function MarcFieldsEditor({ orgId, value, onChange, disabled }: Props) {
                         </button>
                         <button
                           type="button"
+                          className="btnSmall"
                           onClick={() => {
                             // 複製：常見於 $a/$x/$y/$z 多段補充時（比手動新增再 copy value 快）
                             const out = field.subfields.slice();
@@ -851,6 +911,7 @@ export function MarcFieldsEditor({ orgId, value, onChange, disabled }: Props) {
                         </button>
                         <button
                           type="button"
+                          className={['btnSmall', 'btnDanger'].join(' ')}
                           onClick={() => {
                             const out = field.subfields.slice();
                             out.splice(sfIndex, 1);
@@ -871,6 +932,7 @@ export function MarcFieldsEditor({ orgId, value, onChange, disabled }: Props) {
                 <div style={{ display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
                   <button
                     type="button"
+                    className={['btnSmall', 'btnPrimary'].join(' ')}
                     onClick={() => {
                       const nextCode = pickNextSubfieldCode(dataSpec, field.subfields);
                       setAt(index, { ...field, subfields: [...field.subfields, { code: nextCode, value: '' }] });
@@ -921,7 +983,7 @@ export function MarcFieldsEditor({ orgId, value, onChange, disabled }: Props) {
             />
           </label>
 
-          <button type="button" onClick={onAddField} disabled={disabled || !normalizeTagForAdd(newTag)}>
+          <button type="button" className="btnPrimary" onClick={onAddField} disabled={disabled || !normalizeTagForAdd(newTag)}>
             新增
           </button>
 

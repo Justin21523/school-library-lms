@@ -728,6 +728,24 @@ export type ItemCopy = {
 };
 
 /**
+ * ItemCopyWithContext（items list 專用）
+ *
+ * 為什麼 list 要多帶這些欄位？
+ * - 你指出的痛點：只顯示 UUID（bibliographic_id/location_id）會造成查詢與操作不便
+ * - 後端 items list 已改成 join bib/location，因此可以在列表直接顯示「書名/館別」
+ *
+ * 注意：
+ * - 這是「list 回傳 shape」；item detail 仍沿用 ItemCopy（避免改動範圍過大）
+ */
+export type ItemCopyWithContext = ItemCopy & {
+  bibliographic_title: string;
+  bibliographic_isbn: string | null;
+  bibliographic_classification: string | null;
+  location_code: string;
+  location_name: string;
+};
+
+/**
  * ItemDetail（冊詳情：含「組合狀態」）
  *
  * 後端會在 item detail 一次回傳：
@@ -1224,24 +1242,100 @@ export type PatronLoginResult = {
 export class ApiError extends Error {
   readonly status: number;
   readonly body: ApiErrorBody | null;
+  /** 方便 UI/除錯：知道是哪一個 request 掛掉（尤其是 CORS / baseUrl 配錯時） */
+  readonly request: {
+    method: string;
+    /** 完整 URL（base + path + query） */
+    url: string;
+    /** API base（例如 http://localhost:3001） */
+    baseUrl: string;
+    /** API path（例如 /api/v1/orgs/...） */
+    path: string;
+  } | null;
 
-  constructor(message: string, status: number, body: ApiErrorBody | null) {
+  constructor(
+    message: string,
+    status: number,
+    body: ApiErrorBody | null,
+    request?: { method: string; url: string; baseUrl: string; path: string } | null,
+  ) {
     super(message);
     this.status = status;
     this.body = body;
+    this.request = request ?? null;
   }
 }
 
 /**
  * API base URL 的來源：
  * - 優先使用 `NEXT_PUBLIC_API_BASE_URL`（讓你在不同環境可切換 API 位址）
- * - 若未設定，開發環境預設 `http://localhost:3001`
+ * - 若未設定：
+ *   - Browser：用「目前頁面的 hostname」組出 `:3001`（避免在 LAN / devcontainer / 反向代理時被 localhost 綁死）
+ *   - 非 Browser（例如 SSR/build）：退回 `http://localhost:3001`
  *
  * 注意：NEXT_PUBLIC 代表「會被打包進前端」；因此不要放 secret。
  */
 function getApiBaseUrl() {
   const fromEnv = process.env.NEXT_PUBLIC_API_BASE_URL?.trim();
-  if (fromEnv) return fromEnv;
+
+  const browserAutoBaseUrl =
+    typeof window !== 'undefined' && window.location
+      ? `${window.location.protocol}//${window.location.hostname}:3001`
+      : null;
+
+  // Browser：如果 env 被設成 localhost（常見於 .env 範本），但你其實是用 IP/別台電腦開 Web，
+  // 那 `localhost` 會 let browser 去打「使用者那台電腦」而不是「伺服器那台」→ 直接 NETWORK。
+  //
+  // 因此在 browser 端我們做一個保護：
+  // - env=localhost/127.0.0.1/::1 且 page 不是 localhost → 改用「page hostname + :3001」
+  // - 仍保留：若 env 指到非 localhost（例如 https://api.example.com），就尊重 env（production 必需）
+  if (fromEnv) {
+    if (browserAutoBaseUrl && window.location) {
+      const pageHost = window.location.hostname;
+      const pageIsLocal = pageHost === 'localhost' || pageHost === '127.0.0.1' || pageHost === '::1';
+
+      try {
+        const parsed = new URL(fromEnv);
+        const envHost = parsed.hostname;
+        const envIsLocal = envHost === 'localhost' || envHost === '127.0.0.1' || envHost === '::1';
+        const pageLooksLikeIpv4 = /^\d{1,3}(\.\d{1,3}){3}$/.test(pageHost);
+
+        if (envIsLocal && !pageIsLocal) {
+          const port = parsed.port || '3001';
+          // Docker Compose / E2E 常見情境：
+          // - pageHost=web（你是在 docker network 內用 service name 開 Web）
+          // - API service name 會是 api，而不是 web
+          // 若我們盲目把 localhost → web:3001，會直接打到「不存在的 web:3001」造成 NETWORK。
+          if (pageHost === 'web') {
+            return `${window.location.protocol}//api:${port}`;
+          }
+          return `${window.location.protocol}//${pageHost}:${port}`;
+        }
+
+        // 另一個常見坑（對齊你現在遇到的情境）：
+        // - 在 Docker network 內跑 E2E/QA 時，我們常把 base URL 設成 `http://api:3001`
+        //   （api 是 docker compose service name）
+        // - 但若你用「本機瀏覽器」開 `http://localhost:3000`，瀏覽器並不認得 `api` 這個 hostname
+        //   → 直接 NETWORK（看起來像 API 沒啟動，但其實是 baseUrl 打到 docker 內網）
+        //
+        // 因此我們在「頁面是 localhost / 直接用 IP 開」時做一個反向保護：
+        // - envHost=api 且 page 是 local/ip → 改用「page hostname + :port」
+        //
+        // 注意：我們刻意不在 pageHost=web（docker network）時做這個改寫，
+        // 避免把 `api:3001` 改壞成 `web:3001`（那在 docker network 內反而會壞）。
+        if ((pageIsLocal || pageLooksLikeIpv4) && envHost === 'api') {
+          const port = parsed.port || '3001';
+          return `${window.location.protocol}//${pageHost}:${port}`;
+        }
+      } catch {
+        // env 不是合法 URL：忽略這個保護邏輯，直接使用 env（讓錯誤可被顯示/定位）
+      }
+    }
+
+    return fromEnv;
+  }
+
+  if (browserAutoBaseUrl) return browserAutoBaseUrl;
   return 'http://localhost:3001';
 }
 
@@ -1330,6 +1424,7 @@ async function requestJson<T>(
       error instanceof Error ? error.message : 'Network error',
       0,
       null,
+      { method: options.method, url: url.toString(), baseUrl, path },
     );
   }
 
@@ -1356,7 +1451,7 @@ async function requestJson<T>(
   if (!response.ok) {
     const body = isApiErrorBody(json) ? json : null;
     const message = body?.error?.message ?? `HTTP ${response.status}`;
-    throw new ApiError(message, response.status, body);
+    throw new ApiError(message, response.status, body, { method: options.method, url: url.toString(), baseUrl, path });
   }
 
   // 6) 成功但不是合法 JSON：視為錯誤（避免頁面用到 undefined/null 而 crash）
@@ -1365,6 +1460,7 @@ async function requestJson<T>(
       `Invalid JSON response from API (base=${baseUrl}; path=${path})`,
       response.status,
       null,
+      { method: options.method, url: url.toString(), baseUrl, path },
     );
   }
 
@@ -1424,6 +1520,7 @@ async function requestText(
       error instanceof Error ? error.message : 'Network error',
       0,
       null,
+      { method: options.method, url: url.toString(), baseUrl, path },
     );
   }
 
@@ -1442,7 +1539,7 @@ async function requestText(
 
     const body = isApiErrorBody(json) ? json : null;
     const message = body?.error?.message ?? `HTTP ${response.status}`;
-    throw new ApiError(message, response.status, body);
+    throw new ApiError(message, response.status, body, { method: options.method, url: url.toString(), baseUrl, path });
   }
 
   return { text, contentType: response.headers.get('content-type') };
@@ -1494,6 +1591,7 @@ async function requestBytes(
       error instanceof Error ? error.message : 'Network error',
       0,
       null,
+      { method: options.method, url: url.toString(), baseUrl, path },
     );
   }
 
@@ -1510,7 +1608,7 @@ async function requestBytes(
 
     const body = isApiErrorBody(json) ? json : null;
     const message = body?.error?.message ?? `HTTP ${response.status}`;
-    throw new ApiError(message, response.status, body);
+    throw new ApiError(message, response.status, body, { method: options.method, url: url.toString(), baseUrl, path });
   }
 
   const bytes = await response.arrayBuffer();
@@ -1577,6 +1675,23 @@ export async function createOrganization(input: { name: string; code?: string })
     method: 'POST',
     body: input,
   });
+}
+
+// ----------------------------
+// Infra（connectivity / health check）
+// ----------------------------
+
+export async function getApiHealth() {
+  // 注意：health endpoint 不在 /api/v1 底下（用於 Docker/K8s 的 probe）
+  // - Web 端用它來做「API 是否啟動」的即時提示，降低「整站大量 NETWORK」的除錯時間。
+  return await requestJson<{
+    ok: true;
+    db?: { ok: boolean; error?: string };
+    schema?:
+      | { ok: true; missing: string[] }
+      | { ok: false; missing: string[]; hint: string }
+      | { ok: null; error: string };
+  }>('/health', { method: 'GET' });
 }
 
 // ----------------------------
@@ -1890,6 +2005,19 @@ export async function listBibs(
   orgId: string,
   filters: {
     query?: string;
+    // search_fields：逗號分隔（例如 title,author,subject）；未提供代表全欄位
+    search_fields?: string;
+    // must/should/must_not：逗號或換行分隔（後端會拆成陣列並做 AND/OR/NOT）
+    must?: string;
+    should?: string;
+    must_not?: string;
+    // published_year range：metadata filter
+    published_year_from?: number;
+    published_year_to?: number;
+    // language：prefix（例如 zh 也能命中 zh-TW）
+    language?: string;
+    // available_only：只回傳「有可借冊」的書目（OPAC 常見 UX）
+    available_only?: boolean;
     // subjects_any：主題詞擴充查詢（thesaurus expand 後的 labels[]；用逗號串起來送出）
     subjects_any?: string;
     // subject_term_ids_any：term_id-driven 的主題詞擴充查詢（UUID[]；用逗號串起來送出）
@@ -2446,6 +2574,7 @@ export async function importThesaurusRelations(
 export async function listItems(
   orgId: string,
   filters: {
+    query?: string;
     barcode?: string;
     status?: ItemStatus;
     location_id?: string;
@@ -2454,7 +2583,7 @@ export async function listItems(
     cursor?: string;
   },
 ) {
-  return await requestJson<CursorPage<ItemCopy>>(`/api/v1/orgs/${orgId}/items`, {
+  return await requestJson<CursorPage<ItemCopyWithContext>>(`/api/v1/orgs/${orgId}/items`, {
     method: 'GET',
     query: filters,
   });
@@ -2622,6 +2751,7 @@ export async function checkin(
 export async function listLoans(
   orgId: string,
   filters: {
+    query?: string;
     status?: 'open' | 'closed' | 'all';
     user_external_id?: string;
     item_barcode?: string;
@@ -2691,6 +2821,7 @@ export async function applyPurgeLoanHistory(
 export async function listHolds(
   orgId: string,
   filters: {
+    query?: string;
     status?: HoldStatus | 'all';
     user_external_id?: string;
     item_barcode?: string;

@@ -25,16 +25,27 @@ import { useEffect, useMemo, useState } from 'react';
 
 import Link from 'next/link';
 
-import type { FulfillHoldResult, HoldStatus, HoldWithDetails, Location } from '../../../lib/api';
+import type {
+  BibliographicRecordWithCounts,
+  FulfillHoldResult,
+  HoldStatus,
+  HoldWithDetails,
+  Location,
+  User,
+} from '../../../lib/api';
 import {
   cancelHold,
   createHold,
   fulfillHold,
+  listBibs,
   listHolds,
   listLocations,
+  listUsers,
 } from '../../../lib/api';
 import { formatErrorMessage } from '../../../lib/error';
 import { useStaffSession } from '../../../lib/use-staff-session';
+import { PageHeader, SectionHeader } from '../../../components/ui/page-header';
+import { Alert } from '../../../components/ui/alert';
 
 // location 也可能被停用；在「取書地點」下拉選單中，預設只顯示 active。
 function isActiveLocation(location: Location) {
@@ -73,6 +84,7 @@ export default function HoldsPage({ params }: { params: { orgId: string } }) {
   const [loadingMore, setLoadingMore] = useState(false);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [appliedFilters, setAppliedFilters] = useState<{
+    query?: string;
     status?: HoldStatus | 'all';
     user_external_id?: string;
     item_barcode?: string;
@@ -83,6 +95,7 @@ export default function HoldsPage({ params }: { params: { orgId: string } }) {
 
   // filters（對應 API query params）
   const [status, setStatus] = useState<HoldStatus | 'all'>('ready');
+  const [query, setQuery] = useState('');
   const [userExternalId, setUserExternalId] = useState('');
   const [itemBarcode, setItemBarcode] = useState('');
   const [bibliographicId, setBibliographicId] = useState('');
@@ -94,8 +107,18 @@ export default function HoldsPage({ params }: { params: { orgId: string } }) {
   // ----------------------------
 
   const [createBorrowerExternalId, setCreateBorrowerExternalId] = useState('');
+  const [createBorrowerQuery, setCreateBorrowerQuery] = useState('');
+  const [createBorrowerCandidates, setCreateBorrowerCandidates] = useState<User[] | null>(null);
+  const [loadingCreateBorrowerCandidates, setLoadingCreateBorrowerCandidates] = useState(false);
   const [createBibliographicId, setCreateBibliographicId] = useState('');
   const [createPickupLocationId, setCreatePickupLocationId] = useState('');
+
+  // 建立 hold 的書目選擇：
+  // - 你希望「不用背 UUID」：因此這裡提供一個最小的 bib lookup（用 title/ISBN 搜尋）
+  // - 選到書後才把 bib_id 寫入 form state（真正送 API 的仍是 bibliographic_id）
+  const [createBibQuery, setCreateBibQuery] = useState('');
+  const [createBibCandidates, setCreateBibCandidates] = useState<BibliographicRecordWithCounts[] | null>(null);
+  const [loadingCreateBibCandidates, setLoadingCreateBibCandidates] = useState(false);
 
   const [creating, setCreating] = useState(false);
 
@@ -148,12 +171,84 @@ export default function HoldsPage({ params }: { params: { orgId: string } }) {
   }, [params.orgId, sessionReady, session]);
 
   // ----------------------------
+  // 7.5) 建立 hold：bib lookup（用書名/ISBN 搜尋，避免要求手輸 UUID）
+  // ----------------------------
+
+  useEffect(() => {
+    if (!sessionReady || !session) return;
+
+    const q = createBibQuery.trim();
+    if (!q) {
+      setCreateBibCandidates(null);
+      setLoadingCreateBibCandidates(false);
+      return;
+    }
+
+    // debounce：避免每次 key stroke 都打 API
+    const handle = window.setTimeout(() => {
+      async function run() {
+        setLoadingCreateBibCandidates(true);
+        try {
+          const result = await listBibs(params.orgId, { query: q, limit: 8 });
+          setCreateBibCandidates(result.items);
+        } catch {
+          setCreateBibCandidates(null);
+        } finally {
+          setLoadingCreateBibCandidates(false);
+        }
+      }
+
+      void run();
+    }, 250);
+
+    return () => window.clearTimeout(handle);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [createBibQuery, params.orgId, sessionReady, session]);
+
+  // ----------------------------
+  // 7.6) 建立 hold：borrower lookup（用姓名/學號/班級搜尋，避免要求先去 Users 頁找 external_id）
+  // ----------------------------
+
+  useEffect(() => {
+    if (!sessionReady || !session) return;
+
+    const q = createBorrowerQuery.trim();
+    if (!q) {
+      setCreateBorrowerCandidates(null);
+      setLoadingCreateBorrowerCandidates(false);
+      return;
+    }
+
+    // debounce：避免每次 key stroke 都打 API
+    const handle = window.setTimeout(() => {
+      async function run() {
+        setLoadingCreateBorrowerCandidates(true);
+        try {
+          // 只搜尋 active：避免把停用帳號塞進候選清單造成誤用
+          const result = await listUsers(params.orgId, { query: q, status: 'active', limit: 8 });
+          setCreateBorrowerCandidates(result.items);
+        } catch {
+          setCreateBorrowerCandidates(null);
+        } finally {
+          setLoadingCreateBorrowerCandidates(false);
+        }
+      }
+
+      void run();
+    }, 250);
+
+    return () => window.clearTimeout(handle);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [createBorrowerQuery, params.orgId, sessionReady, session]);
+
+  // ----------------------------
   // 8) 查詢：抽成 refreshHolds，讓「初次載入 / 搜尋 / 動作後刷新」重用
   // ----------------------------
 
   async function refreshHolds(
     overrides?: Partial<{
       status: HoldStatus | 'all';
+      query: string;
       userExternalId: string;
       itemBarcode: string;
       bibliographicId: string;
@@ -169,6 +264,7 @@ export default function HoldsPage({ params }: { params: { orgId: string } }) {
       // 允許呼叫端用 overrides 暫時覆蓋 filters：
       // - 典型情境：按下「清除」時，setState 尚未生效，但我們希望用預設條件立即刷新
       const effectiveStatus = overrides?.status ?? status;
+      const effectiveQuery = overrides?.query ?? query;
       const effectiveUserExternalId = overrides?.userExternalId ?? userExternalId;
       const effectiveItemBarcode = overrides?.itemBarcode ?? itemBarcode;
       const effectiveBibliographicId = overrides?.bibliographicId ?? bibliographicId;
@@ -184,6 +280,7 @@ export default function HoldsPage({ params }: { params: { orgId: string } }) {
 
       const result = await listHolds(params.orgId, {
         status: effectiveStatus,
+        query: effectiveQuery.trim() || undefined,
         user_external_id: effectiveUserExternalId.trim() || undefined,
         item_barcode: effectiveItemBarcode.trim() || undefined,
         bibliographic_id: effectiveBibliographicId.trim() || undefined,
@@ -195,6 +292,7 @@ export default function HoldsPage({ params }: { params: { orgId: string } }) {
       setNextCursor(result.next_cursor);
       setAppliedFilters({
         status: effectiveStatus,
+        query: effectiveQuery.trim() || undefined,
         user_external_id: effectiveUserExternalId.trim() || undefined,
         item_barcode: effectiveItemBarcode.trim() || undefined,
         bibliographic_id: effectiveBibliographicId.trim() || undefined,
@@ -244,6 +342,7 @@ export default function HoldsPage({ params }: { params: { orgId: string } }) {
   function onClear() {
     // 清除 filters：回到預設（ready + limit=200）
     setStatus('ready');
+    setQuery('');
     setUserExternalId('');
     setItemBarcode('');
     setBibliographicId('');
@@ -253,6 +352,7 @@ export default function HoldsPage({ params }: { params: { orgId: string } }) {
     // 清除後立即刷新：用 overrides 避免「setState 尚未套用」導致 query 仍用舊條件。
     void refreshHolds({
       status: 'ready',
+      query: '',
       userExternalId: '',
       itemBarcode: '',
       bibliographicId: '',
@@ -374,10 +474,7 @@ export default function HoldsPage({ params }: { params: { orgId: string } }) {
   if (!sessionReady) {
     return (
       <div className="stack">
-        <section className="panel">
-          <h1 style={{ marginTop: 0 }}>Holds</h1>
-          <p className="muted">載入登入狀態中…</p>
-        </section>
+        <PageHeader title="Holds" description="載入登入狀態中…" />
       </div>
     );
   }
@@ -385,12 +482,11 @@ export default function HoldsPage({ params }: { params: { orgId: string } }) {
   if (!session) {
     return (
       <div className="stack">
-        <section className="panel">
-          <h1 style={{ marginTop: 0 }}>Holds</h1>
-          <p className="error">
+        <PageHeader title="Holds">
+          <Alert variant="danger" title="需要登入">
             這頁需要 staff 登入才能操作。請先前往 <Link href={`/orgs/${params.orgId}/login`}>/login</Link>。
-          </p>
-        </section>
+          </Alert>
+        </PageHeader>
       </div>
     );
   }
@@ -400,13 +496,14 @@ export default function HoldsPage({ params }: { params: { orgId: string } }) {
       {/* ---------------------------- */}
       {/* Header / actor */}
       {/* ---------------------------- */}
-      <section className="panel">
-        <h1 style={{ marginTop: 0 }}>Holds</h1>
-
-        <p className="muted">
-          對應 API：<code>/api/v1/orgs/:orgId/holds</code>（list/create/cancel/fulfill）
-        </p>
-
+      <PageHeader
+        title="Holds"
+        description={
+          <>
+            對應 API：<code>/api/v1/orgs/:orgId/holds</code>（list/create/cancel/fulfill）
+          </>
+        }
+      >
         <p className="muted">
           本頁屬於 staff 後台：需要先登入取得 Bearer token；actor_user_id 會自動鎖定為「登入者本人」，用於寫入 audit_events。
         </p>
@@ -424,24 +521,40 @@ export default function HoldsPage({ params }: { params: { orgId: string } }) {
         </p>
 
         {loadingLocations ? <p className="muted">載入 locations 中…</p> : null}
-        {error ? <p className="error">錯誤：{error}</p> : null}
-        {success ? <p className="success">{success}</p> : null}
-        {lastFulfillResult ? (
-          <p className="muted">
-            fulfill 結果：hold_id={lastFulfillResult.hold_id} · loan_id={lastFulfillResult.loan_id} · due_at=
-            {lastFulfillResult.due_at}
-          </p>
+        {error ? (
+          <Alert variant="danger" title="操作失敗">
+            {error}
+          </Alert>
         ) : null}
-      </section>
+        {success ? (
+          <Alert variant="success" title="已完成" role="status">
+            {success}
+          </Alert>
+        ) : null}
+        {lastFulfillResult ? (
+          <Alert variant="info" title="Fulfill 結果" role="status">
+            hold_id={lastFulfillResult.hold_id} · loan_id={lastFulfillResult.loan_id} · due_at={lastFulfillResult.due_at}
+          </Alert>
+        ) : null}
+      </PageHeader>
 
       {/* ---------------------------- */}
       {/* Search */}
       {/* ---------------------------- */}
       <section className="panel">
-        <h2 style={{ marginTop: 0 }}>查詢</h2>
+        <SectionHeader title="查詢" />
 
         <form onSubmit={onSearch} className="stack" style={{ marginTop: 12 }}>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
+          <div className="grid4">
+            <label>
+              query（姓名/書名/館別/條碼）
+              <input
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="例：王小明 / 哈利波特 / 兒童閱覽 / SCL-"
+              />
+            </label>
+
             <label>
               status
               <select value={status} onChange={(e) => setStatus(e.target.value as HoldStatus | 'all')}>
@@ -473,16 +586,7 @@ export default function HoldsPage({ params }: { params: { orgId: string } }) {
             </label>
           </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
-            <label>
-              bibliographic_id（UUID，精確）
-              <input
-                value={bibliographicId}
-                onChange={(e) => setBibliographicId(e.target.value)}
-                placeholder="例：b_..."
-              />
-            </label>
-
+          <div className="grid3">
             <label>
               pickup_location_id（精確）
               <select
@@ -500,16 +604,25 @@ export default function HoldsPage({ params }: { params: { orgId: string } }) {
             </label>
 
             <label>
+              bibliographic_id（UUID，精確）
+              <input
+                value={bibliographicId}
+                onChange={(e) => setBibliographicId(e.target.value)}
+                placeholder="例：8d2c...（建議用 query 找書名）"
+              />
+            </label>
+
+            <label>
               limit（預設 200）
               <input value={limit} onChange={(e) => setLimit(e.target.value)} />
             </label>
           </div>
 
           <div style={{ display: 'flex', gap: 12 }}>
-            <button type="submit" disabled={loadingHolds}>
+            <button type="submit" className="btnPrimary" disabled={loadingHolds}>
               {loadingHolds ? '查詢中…' : '查詢'}
             </button>
-            <button type="button" onClick={onClear} disabled={loadingHolds}>
+            <button type="button" className="btnSmall" onClick={onClear} disabled={loadingHolds}>
               清除
             </button>
           </div>
@@ -520,31 +633,89 @@ export default function HoldsPage({ params }: { params: { orgId: string } }) {
       {/* Create */}
       {/* ---------------------------- */}
       <section className="panel">
-        <h2 style={{ marginTop: 0 }}>建立預約（Place hold）</h2>
+        <SectionHeader title="建立預約（Place hold）" />
 
         <p className="muted">
-          提示：如果你還不知道 <code>bibliographic_id</code>，可以先到{' '}
-          <Link href={`/orgs/${params.orgId}/bibs`}>Bibs</Link> 查詢後複製 UUID。
+          提示：你可以在這裡用「姓名/學號」搜尋並選取借閱者，並用「書名/ISBN」搜尋並選取書目；不需要先到 Users/Bibs 頁複製 ID。
         </p>
 
         <form onSubmit={onCreateHold} className="stack" style={{ marginTop: 12 }}>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
             <label>
-              user_external_id（借閱者：學號/員編）
+              借閱者（姓名/學號/班級 搜尋後選取）
               <input
-                value={createBorrowerExternalId}
-                onChange={(e) => setCreateBorrowerExternalId(e.target.value)}
-                placeholder="例：S1130123"
+                value={createBorrowerQuery}
+                onChange={(e) => {
+                  setCreateBorrowerQuery(e.target.value);
+                  // 使用者一旦重新輸入，就清掉既有 external_id（避免「看起來像選好了，其實已不一致」）
+                  setCreateBorrowerExternalId('');
+                }}
+                placeholder="例：王小明 / S1130123 / 601"
               />
+
+              <div className="muted" style={{ marginTop: 6, fontFamily: 'var(--font-mono)' }}>
+                user_external_id={createBorrowerExternalId || '（尚未選取）'}
+              </div>
+
+              {loadingCreateBorrowerCandidates ? <div className="muted">搜尋中…</div> : null}
+              {!loadingCreateBorrowerCandidates &&
+              createBorrowerCandidates &&
+              createBorrowerCandidates.length > 0 ? (
+                <div className="callout" style={{ marginTop: 8, display: 'grid', gap: 6 }}>
+                  {createBorrowerCandidates.slice(0, 8).map((u) => (
+                    <button
+                      key={u.id}
+                      type="button"
+                      className="btnSmall"
+                      onClick={() => {
+                        setCreateBorrowerExternalId(u.external_id);
+                        setCreateBorrowerQuery(`${u.name} (${u.external_id})`);
+                        setCreateBorrowerCandidates(null);
+                      }}
+                    >
+                      {u.name} · {u.external_id} · {u.role}
+                      {u.org_unit ? ` · ${u.org_unit}` : ''}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
             </label>
 
             <label>
-              bibliographic_id（書目 UUID）
+              書目（以書名/ISBN 搜尋後選取）
               <input
-                value={createBibliographicId}
-                onChange={(e) => setCreateBibliographicId(e.target.value)}
-                placeholder="例：b_..."
+                value={createBibQuery}
+                onChange={(e) => {
+                  setCreateBibQuery(e.target.value);
+                  // 使用者一旦重新輸入，就清掉既有 bib_id（避免「看起來像選好了，其實已不一致」）
+                  setCreateBibliographicId('');
+                }}
+                placeholder="例：哈利波特 / 9789573317248"
               />
+
+              <div className="muted" style={{ marginTop: 6, fontFamily: 'var(--font-mono)' }}>
+                bibliographic_id={createBibliographicId ? `${createBibliographicId.slice(0, 8)}…` : '（尚未選取）'}
+              </div>
+
+              {loadingCreateBibCandidates ? <div className="muted">搜尋中…</div> : null}
+              {!loadingCreateBibCandidates && createBibCandidates && createBibCandidates.length > 0 ? (
+                <div className="callout" style={{ marginTop: 8, display: 'grid', gap: 6 }}>
+                  {createBibCandidates.slice(0, 8).map((b) => (
+                    <button
+                      key={b.id}
+                      type="button"
+                      className="btnSmall"
+                      onClick={() => {
+                        setCreateBibliographicId(b.id);
+                        setCreateBibQuery(b.title);
+                        setCreateBibCandidates(null);
+                      }}
+                    >
+                      {b.title}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
             </label>
 
             <label>
@@ -564,7 +735,7 @@ export default function HoldsPage({ params }: { params: { orgId: string } }) {
             </label>
           </div>
 
-          <button type="submit" disabled={creating}>
+          <button type="submit" className="btnPrimary" disabled={creating}>
             {creating ? '建立中…' : '建立 Hold'}
           </button>
         </form>
@@ -574,7 +745,7 @@ export default function HoldsPage({ params }: { params: { orgId: string } }) {
       {/* Results */}
       {/* ---------------------------- */}
       <section className="panel">
-        <h2 style={{ marginTop: 0 }}>結果</h2>
+        <SectionHeader title="結果" />
 
         {loadingHolds ? <p className="muted">載入中…</p> : null}
         {!loadingHolds && holds && holds.length === 0 ? <p className="muted">沒有符合條件的 holds。</p> : null}
@@ -634,6 +805,7 @@ export default function HoldsPage({ params }: { params: { orgId: string } }) {
                       {h.status === 'queued' || h.status === 'ready' ? (
                         <button
                           type="button"
+                          className={['btnSmall', 'btnDanger'].join(' ')}
                           onClick={() => void onCancelHold(h.id)}
                           disabled={cancellingHoldId === h.id || fulfillingHoldId === h.id}
                         >
@@ -644,6 +816,7 @@ export default function HoldsPage({ params }: { params: { orgId: string } }) {
                       {h.status === 'ready' ? (
                         <button
                           type="button"
+                          className={['btnSmall', 'btnPrimary'].join(' ')}
                           onClick={() => void onFulfillHold(h.id)}
                           disabled={fulfillingHoldId === h.id || cancellingHoldId === h.id}
                         >
@@ -657,7 +830,7 @@ export default function HoldsPage({ params }: { params: { orgId: string } }) {
             </ul>
 
             {nextCursor ? (
-              <button type="button" onClick={() => void loadMoreHolds()} disabled={loadingMore || loadingHolds}>
+              <button type="button" className="btnSmall" onClick={() => void loadMoreHolds()} disabled={loadingMore || loadingHolds}>
                 {loadingMore ? '載入中…' : '載入更多'}
               </button>
             ) : null}

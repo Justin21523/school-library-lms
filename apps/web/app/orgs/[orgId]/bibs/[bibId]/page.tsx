@@ -33,6 +33,8 @@ import type {
 } from '../../../../lib/api';
 import { TermMultiPicker, type AuthorityTermLite } from '../../../../components/authority/term-multi-picker';
 import { MarcFieldsEditor } from '../../../../components/marc/marc-fields-editor';
+import { Alert } from '../../../../components/ui/alert';
+import { PageHeader, SectionHeader } from '../../../../components/ui/page-header';
 import {
   createItem,
   getBib,
@@ -507,10 +509,7 @@ export default function BibDetailPage({ params }: { params: { orgId: string; bib
   if (!sessionReady) {
     return (
       <div className="stack">
-        <section className="panel">
-          <h1 style={{ marginTop: 0 }}>Bib Detail</h1>
-          <p className="muted">載入登入狀態中…</p>
-        </section>
+        <PageHeader title="Bib Detail" description="載入登入狀態中…" />
       </div>
     );
   }
@@ -518,26 +517,25 @@ export default function BibDetailPage({ params }: { params: { orgId: string; bib
   if (!session) {
     return (
       <div className="stack">
-        <section className="panel">
-          <h1 style={{ marginTop: 0 }}>Bib Detail</h1>
-          <p className="error">
-            這頁需要 staff 登入才能查看/管理書目與冊。請先前往{' '}
-            <Link href={`/orgs/${params.orgId}/login`}>/login</Link>。
-          </p>
-        </section>
+        <PageHeader title="Bib Detail">
+          <Alert variant="danger" title="需要登入">
+            這頁需要 staff 登入才能查看/管理書目與冊。請先前往 <Link href={`/orgs/${params.orgId}/login`}>/login</Link>。
+          </Alert>
+        </PageHeader>
       </div>
     );
   }
 
   return (
     <div className="stack">
-      <section className="panel">
-        <h1 style={{ marginTop: 0 }}>Bib Detail</h1>
-
-        <p className="muted">
-          對應 API：<code>GET/PATCH /api/v1/orgs/:orgId/bibs/:bibId</code>，以及該書目底下的冊：
-          <code>GET /api/v1/orgs/:orgId/items?bibliographic_id=</code>
-        </p>
+      <PageHeader
+        title="Bib Detail"
+        description={
+          <>
+            對應 API：<code>GET/PATCH /api/v1/orgs/:orgId/bibs/:bibId</code>，以及該書目底下的冊：<code>GET /api/v1/orgs/:orgId/items?bibliographic_id=</code>
+          </>
+        }
+      >
 
         <div className="muted" style={{ display: 'grid', gap: 4, marginTop: 8 }}>
           <div>
@@ -549,8 +547,16 @@ export default function BibDetailPage({ params }: { params: { orgId: string; bib
         </div>
 
         {loading ? <p className="muted">載入中…</p> : null}
-        {error ? <p className="error">錯誤：{error}</p> : null}
-        {success ? <p className="success">{success}</p> : null}
+        {error ? (
+          <Alert variant="danger" title="操作失敗">
+            {error}
+          </Alert>
+        ) : null}
+        {success ? (
+          <Alert variant="success" title="已完成" role="status">
+            {success}
+          </Alert>
+        ) : null}
 
         {bib ? (
           <div className="stack" style={{ marginTop: 16 }}>
@@ -564,14 +570,11 @@ export default function BibDetailPage({ params }: { params: { orgId: string; bib
             </div>
           </div>
         ) : null}
-      </section>
+      </PageHeader>
 
       {/* 更新書目（PATCH） */}
       <section className="panel">
-        <h2 style={{ marginTop: 0 }}>更新書目（PATCH）</h2>
-        <p className="muted">
-          這裡用「勾選欄位」來組 PATCH payload：沒勾選的欄位不會送出（避免誤改）。
-        </p>
+        <SectionHeader title="更新書目（PATCH）" description="這裡用「勾選欄位」來組 PATCH payload：沒勾選的欄位不會送出（避免誤改）。" />
 
         <form onSubmit={onUpdateBib} className="stack" style={{ marginTop: 12 }}>
           <label>
@@ -805,7 +808,7 @@ export default function BibDetailPage({ params }: { params: { orgId: string; bib
             />
           </label>
 
-          <button type="submit" disabled={updating}>
+          <button type="submit" className="btnPrimary" disabled={updating}>
             {updating ? '更新中…' : '送出 PATCH'}
           </button>
         </form>
@@ -813,7 +816,7 @@ export default function BibDetailPage({ params }: { params: { orgId: string; bib
 
       {/* MARC 21（編輯/匯出） */}
       <section className="panel" id="marc21">
-        <h2 style={{ marginTop: 0 }}>MARC 21（編輯/匯出）</h2>
+        <SectionHeader title="MARC 21（編輯/匯出）" />
         <p className="muted">
           對應 API：<code>GET /api/v1/orgs/:orgId/bibs/:bibId/marc</code> 與{' '}
           <code>GET/PUT /api/v1/orgs/:orgId/bibs/:bibId/marc-extras</code>
@@ -827,16 +830,16 @@ export default function BibDetailPage({ params }: { params: { orgId: string; bib
         </p>
 
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 12 }}>
-          <button type="button" onClick={() => void onGenerateMarcJson()} disabled={loadingMarc}>
+          <button type="button" className="btnPrimary" onClick={() => void onGenerateMarcJson()} disabled={loadingMarc}>
             {loadingMarc ? '產生中…' : '產生 MARC(JSON)'}
           </button>
-          <button type="button" onClick={() => void onDownloadMarcJson()}>
+          <button type="button" className="btnSmall" onClick={() => void onDownloadMarcJson()}>
             下載 JSON
           </button>
-          <button type="button" onClick={() => void onDownloadMarcXml()}>
+          <button type="button" className="btnSmall" onClick={() => void onDownloadMarcXml()}>
             下載 MARCXML
           </button>
-          <button type="button" onClick={() => void onDownloadMarcMrc()}>
+          <button type="button" className="btnSmall" onClick={() => void onDownloadMarcMrc()}>
             下載 .mrc
           </button>
         </div>
@@ -847,10 +850,10 @@ export default function BibDetailPage({ params }: { params: { orgId: string; bib
         </label>
 
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 12 }}>
-          <button type="button" onClick={() => void onLoadMarcExtras()} disabled={loadingMarcExtras}>
+          <button type="button" className="btnSmall" onClick={() => void onLoadMarcExtras()} disabled={loadingMarcExtras}>
             {loadingMarcExtras ? '載入中…' : '載入 marc_extras'}
           </button>
-          <button type="button" onClick={() => void onSaveMarcExtras()} disabled={savingMarcExtras}>
+          <button type="button" className="btnPrimary" onClick={() => void onSaveMarcExtras()} disabled={savingMarcExtras}>
             {savingMarcExtras ? '儲存中…' : '儲存 marc_extras'}
           </button>
         </div>
@@ -887,7 +890,7 @@ export default function BibDetailPage({ params }: { params: { orgId: string; bib
 
       {/* 新增冊 */}
       <section className="panel">
-        <h2 style={{ marginTop: 0 }}>新增冊（Item Copy）</h2>
+        <SectionHeader title="新增冊（Item Copy）" />
         <p className="muted">
           對應 API：<code>POST /api/v1/orgs/:orgId/bibs/:bibId/items</code>（location 必須屬於同 org）。
         </p>
@@ -940,7 +943,7 @@ export default function BibDetailPage({ params }: { params: { orgId: string; bib
             <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={3} />
           </label>
 
-          <button type="submit" disabled={creatingItem}>
+          <button type="submit" className="btnPrimary" disabled={creatingItem}>
             {creatingItem ? '新增中…' : '新增冊'}
           </button>
         </form>
@@ -948,7 +951,7 @@ export default function BibDetailPage({ params }: { params: { orgId: string; bib
 
       {/* items 列表 */}
       <section className="panel">
-        <h2 style={{ marginTop: 0 }}>冊列表（此書目底下）</h2>
+        <SectionHeader title="冊列表（此書目底下）" />
 
         {items && items.length === 0 ? <p className="muted">此書目目前沒有冊。</p> : null}
 
@@ -972,6 +975,7 @@ export default function BibDetailPage({ params }: { params: { orgId: string; bib
             {itemsNextCursor ? (
               <button
                 type="button"
+                className="btnSmall"
                 onClick={() => void loadMoreItems()}
                 disabled={loadingMoreItems || loading}
               >

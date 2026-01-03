@@ -29,6 +29,9 @@ import type { Location } from '../../../lib/api';
 import { createLocation, listLocations, updateLocation } from '../../../lib/api';
 import { formatErrorMessage } from '../../../lib/error';
 import { useStaffSession } from '../../../lib/use-staff-session';
+import { Alert } from '../../../components/ui/alert';
+import { Field, Form, FormActions, FormSection } from '../../../components/ui/form';
+import { PageHeader, SectionHeader } from '../../../components/ui/page-header';
 
 export default function LocationsPage({ params }: { params: { orgId: string } }) {
   // staff session：建立 location（POST）受 StaffAuthGuard 保護；本頁直接要求先登入避免 401。
@@ -237,10 +240,7 @@ export default function LocationsPage({ params }: { params: { orgId: string } })
   if (!sessionReady) {
     return (
       <div className="stack">
-        <section className="panel">
-          <h1 style={{ marginTop: 0 }}>Locations</h1>
-          <p className="muted">載入登入狀態中…</p>
-        </section>
+        <PageHeader title="Locations" description="載入登入狀態中…" />
       </div>
     );
   }
@@ -248,60 +248,79 @@ export default function LocationsPage({ params }: { params: { orgId: string } })
   if (!session) {
     return (
       <div className="stack">
-        <section className="panel">
-          <h1 style={{ marginTop: 0 }}>Locations</h1>
-          <p className="error">
-            這頁需要 staff 登入才能管理 locations。請先前往{' '}
-            <Link href={`/orgs/${params.orgId}/login`}>/login</Link>。
-          </p>
-        </section>
+        <PageHeader title="Locations">
+          <Alert variant="danger" title="需要登入">
+            這頁需要 staff 登入才能管理 locations。請先前往 <Link href={`/orgs/${params.orgId}/login`}>/login</Link>。
+          </Alert>
+        </PageHeader>
       </div>
     );
   }
 
   return (
     <div className="stack">
+      <PageHeader
+        title="Locations"
+        description={
+          <>
+            對應 API：<code>GET/POST/PATCH /api/v1/orgs/:orgId/locations</code>
+          </>
+        }
+      >
+        {error ? (
+          <Alert variant="danger" title="操作失敗">
+            {error}
+          </Alert>
+        ) : null}
+
+        <Form onSubmit={onCreate}>
+          <FormSection title="建立 Location" description="用於冊的館藏地點、預約取書地點、盤點範圍。">
+            <div className="grid2">
+              <Field label="code（英數/dash；同 org 內唯一）" htmlFor="create_location_code">
+                <input
+                  id="create_location_code"
+                  value={code}
+                  onChange={(e) => setCode(e.target.value)}
+                  placeholder="例：MAIN 或 main"
+                />
+              </Field>
+
+              <Field label="name（顯示名稱）" htmlFor="create_location_name">
+                <input
+                  id="create_location_name"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  placeholder="例：圖書館主館"
+                />
+              </Field>
+            </div>
+
+            <div className="grid2">
+              <Field label="area（選填）" htmlFor="create_location_area">
+                <input id="create_location_area" value={area} onChange={(e) => setArea(e.target.value)} placeholder="例：小說區" />
+              </Field>
+
+              <Field label="shelf_code（選填）" htmlFor="create_location_shelf">
+                <input
+                  id="create_location_shelf"
+                  value={shelfCode}
+                  onChange={(e) => setShelfCode(e.target.value)}
+                  placeholder="例：A-03"
+                />
+              </Field>
+            </div>
+
+            <FormActions>
+              <button type="submit" className="btnPrimary" disabled={creating}>
+                {creating ? '建立中…' : '建立 Location'}
+              </button>
+            </FormActions>
+          </FormSection>
+        </Form>
+      </PageHeader>
+
       <section className="panel">
-        <h1 style={{ marginTop: 0 }}>Locations</h1>
-        <p className="muted">
-          對應 API：<code>GET/POST/PATCH /api/v1/orgs/:orgId/locations</code>
-        </p>
-
-        <form onSubmit={onCreate} className="stack" style={{ marginTop: 16 }}>
-          <label>
-            code（英數/dash；同 org 內唯一）
-            <input value={code} onChange={(e) => setCode(e.target.value)} placeholder="例：MAIN 或 main" />
-          </label>
-
-          <label>
-            name（顯示名稱）
-            <input value={name} onChange={(e) => setName(e.target.value)} placeholder="例：圖書館主館" />
-          </label>
-
-          <label>
-            area（選填）
-            <input value={area} onChange={(e) => setArea(e.target.value)} placeholder="例：小說區" />
-          </label>
-
-          <label>
-            shelf_code（選填）
-            <input
-              value={shelfCode}
-              onChange={(e) => setShelfCode(e.target.value)}
-              placeholder="例：A-03"
-            />
-          </label>
-
-          <button type="submit" disabled={creating}>
-            {creating ? '建立中…' : '建立 Location'}
-          </button>
-        </form>
-
-        {error ? <p className="error">錯誤：{error}</p> : null}
-      </section>
-
-      <section className="panel">
-        <h2 style={{ marginTop: 0 }}>列表</h2>
+        <SectionHeader title="列表" />
         {loading ? <p className="muted">載入中…</p> : null}
 
         {!loading && locations && locations.length === 0 ? (
@@ -332,11 +351,12 @@ export default function LocationsPage({ params }: { params: { orgId: string } })
                     </div>
 
                     <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-                      <button type="button" onClick={() => startEdit(loc)} disabled={isUpdating || isEditing}>
+                      <button type="button" className="btnSmall" onClick={() => startEdit(loc)} disabled={isUpdating || isEditing}>
                         編輯
                       </button>
                       <button
                         type="button"
+                        className={['btnSmall', loc.status === 'active' ? 'btnDanger' : 'btnPrimary'].join(' ')}
                         onClick={() => {
                           void toggleStatus(loc);
                         }}
@@ -384,10 +404,10 @@ export default function LocationsPage({ params }: { params: { orgId: string } })
                         </label>
 
                         <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-                          <button type="submit" disabled={updatingId === loc.id}>
+                          <button type="submit" className="btnPrimary" disabled={updatingId === loc.id}>
                             {updatingId === loc.id ? '儲存中…' : '儲存'}
                           </button>
-                          <button type="button" onClick={cancelEdit} disabled={updatingId === loc.id}>
+                          <button type="button" className="btnSmall" onClick={cancelEdit} disabled={updatingId === loc.id}>
                             取消
                           </button>
                         </div>

@@ -21,9 +21,11 @@
    */
 
   /* 色彩（Light） */
-  --bg: #f7f8fb;
+  /* 你希望「白底 + 藍色主色」的清淡風格：把背景收斂成純白，讓卡片/邊框/陰影做層次 */
+  --bg: #ffffff;
   --panel: #ffffff;
-  --panelMuted: #f2f4f7;
+  /* panelMuted：用非常淡的藍白作為區塊底色（callout/code/details summary） */
+  --panelMuted: #f3f7ff;
   --text: #101828;
   --muted: #475467;
   --border: rgba(16, 24, 40, 0.14);
@@ -34,35 +36,74 @@
   --overlay: rgba(16, 24, 40, 0.55);
   --placeholder: rgba(71, 84, 103, 0.78);
 
+  /* CTA buttons（Primary/Danger）：讓「主要動作」有明確視覺層級 */
+  --primaryBg: #175cd3;
+  --primaryHover: #1554c0;
+  --primaryActive: #134aa9;
+  --primaryText: #ffffff;
+  --primaryBorder: rgba(23, 92, 211, 0.55);
+
+  --dangerSolid: #d92d20;
+  --dangerHover: #b42318;
+  --dangerActive: #912018;
+  --dangerText: #ffffff;
+  --dangerBorderStrong: rgba(217, 45, 32, 0.55);
+
+  /* Alerts（訊息提示） */
+  --infoBg: rgba(23, 92, 211, 0.08);
+  --infoBorder: rgba(23, 92, 211, 0.28);
+  --successBg: rgba(3, 152, 85, 0.08);
+  --successBorder: rgba(3, 152, 85, 0.28);
+  --warnBg: rgba(245, 158, 11, 0.12);
+  --warnBorder: rgba(245, 158, 11, 0.32);
+  --dangerBg: rgba(217, 45, 32, 0.08);
+  --dangerBorder: rgba(217, 45, 32, 0.28);
+
+  /* Skeleton（載入骨架） */
+  --skeletonBase: rgba(16, 24, 40, 0.08);
+  --skeletonHighlight: rgba(16, 24, 40, 0.14);
+
   /* 互動/狀態色（Light） */
   --focus: rgba(23, 92, 211, 0.35);
-  --hover: rgba(16, 24, 40, 0.06);
-  --active: rgba(16, 24, 40, 0.1);
+  /* hover/active：偏藍的互動底色，讓整體更「藍白」而不是灰階 */
+  --hover: rgba(23, 92, 211, 0.06);
+  --active: rgba(23, 92, 211, 0.12);
+
+  /* Table stripe：提升「寬表格」的可掃描性（DataTable/legacy table 共用） */
+  --tableStripe: rgba(23, 92, 211, 0.02);
 
   /* Console（topbar/sidebar） */
-  --topbar-h: 56px;
-  --topbar-bg: rgba(255, 255, 255, 0.82);
-  --sidebar-bg: rgba(255, 255, 255, 0.92);
+  --topbar-h: 64px;
+  --topbar-bg: rgba(248, 251, 255, 0.92);
+  --sidebar-bg: rgba(248, 251, 255, 0.94);
   --sidebar-active: rgba(23, 92, 211, 0.12);
 
   /* 版面設定 */
-  --max-width: 1100px;
+  --max-width: 1200px;
   --console-max-width: 1400px;
 
   /* 造型 */
-  --radius: 12px;
+  --radius: 14px;
   --shadow-sm: 0 4px 16px rgba(16, 24, 40, 0.08);
   --shadow-md: 0 10px 30px rgba(16, 24, 40, 0.14);
+  --shadow-btn: 0 10px 22px rgba(16, 24, 40, 0.12);
+  --shadow-btn-hover: 0 14px 30px rgba(16, 24, 40, 0.18);
 
   /* Typography（字體 / 字級 / 行距） */
-  --font-sans: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Noto Sans TC',
-    'PingFang TC', 'Microsoft JhengHei', Arial, sans-serif;
+  /* 字體策略（不依賴外網下載）：
+   * - 先用系統字體（跨平台最穩）
+   * - 再依平台補上常見繁中無襯線（mac: PingFang / win: JhengHei / linux: Noto/Source Han）
+   * - 最後才是 Inter/Roboto（可能不存在，但存在時數字/英文字形較一致） */
+  --font-sans: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang TC',
+    'Microsoft JhengHei', 'Noto Sans TC', 'Noto Sans CJK TC', 'Source Han Sans TC', 'Heiti TC', 'Inter', Roboto,
+    'Helvetica Neue', Arial, sans-serif;
   --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
   --text-xs: 12px;
-  --text-sm: 13px;
-  --text-md: 15px;
-  --text-lg: 17px;
-  --leading: 1.55;
+  --text-sm: 14px;
+  --text-md: 16px;
+  --text-lg: 18px;
+  --text-xl: 20px;
+  --leading: 1.6;
 
   /* Motion（動畫/轉場） */
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
@@ -75,6 +116,21 @@
 
 html {
   scroll-behavior: smooth;
+}
+
+/* 尊重使用者的可及性偏好：減少動畫/轉場（避免暈眩） */
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
 }
 
 /* 跟隨系統：dark mode（當使用者沒有手動指定 data-theme 時） */
@@ -93,9 +149,35 @@ html {
     --overlay: rgba(0, 0, 0, 0.55);
     --placeholder: rgba(169, 182, 214, 0.78);
 
+    --primaryBg: #7bb1ff;
+    --primaryHover: #6aa7ff;
+    --primaryActive: #5b9cff;
+    --primaryText: #0b1020;
+    --primaryBorder: rgba(123, 177, 255, 0.55);
+
+    --dangerSolid: #ff6b6b;
+    --dangerHover: #ff5c5c;
+    --dangerActive: #ff4a4a;
+    --dangerText: #0b1020;
+    --dangerBorderStrong: rgba(255, 107, 107, 0.5);
+
+    --infoBg: rgba(123, 177, 255, 0.14);
+    --infoBorder: rgba(123, 177, 255, 0.3);
+    --successBg: rgba(76, 217, 100, 0.12);
+    --successBorder: rgba(76, 217, 100, 0.28);
+    --warnBg: rgba(245, 158, 11, 0.14);
+    --warnBorder: rgba(245, 158, 11, 0.32);
+    --dangerBg: rgba(255, 107, 107, 0.12);
+    --dangerBorder: rgba(255, 107, 107, 0.28);
+
+    --skeletonBase: rgba(255, 255, 255, 0.06);
+    --skeletonHighlight: rgba(255, 255, 255, 0.14);
+
     --focus: rgba(123, 177, 255, 0.35);
     --hover: rgba(255, 255, 255, 0.08);
     --active: rgba(255, 255, 255, 0.12);
+
+    --tableStripe: rgba(255, 255, 255, 0.03);
 
     --topbar-bg: rgba(17, 26, 51, 0.6);
     --sidebar-bg: rgba(17, 26, 51, 0.75);
@@ -126,9 +208,35 @@ html {
   --overlay: rgba(0, 0, 0, 0.55);
   --placeholder: rgba(169, 182, 214, 0.78);
 
+  --primaryBg: #7bb1ff;
+  --primaryHover: #6aa7ff;
+  --primaryActive: #5b9cff;
+  --primaryText: #0b1020;
+  --primaryBorder: rgba(123, 177, 255, 0.55);
+
+  --dangerSolid: #ff6b6b;
+  --dangerHover: #ff5c5c;
+  --dangerActive: #ff4a4a;
+  --dangerText: #0b1020;
+  --dangerBorderStrong: rgba(255, 107, 107, 0.5);
+
+  --infoBg: rgba(123, 177, 255, 0.14);
+  --infoBorder: rgba(123, 177, 255, 0.3);
+  --successBg: rgba(76, 217, 100, 0.12);
+  --successBorder: rgba(76, 217, 100, 0.28);
+  --warnBg: rgba(245, 158, 11, 0.14);
+  --warnBorder: rgba(245, 158, 11, 0.32);
+  --dangerBg: rgba(255, 107, 107, 0.12);
+  --dangerBorder: rgba(255, 107, 107, 0.28);
+
+  --skeletonBase: rgba(255, 255, 255, 0.06);
+  --skeletonHighlight: rgba(255, 255, 255, 0.14);
+
   --focus: rgba(123, 177, 255, 0.35);
   --hover: rgba(255, 255, 255, 0.08);
   --active: rgba(255, 255, 255, 0.12);
+
+  --tableStripe: rgba(255, 255, 255, 0.03);
 
   --topbar-bg: rgba(17, 26, 51, 0.6);
   --sidebar-bg: rgba(17, 26, 51, 0.75);
@@ -136,8 +244,35 @@ html {
 
   --shadow-sm: 0 6px 18px rgba(0, 0, 0, 0.28);
   --shadow-md: 0 14px 40px rgba(0, 0, 0, 0.38);
+  --shadow-btn: 0 12px 26px rgba(0, 0, 0, 0.4);
+  --shadow-btn-hover: 0 16px 34px rgba(0, 0, 0, 0.5);
 
   color-scheme: dark;
+}
+
+/* UI scale（字體大小）：用 data attribute 做全站一致切換 */
+:root[data-ui-scale='sm'] {
+  --text-xs: 11px;
+  --text-sm: 13px;
+  --text-md: 15px;
+  --text-lg: 17px;
+  --text-xl: 19px;
+}
+
+:root[data-ui-scale='lg'] {
+  --text-xs: 13px;
+  --text-sm: 15px;
+  --text-md: 17px;
+  --text-lg: 19px;
+  --text-xl: 21px;
+}
+
+:root[data-ui-scale='xl'] {
+  --text-xs: 14px;
+  --text-sm: 16px;
+  --text-md: 18px;
+  --text-lg: 20px;
+  --text-xl: 22px;
 }
 
 /*
@@ -214,7 +349,7 @@ a:focus-visible {
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 18px;
+  padding: 20px;
   box-shadow: var(--shadow-sm);
   transition: background-color var(--t-med) var(--ease-out), border-color var(--t-med) var(--ease-out),
     box-shadow var(--t-med) var(--ease-out);
@@ -241,6 +376,79 @@ a:focus-visible {
   gap: 10px;
   align-items: center;
   flex-wrap: wrap;
+}
+
+/* PageHeader / SectionHeader（統一頁首、段落標題與字級階層） */
+.pageHeader {
+  display: grid;
+  gap: 10px;
+  animation: pageIn var(--t-med) var(--ease-out);
+}
+
+.pageHeaderTitleRow {
+  display: flex;
+  gap: 12px;
+  align-items: baseline;
+  justify-content: space-between;
+  flex-wrap: wrap;
+}
+
+.pageTitle {
+  margin: 0;
+  font-size: clamp(20px, 2.2vw, 28px);
+  font-weight: 900;
+  letter-spacing: -0.2px;
+}
+
+.pageDescription {
+  color: var(--muted);
+  font-size: var(--text-md);
+  line-height: 1.4;
+}
+
+.pageHeaderActions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.pageHeaderBody {
+  display: grid;
+  gap: 12px;
+}
+
+.sectionHeader {
+  display: grid;
+  gap: 6px;
+}
+
+.sectionHeaderTitleRow {
+  display: flex;
+  gap: 12px;
+  align-items: baseline;
+  justify-content: space-between;
+  flex-wrap: wrap;
+}
+
+.sectionTitle {
+  margin: 0;
+  font-size: var(--text-lg);
+  font-weight: 850;
+  letter-spacing: -0.1px;
+}
+
+.sectionDescription {
+  color: var(--muted);
+  font-size: var(--text-sm);
+  line-height: 1.45;
+}
+
+.sectionHeaderActions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items: center;
 }
 
 /* 常用排版：表單欄位網格（避免每頁都寫 inline style） */
@@ -285,13 +493,22 @@ a:focus-visible {
   transform: translateY(-1px);
 }
 
+.card.card--warn {
+  border-color: var(--warnBorder);
+}
+
+.card.card--warn .cardIcon {
+  border-color: var(--warnBorder);
+  background: var(--warnBg);
+}
+
 .cardTitle {
   font-weight: 800;
 }
 
 .cardMeta {
   color: var(--muted);
-  font-size: 13px;
+  font-size: var(--text-sm);
   line-height: 1.3;
 }
 
@@ -299,6 +516,104 @@ a:focus-visible {
   display: flex;
   gap: 10px;
   flex-wrap: wrap;
+}
+
+.cardHeader {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.cardIcon {
+  width: 40px;
+  height: 40px;
+  border-radius: 14px;
+  border: 1px solid var(--border);
+  background: var(--panelMuted);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Nav tiles：比 card 更「導覽導向」（整塊可點，適合做 Index / Hub page） */
+.tileGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 12px;
+}
+
+.navTile {
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 14px;
+  background: linear-gradient(180deg, var(--panel) 0%, rgba(255, 255, 255, 0) 100%);
+  box-shadow: var(--shadow-sm);
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  color: var(--text);
+  text-decoration: none;
+  transition: transform var(--t-med) var(--ease-out), box-shadow var(--t-med) var(--ease-out),
+    border-color var(--t-med) var(--ease-out), background-color var(--t-med) var(--ease-out);
+}
+
+:root[data-theme='dark'] .navTile {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.05) 0%, rgba(255, 255, 255, 0) 100%);
+}
+
+.navTile:hover {
+  border-color: var(--borderStrong);
+  box-shadow: var(--shadow-md);
+  transform: translateY(-1px);
+  text-decoration: none;
+}
+
+.navTile:active {
+  transform: translateY(0);
+}
+
+.navTile:focus-visible {
+  outline: 0;
+  box-shadow: 0 0 0 4px var(--focus), var(--shadow-md);
+  border-color: var(--borderStrong);
+}
+
+.navTileIcon {
+  width: 44px;
+  height: 44px;
+  border-radius: 16px;
+  border: 1px solid var(--border);
+  background: var(--panelMuted);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+}
+
+.navTileBody {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  flex: 1;
+}
+
+.navTileTitle {
+  font-weight: 900;
+  letter-spacing: -0.1px;
+}
+
+.navTileDescription {
+  color: var(--muted);
+  font-size: var(--text-sm);
+  line-height: 1.35;
+}
+
+.navTileRight {
+  color: var(--muted);
+  font-size: var(--text-xs);
+  line-height: 1.2;
+  text-align: right;
+  flex: none;
 }
 
 @media (max-width: 920px) {
@@ -365,7 +680,7 @@ a:focus-visible {
 .topbarInner {
   max-width: var(--console-max-width);
   margin: 0 auto;
-  padding: 10px 16px;
+  padding: 12px 18px;
   display: flex;
   gap: 12px;
   align-items: center;
@@ -374,7 +689,18 @@ a:focus-visible {
 }
 
 .topbarTitle {
-  font-weight: 700;
+  font-weight: 850;
+}
+
+.brandMark {
+  width: 34px;
+  height: 34px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: var(--panelMuted);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .topbarLeft {
@@ -598,6 +924,56 @@ a:focus-visible {
   background: var(--panelMuted);
 }
 
+.sidebarStatus {
+  display: grid;
+  gap: 12px;
+}
+
+.sidebarStatusSection {
+  display: grid;
+  gap: 8px;
+}
+
+.sidebarStatusHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.sidebarStatusTitle {
+  font-weight: 800;
+  font-size: var(--text-sm);
+}
+
+.statusPill {
+  font-size: 11px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.statusPill--ok {
+  border-color: var(--successBorder);
+  background: var(--successBg);
+  color: var(--success);
+}
+
+.statusPill--warn {
+  border-color: var(--warnBorder);
+  background: var(--warnBg);
+  color: #b45309;
+}
+
+.statusPill--danger {
+  border-color: var(--dangerBorder);
+  background: var(--dangerBg);
+  color: var(--danger);
+}
+
 .sidebarResizer {
   width: 6px;
   margin: 0 10px;
@@ -661,6 +1037,78 @@ a:focus-visible {
   color: var(--success);
 }
 
+/* Alert（表單驗證/操作結果提示） */
+.alert {
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 12px 14px;
+  background: var(--panelMuted);
+  display: grid;
+  gap: 6px;
+}
+
+.alertTitle {
+  font-weight: 800;
+}
+
+.alertBody {
+  color: var(--muted);
+  font-size: var(--text-sm);
+}
+
+.alert--info {
+  border-color: var(--infoBorder);
+  background: var(--infoBg);
+}
+
+.alert--success {
+  border-color: var(--successBorder);
+  background: var(--successBg);
+}
+
+.alert--warning {
+  border-color: var(--warnBorder);
+  background: var(--warnBg);
+}
+
+.alert--danger {
+  border-color: var(--dangerBorder);
+  background: var(--dangerBg);
+}
+
+/* Badge（狀態提示：比 pill 更緊湊） */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--panelMuted);
+  font-size: var(--text-xs);
+  line-height: 1.2;
+}
+
+.badge--danger {
+  border-color: var(--dangerBorder);
+  background: var(--dangerBg);
+}
+
+.badge--success {
+  border-color: var(--successBorder);
+  background: var(--successBg);
+}
+
+.badge--info {
+  border-color: var(--infoBorder);
+  background: var(--infoBg);
+}
+
+.badge--warning {
+  border-color: var(--warnBorder);
+  background: var(--warnBg);
+}
+
 /* callout：用於「重要提示/警告」的區塊（避免每頁都重複寫 inline style） */
 .callout {
   border: 1px solid var(--border);
@@ -683,13 +1131,35 @@ a:focus-visible {
   border-radius: 999px;
   border: 1px solid var(--border);
   background: var(--panelMuted);
-  font-size: 13px;
+  font-size: var(--text-sm);
   line-height: 1.2;
 }
 
 .pill button {
   padding: 4px 8px;
   border-radius: 999px;
+}
+
+/* Skeleton（載入骨架） */
+.skeleton {
+  border-radius: 12px;
+  background: linear-gradient(
+    90deg,
+    var(--skeletonBase) 0%,
+    var(--skeletonHighlight) 50%,
+    var(--skeletonBase) 100%
+  );
+  background-size: 200% 100%;
+  animation: skeletonShimmer 1.1s linear infinite;
+}
+
+@keyframes skeletonShimmer {
+  from {
+    background-position: 200% 0;
+  }
+  to {
+    background-position: -200% 0;
+  }
 }
 
 /* 表單：先用最小樣式讓 MVP 可操作 */
@@ -707,8 +1177,35 @@ textarea {
   border: 1px solid var(--border);
   background: var(--panelMuted);
   color: var(--text);
+  font-size: var(--text-md);
+  font-family: inherit;
+  font-weight: inherit;
+  line-height: 1.35;
   transition: background-color var(--t-fast) var(--ease-in-out), border-color var(--t-fast) var(--ease-in-out),
     box-shadow var(--t-fast) var(--ease-in-out);
+}
+
+/**
+ * Native <select> dropdown（重要：可讀性）
+ *
+ * 問題背景：
+ * - 在某些瀏覽器/OS 組合下，<select> 的 dropdown（option list）會固定是「白底」
+ * - 但我們在 dark theme 會把 select 的文字設成亮色（--text），導致 option 文字也可能繼承成亮色
+ *   → 變成「白底 + 白字」完全看不到（你目前回報的問題）
+ *
+ * 解法策略（先求穩）：
+ * - option 一律強制成「白底 + 深色字」→ 確保不會白底白字
+ * - 這個選擇會讓 dark mode 的 dropdown 看起來偏「系統樣式」，但可讀性是第一優先
+ * - 後續若要完全一致的深色 dropdown，可逐步把關鍵 select 換成自製 Listbox（我們已有 menuPopup 的基礎樣式）
+ */
+select {
+  color-scheme: light;
+}
+
+select option,
+select optgroup {
+  background-color: #ffffff;
+  color: #101828;
 }
 
 input::placeholder,
@@ -722,6 +1219,8 @@ button {
   border: 1px solid var(--border);
   background: var(--panelMuted);
   color: var(--text);
+  font-family: inherit;
+  font-weight: 700;
   cursor: pointer;
   transition: background-color var(--t-fast) var(--ease-in-out), border-color var(--t-fast) var(--ease-in-out),
     transform var(--t-fast) var(--ease-in-out);
@@ -735,6 +1234,55 @@ button:hover {
 button:active {
   background: var(--active);
   transform: translateY(0);
+}
+
+/* Button variants：先用 class 覆蓋，避免引入 UI library。 */
+.btnPrimary {
+  border-color: var(--primaryBorder);
+  background: var(--primaryBg);
+  color: var(--primaryText);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  box-shadow: var(--shadow-btn);
+}
+.btnPrimary:hover {
+  border-color: var(--primaryBorder);
+  background: var(--primaryHover);
+  box-shadow: var(--shadow-btn-hover);
+  text-decoration: none;
+}
+.btnPrimary:active {
+  background: var(--primaryActive);
+  box-shadow: var(--shadow-btn);
+}
+
+.btnDanger {
+  border-color: var(--dangerBorderStrong);
+  background: var(--dangerSolid);
+  color: var(--dangerText);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  box-shadow: var(--shadow-btn);
+}
+.btnDanger:hover {
+  border-color: var(--dangerBorderStrong);
+  background: var(--dangerHover);
+  box-shadow: var(--shadow-btn-hover);
+  text-decoration: none;
+}
+.btnDanger:active {
+  background: var(--dangerActive);
+  box-shadow: var(--shadow-btn);
+}
+
+.divider {
+  border: 0;
+  border-top: 1px solid var(--border);
+  margin: 16px 0;
 }
 
 /* 避免「功能性按鈕」位移造成 jitter：這些元件的 hover 已有足夠 cue */
@@ -757,6 +1305,236 @@ textarea:disabled {
   cursor: not-allowed;
 }
 
+/* Form container（統一表單段落/驗證/錯誤提示） */
+.form {
+  display: grid;
+  gap: 12px;
+}
+
+.formSection {
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 14px;
+  background: var(--panel);
+  display: grid;
+  gap: 12px;
+}
+
+.formSectionHeader {
+  display: grid;
+  gap: 4px;
+}
+
+.formSectionTitle {
+  font-weight: 900;
+}
+
+.formSectionDescription {
+  color: var(--muted);
+  font-size: var(--text-sm);
+}
+
+.field {
+  display: grid;
+  gap: 6px;
+}
+
+.field--narrow {
+  max-width: 260px;
+}
+
+.fieldLabel {
+  font-size: var(--text-sm);
+  font-weight: 700;
+}
+
+.fieldHint {
+  color: var(--muted);
+  font-size: var(--text-xs);
+  line-height: 1.35;
+}
+
+.fieldError {
+  color: var(--danger);
+  font-size: var(--text-xs);
+  line-height: 1.35;
+}
+
+.formActions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+/* Data table（列表/表格統一） */
+.dataTable {
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  overflow: hidden;
+  background: var(--panel);
+}
+
+.dataTableScroller {
+  overflow: auto;
+}
+
+.dataTable table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.dataTable th,
+.dataTable td {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+  font-variant-numeric: tabular-nums;
+}
+
+.dataTable th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--panelMuted);
+  color: var(--muted);
+  font-size: var(--text-xs);
+  letter-spacing: 0.2px;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.dataTable td {
+  font-size: var(--text-sm);
+}
+
+.dataTable tbody tr:nth-child(even) td {
+  background: var(--tableStripe);
+}
+
+.dataTable tbody tr:hover td {
+  background: var(--hover);
+}
+
+.dataTable--compact th,
+.dataTable--compact td {
+  padding: 8px 10px;
+}
+
+.dataTable--compact td {
+  font-size: 13px;
+}
+
+.dataTable--compact th {
+  font-size: 11px;
+}
+
+.dataTable--rowClickable tbody tr {
+  cursor: pointer;
+}
+
+.dataTable--rowClickable tbody tr:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+
+.dataTableActionsHeader {
+  position: sticky;
+  right: 0;
+  z-index: 3;
+  background: var(--panelMuted);
+  border-left: 1px solid var(--border);
+}
+
+.dataTableActionsCell {
+  position: sticky;
+  right: 0;
+  background: var(--panel);
+  border-left: 1px solid var(--border);
+}
+
+/* sticky actions 欄位要跟著 zebra/hover 走，不然會露出底色 */
+.dataTable tbody tr:nth-child(even) td.dataTableActionsCell {
+  background: var(--tableStripe);
+}
+
+.dataTable tbody tr:hover td.dataTableActionsCell {
+  background: var(--hover);
+}
+
+.thButton {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: inherit;
+  letter-spacing: inherit;
+}
+
+.thButton:hover,
+.thButton:active {
+  background: transparent;
+  transform: none;
+}
+
+.sortIcon {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.cellRight {
+  text-align: right;
+}
+.cellCenter {
+  text-align: center;
+}
+
+/* Pagination（cursor-based） */
+.paginationBar {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  margin-top: 12px;
+}
+
+.paginationMeta {
+  color: var(--muted);
+  font-size: var(--text-sm);
+}
+
+/* Empty state */
+.emptyState {
+  border: 1px dashed var(--border);
+  border-radius: 14px;
+  padding: 18px;
+  background: var(--panel);
+  display: grid;
+  gap: 8px;
+  place-items: start;
+}
+
+.emptyStateTitle {
+  font-weight: 900;
+}
+
+.emptyStateDescription {
+  color: var(--muted);
+  font-size: var(--text-sm);
+}
+
+.emptyStateActions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 4px;
+}
+
 button:focus-visible,
 input:focus-visible,
 select:focus-visible,
@@ -768,9 +1546,75 @@ textarea:focus-visible {
 
 /* 小尺寸按鈕：用於「快捷新增」「展開/收合」這類不該佔太多版面的控件 */
 .btnSmall {
-  padding: 6px 10px;
+  padding: 8px 12px;
   border-radius: 999px;
-  font-size: 13px;
+  font-size: var(--text-sm);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+/* Next.js Link（<a>）想呈現成 button 時：直接套用 btnSmall */
+a.btnSmall {
+  border: 1px solid var(--border);
+  background: var(--panelMuted);
+  color: var(--text);
+  font-weight: 700;
+  text-decoration: none;
+  cursor: pointer;
+  transition: background-color var(--t-fast) var(--ease-in-out), border-color var(--t-fast) var(--ease-in-out),
+    transform var(--t-fast) var(--ease-in-out);
+}
+
+a.btnSmall:hover {
+  background: var(--hover);
+  text-decoration: none;
+  transform: translateY(-1px);
+}
+
+a.btnSmall:active {
+  background: var(--active);
+  transform: translateY(0);
+}
+
+a.btnSmall:focus-visible {
+  outline: 0;
+  box-shadow: 0 0 0 4px var(--focus);
+  border-color: var(--borderStrong);
+}
+
+/* a.btnSmall + variant：讓 Link 也能呈現 primary/danger（避免被 a.btnSmall 覆蓋成灰底） */
+a.btnSmall.btnPrimary {
+  border-color: var(--primaryBorder);
+  background: var(--primaryBg);
+  color: var(--primaryText);
+  box-shadow: var(--shadow-btn);
+}
+a.btnSmall.btnPrimary:hover {
+  border-color: var(--primaryBorder);
+  background: var(--primaryHover);
+  box-shadow: var(--shadow-btn-hover);
+}
+a.btnSmall.btnPrimary:active {
+  background: var(--primaryActive);
+  box-shadow: var(--shadow-btn);
+}
+
+a.btnSmall.btnDanger {
+  border-color: var(--dangerBorderStrong);
+  background: var(--dangerSolid);
+  color: var(--dangerText);
+  box-shadow: var(--shadow-btn);
+}
+a.btnSmall.btnDanger:hover {
+  border-color: var(--dangerBorderStrong);
+  background: var(--dangerHover);
+  box-shadow: var(--shadow-btn-hover);
+}
+a.btnSmall.btnDanger:active {
+  background: var(--dangerActive);
+  box-shadow: var(--shadow-btn);
 }
 
 /* 文字按鈕：看起來像 link，適合 breadcrumbs/在列表中點選 */
@@ -806,6 +1650,23 @@ textarea:focus-visible {
 .menuItem {
   width: 100%;
   text-align: left;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.menuItem[data-selected='true'] {
+  border-color: var(--borderStrong);
+  background: var(--sidebar-active);
+}
+
+.menuItemIcon {
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.9;
 }
 
 .menuItemLink {
@@ -905,6 +1766,17 @@ textarea:focus-visible {
   }
 }
 
+@keyframes pageIn {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 @keyframes popIn {
   from {
     opacity: 0;
@@ -955,6 +1827,7 @@ textarea:focus-visible {
   }
   .topbarRight {
     min-width: 0;
+    flex-wrap: wrap;
   }
   .topbarSearch {
     grid-template-columns: 90px 1fr auto;

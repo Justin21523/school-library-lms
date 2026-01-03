@@ -18,20 +18,30 @@ import type { ReactNode } from 'react';
 
 import Link from 'next/link';
 
+import { PreferencesMenu } from '../components/layout/preferences-menu';
+
 export default function OpacLayout({ children }: { children: ReactNode }) {
   return (
     <div>
       {/* Top bar：讓使用者在 OPAC 區域中隨時回到入口/切換到後台。 */}
       <header className="topbar">
         <div className="topbarInner">
-          <div className="topbarTitle">Library OPAC</div>
+          <div className="topbarLeft">
+            <div className="topbarTitle">
+              <Link href="/opac" style={{ color: 'inherit' }}>
+                Library OPAC
+              </Link>
+            </div>
+          </div>
 
-          <nav className="topbarNav" aria-label="OPAC">
-            <Link href="/">首頁</Link>
-            <Link href="/opac">OPAC</Link>
-            <Link href="/opac/orgs">選擇學校</Link>
-            <Link href="/orgs">Web Console</Link>
-          </nav>
+          <div className="topbarRight">
+            <PreferencesMenu />
+            <nav className="topbarNav" aria-label="OPAC">
+              <Link href="/">首頁</Link>
+              <Link href="/opac/orgs">選擇學校</Link>
+              <Link href="/orgs">Web Console</Link>
+            </nav>
+          </div>
         </div>
       </header>
 

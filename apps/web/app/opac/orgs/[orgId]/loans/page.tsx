@@ -20,6 +20,13 @@ import Link from 'next/link';
 
 import type { LoanWithDetails } from '../../../../lib/api';
 import { listMyLoans } from '../../../../lib/api';
+import { Alert } from '../../../../components/ui/alert';
+import { CursorPagination } from '../../../../components/ui/cursor-pagination';
+import { DataTable } from '../../../../components/ui/data-table';
+import { EmptyState } from '../../../../components/ui/empty-state';
+import { Field, Form, FormActions, FormSection } from '../../../../components/ui/form';
+import { PageHeader, SectionHeader } from '../../../../components/ui/page-header';
+import { SkeletonTable } from '../../../../components/ui/skeleton';
 import { formatErrorMessage } from '../../../../lib/error';
 import { useOpacSession } from '../../../../lib/use-opac-session';
 
@@ -112,115 +119,162 @@ export default function OpacMyLoansPage({ params }: { params: { orgId: string } 
   // 登入門檻（放在所有 hooks 之後，避免違反 React hooks 規則）
   if (!sessionReady) {
     return (
-      <section className="panel">
-        <h1 style={{ marginTop: 0 }}>我的借閱</h1>
-        <p className="muted">載入登入狀態中…</p>
-      </section>
+      <div className="stack">
+        <PageHeader title="我的借閱" description="載入登入狀態中…" />
+      </div>
     );
   }
 
   if (!session) {
     return (
-      <section className="panel">
-        <h1 style={{ marginTop: 0 }}>我的借閱</h1>
-        <p className="error">
-          這頁需要讀者登入才能查看。請先前往 <Link href={`/opac/orgs/${params.orgId}/login`}>/login</Link>。
-        </p>
-      </section>
+      <div className="stack">
+        <PageHeader
+          title="我的借閱"
+          description="這頁使用 /me 端點（PatronAuthGuard），因此需要 OPAC Account 登入。"
+          actions={
+            <Link className="btnSmall btnPrimary" href={`/opac/orgs/${params.orgId}/login`}>
+              前往登入
+            </Link>
+          }
+        >
+          <Alert variant="danger" title="需要登入">
+            這頁需要讀者登入才能查看。請先前往 <Link href={`/opac/orgs/${params.orgId}/login`}>/login</Link>。
+          </Alert>
+        </PageHeader>
+      </div>
     );
   }
 
   return (
     <div className="stack">
+      <PageHeader
+        title="我的借閱"
+        description={
+          <>
+            目前使用者：{meLabel}；對應 API：<code>GET /api/v1/orgs/:orgId/me/loans</code>
+          </>
+        }
+        actions={
+          <>
+            <Link className="btnSmall" href={`/opac/orgs/${params.orgId}`}>
+              回到搜尋
+            </Link>
+            <Link className="btnSmall" href={`/opac/orgs/${params.orgId}/holds`}>
+              我的預約
+            </Link>
+            <Link className="btnSmall" href={`/opac/orgs/${params.orgId}/logout`}>
+              登出
+            </Link>
+          </>
+        }
+      >
+        {error ? (
+          <Alert variant="danger" title="操作失敗">
+            {error}
+          </Alert>
+        ) : null}
+      </PageHeader>
+
       <section className="panel">
-        <h1 style={{ marginTop: 0 }}>我的借閱</h1>
-        <p className="muted">
-          目前使用者：{meLabel}；對應 API：<code>GET /api/v1/orgs/:orgId/me/loans</code>
-        </p>
+        <SectionHeader title="查詢" description="支援 open/closed/all；limit 預設 200（cursor-based pagination）。" />
 
-        <form onSubmit={onSearch} className="stack" style={{ marginTop: 12 }}>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, alignItems: 'end' }}>
-            <label>
-              status
-              <select value={status} onChange={(e) => setStatus(e.target.value as 'open' | 'closed' | 'all')}>
-                <option value="open">open（未歸還）</option>
-                <option value="closed">closed（已歸還）</option>
-                <option value="all">all（全部）</option>
-              </select>
-            </label>
+        <Form onSubmit={onSearch}>
+          <FormSection title="Filters" description="（提示）open=未歸還；closed=已歸還；all=全部。">
+            <div className="grid2">
+              <Field label="status" htmlFor="opac_loans_status">
+                <select id="opac_loans_status" value={status} onChange={(e) => setStatus(e.target.value as 'open' | 'closed' | 'all')}>
+                  <option value="open">open（未歸還）</option>
+                  <option value="closed">closed（已歸還）</option>
+                  <option value="all">all（全部）</option>
+                </select>
+              </Field>
 
-            <label>
-              limit（預設 200）
-              <input value={limit} onChange={(e) => setLimit(e.target.value)} />
-            </label>
-          </div>
+              <Field label="limit（預設 200）" htmlFor="opac_loans_limit">
+                <input id="opac_loans_limit" value={limit} onChange={(e) => setLimit(e.target.value)} />
+              </Field>
+            </div>
 
-          <div style={{ display: 'flex', gap: 12 }}>
-            <button type="submit" disabled={loading}>
-              {loading ? '查詢中…' : '查詢'}
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                const nextStatus: 'open' | 'closed' | 'all' = 'open';
-                const nextLimit = '200';
-                setStatus(nextStatus);
-                setLimit(nextLimit);
-                void refresh({ status: nextStatus, limit: nextLimit });
-              }}
-              disabled={loading}
-            >
-              清除
-            </button>
-          </div>
-        </form>
-
-        {error ? <p className="error">錯誤：{error}</p> : null}
+            <FormActions>
+              <button type="submit" className="btnPrimary" disabled={loading}>
+                {loading ? '查詢中…' : '查詢'}
+              </button>
+              <button
+                type="button"
+                className="btnSmall"
+                onClick={() => {
+                  const nextStatus: 'open' | 'closed' | 'all' = 'open';
+                  const nextLimit = '200';
+                  setStatus(nextStatus);
+                  setLimit(nextLimit);
+                  void refresh({ status: nextStatus, limit: nextLimit });
+                }}
+                disabled={loading}
+              >
+                清除
+              </button>
+            </FormActions>
+          </FormSection>
+        </Form>
       </section>
 
       <section className="panel">
-        <h2 style={{ marginTop: 0 }}>結果</h2>
+        <SectionHeader title="結果" />
 
-        {loading ? <p className="muted">載入中…</p> : null}
-        {!loading && loans && loans.length === 0 ? <p className="muted">沒有符合條件的借閱。</p> : null}
+        {loading ? <SkeletonTable columns={4} rows={8} /> : null}
+        {!loading && loans && loans.length === 0 ? <EmptyState title="沒有符合條件的借閱" description="你可以調整 status 後再查詢。" /> : null}
 
         {!loading && loans && loans.length > 0 ? (
-          <div className="stack">
-            <ul>
-              {loans.map((l) => (
-                <li key={l.id} style={{ marginBottom: 14 }}>
-                  <div style={{ display: 'grid', gap: 6 }}>
-                    <div>
-                      <span style={{ fontWeight: 700 }}>{l.bibliographic_title}</span>{' '}
-                      <span className="muted">
-                        ({l.status}
-                        {l.is_overdue ? ' · overdue' : ''})
-                      </span>
+          <div className="stack" style={{ marginTop: 12 }}>
+            <DataTable
+              rows={loans}
+              getRowKey={(l) => l.id}
+              density="compact"
+              initialSort={{ columnId: 'due_at', direction: 'asc' }}
+              columns={[
+                {
+                  id: 'title',
+                  header: 'title',
+                  sortValue: (l) => l.bibliographic_title,
+                  cell: (l) => (
+                    <div style={{ display: 'grid', gap: 4 }}>
+                      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'baseline' }}>
+                        <span style={{ fontWeight: 900 }}>{l.bibliographic_title}</span>
+                        <span className="muted">
+                          <code>{l.status}</code>
+                          {l.is_overdue ? ' · overdue' : ''}
+                        </span>
+                      </div>
+                      <div className="muted">
+                        item_barcode=<code>{l.item_barcode}</code> · call_number=<code>{l.item_call_number}</code>
+                      </div>
                     </div>
+                  ),
+                },
+                {
+                  id: 'checked_out_at',
+                  header: 'checked_out_at',
+                  sortValue: (l) => l.checked_out_at,
+                  width: 200,
+                  cell: (l) => <span className="muted">{l.checked_out_at}</span>,
+                },
+                {
+                  id: 'due_at',
+                  header: 'due_at',
+                  sortValue: (l) => l.due_at,
+                  width: 200,
+                  cell: (l) => <span className="muted">{l.due_at}</span>,
+                },
+                {
+                  id: 'id',
+                  header: 'id',
+                  sortValue: (l) => l.id,
+                  width: 140,
+                  cell: (l) => <code>{l.id.slice(0, 8)}…</code>,
+                },
+              ]}
+            />
 
-                    <div className="muted">
-                      item_barcode={l.item_barcode} · call_number={l.item_call_number}
-                    </div>
-
-                    <div className="muted">checked_out_at={l.checked_out_at}</div>
-                    <div className="muted">due_at={l.due_at}</div>
-
-                    <div
-                      className="muted"
-                      style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}
-                    >
-                      loan_id={l.id}
-                    </div>
-                  </div>
-                </li>
-              ))}
-            </ul>
-
-            {nextCursor ? (
-              <button type="button" onClick={() => void loadMore()} disabled={loadingMore || loading}>
-                {loadingMore ? '載入中…' : '載入更多'}
-              </button>
-            ) : null}
+            <CursorPagination showing={loans.length} nextCursor={nextCursor} loading={loading} loadingMore={loadingMore} onLoadMore={() => void loadMore()} />
           </div>
         ) : null}
       </section>
