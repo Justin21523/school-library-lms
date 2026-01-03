@@ -294,7 +294,7 @@ export class AuthorityService {
         AND ($4::user_status IS NULL OR status = $4::user_status)
         AND (
           $5::text IS NULL
-          OR (preferred_label || ' ' || COALESCE(array_to_string(variant_labels, ' '), '')) ILIKE $5
+          OR authority_terms_search_text(preferred_label, variant_labels) ILIKE $5
         )
         AND (
           $6::timestamptz IS NULL
@@ -304,6 +304,8 @@ export class AuthorityService {
       LIMIT $8
       `,
       [orgId, query.kind, vocabularyCode, status, search, cursorSort, cursorId, queryLimit],
+      // RLS：authority_terms 為 org-scoped table，必須先設定 app.org_id。
+      { orgId },
     );
 
     const rows = result.rows;
@@ -346,23 +348,21 @@ export class AuthorityService {
         status,
         created_at,
         updated_at,
-        GREATEST(
-          similarity(preferred_label, $3),
-          similarity(COALESCE(array_to_string(variant_labels, ' '), ''), $3)
-        ) AS score
+        similarity(authority_terms_search_text(preferred_label, variant_labels), $3) AS score
       FROM authority_terms
       WHERE organization_id = $1
         AND kind = $2::authority_term_kind
         AND status = 'active'::user_status
         AND ($4::text IS NULL OR vocabulary_code = $4)
         AND (
-          preferred_label ILIKE $5
-          OR COALESCE(array_to_string(variant_labels, ' '), '') ILIKE $5
+          authority_terms_search_text(preferred_label, variant_labels) ILIKE $5
         )
       ORDER BY score DESC, preferred_label ASC, id ASC
       LIMIT $6
       `,
       [orgId, query.kind, q, vocabularyCode, like, limit],
+      // RLS：authority_terms 為 org-scoped table，必須先設定 app.org_id。
+      { orgId },
     );
 
     // score 只用於排序；回傳給前端的 shape 先不包含它（避免 API shape 太早固定）
@@ -411,6 +411,8 @@ export class AuthorityService {
           source,
           status,
         ],
+        // RLS：authority_terms 為 org-scoped table，必須先設定 app.org_id。
+        { orgId },
       );
       return result.rows[0]!;
     } catch (error: any) {
@@ -477,6 +479,8 @@ export class AuthorityService {
           updated_at
         `,
         params,
+        // RLS：authority_terms 為 org-scoped table，必須先設定 app.org_id。
+        { orgId },
       );
 
       if (result.rowCount === 0) {
@@ -508,7 +512,8 @@ export class AuthorityService {
    * - 後續檢索擴充（例如：搜尋某主題時，自動展開 NT/RT/UF）
    */
   async getById(orgId: string, termId: string): Promise<AuthorityTermDetailResult> {
-    return await this.db.withClient(async (client) => await this.getByIdWithClient(client, orgId, termId));
+    // RLS：authority_* tables 都是 org-scoped，因此任何「用同一條連線做多次查詢」都必須先 set app.org_id。
+    return await this.db.withOrgClient(orgId, async (client) => await this.getByIdWithClient(client, orgId, termId));
   }
 
   /**
@@ -522,7 +527,7 @@ export class AuthorityService {
    */
   async getUsage(orgId: string, termId: string, query: AuthorityTermUsageQuery): Promise<AuthorityTermUsageResult> {
     // 先確保 term 存在（避免 UI 顯示「0」但其實是 404）
-    const term = await this.db.withClient(async (client) => await this.requireTermById(client, orgId, termId));
+    const term = await this.db.withOrgClient(orgId, async (client) => await this.requireTermById(client, orgId, termId));
 
     // cursor：沿用 created_at DESC, id DESC 的 keyset（對齊 bibs list）
     let cursorSort: string | null = null;
@@ -556,6 +561,7 @@ export class AuthorityService {
           AND term_id = $2
         `,
         [orgId, termId],
+        { orgId },
       );
 
       const result = await this.db.query<
@@ -584,6 +590,7 @@ export class AuthorityService {
         LIMIT $5
         `,
         [orgId, termId, cursorSort, cursorId, queryLimit],
+        { orgId },
       );
 
       const rows = result.rows;
@@ -622,6 +629,7 @@ export class AuthorityService {
         AND term_id = $2
       `,
       [orgId, termId],
+      { orgId },
     );
 
     const result = await this.db.query<AuthorityTermUsageItem>(
@@ -646,6 +654,7 @@ export class AuthorityService {
       LIMIT $5
       `,
       [orgId, termId, cursorSort, cursorId, queryLimit],
+      { orgId },
     );
 
     const rows = result.rows;
@@ -682,7 +691,7 @@ export class AuthorityService {
     const moveRelations = input.move_relations ?? true;
 
     // preview/apply：用同一套 SQL，preview 最後 ROLLBACK，apply 才 COMMIT（確保結果可重現）
-    return await this.db.withClient(async (client) => {
+    return await this.db.withOrgClient(orgId, async (client) => {
       await client.query('BEGIN');
 
       try {
@@ -1129,7 +1138,7 @@ export class AuthorityService {
    * - related：新增 RT（對稱關係；DB 只存一筆 canonical pair）
    */
   async addRelation(orgId: string, termId: string, input: CreateThesaurusRelationInput): Promise<AuthorityTermDetailResult> {
-    return await this.db.transaction(async (client) => {
+    return await this.db.transactionWithOrg(orgId, async (client) => {
       const current = await this.requireTermById(client, orgId, termId);
       const target = await this.requireTermById(client, orgId, input.target_term_id);
 
@@ -1229,7 +1238,7 @@ export class AuthorityService {
    * - termId 只用來做「防呆」（確保你刪的是此 term 的關係）
    */
   async deleteRelation(orgId: string, termId: string, relationId: string): Promise<AuthorityTermDetailResult> {
-    return await this.db.transaction(async (client) => {
+    return await this.db.transactionWithOrg(orgId, async (client) => {
       // 確保 term 存在（若不存在，直接 404；避免 UI 操作誤導）
       await this.requireTermById(client, orgId, termId);
 
@@ -1266,7 +1275,7 @@ export class AuthorityService {
    * - related 只展開 1 階（不做 related graph 擴散，避免爆炸）
    */
   async expand(orgId: string, termId: string, query: ExpandThesaurusQuery): Promise<ThesaurusExpandResult> {
-    return await this.db.withClient(async (client) => {
+    return await this.db.withOrgClient(orgId, async (client) => {
       const term = await this.requireTermById(client, orgId, termId);
 
       const include = (query.include ?? ['self', 'variants', 'broader', 'narrower', 'related']) as Array<
@@ -1395,7 +1404,7 @@ export class AuthorityService {
         AND ($4::user_status IS NULL OR t.status = $4::user_status)
         AND (
           $5::text IS NULL
-          OR (t.preferred_label || ' ' || COALESCE(array_to_string(t.variant_labels, ' '), '')) ILIKE $5
+          OR authority_terms_search_text(t.preferred_label, t.variant_labels) ILIKE $5
         )
         -- roots：沒有 BT（沒有 narrower→broader 邊往上）
         AND NOT EXISTS (
@@ -1413,6 +1422,7 @@ export class AuthorityService {
       LIMIT $8
       `,
       [orgId, kind, vocabularyCode, status, search, cursorSort, cursorId, queryLimit],
+      { orgId },
     );
 
     const rows = result.rows.map((r) => ({
@@ -1439,7 +1449,7 @@ export class AuthorityService {
    *   - narrower_count/has_children：決定是否可繼續展開
    */
   async listThesaurusChildren(orgId: string, termId: string, query: ListThesaurusChildrenQuery): Promise<ThesaurusChildrenResult> {
-    return await this.db.withClient(async (client) => {
+    return await this.db.withOrgClient(orgId, async (client) => {
       await this.requireTermById(client, orgId, termId);
 
       const status =
@@ -1546,7 +1556,7 @@ export class AuthorityService {
    * - 每條 path 標記 is_complete：最上層節點是否「真的沒有 broader」（避免 depth 截斷造成誤判）
    */
   async getThesaurusAncestors(orgId: string, termId: string, query: ThesaurusAncestorsQuery): Promise<ThesaurusAncestorsResult> {
-    return await this.db.withClient(async (client) => {
+    return await this.db.withOrgClient(orgId, async (client) => {
       const term = await this.requireTermById(client, orgId, termId);
       const termSummary: AuthorityTermSummaryRow = {
         id: term.id,
@@ -1717,7 +1727,7 @@ export class AuthorityService {
    * - 請用 depth/max_nodes/max_edges 控制輸出量
    */
   async getThesaurusGraph(orgId: string, termId: string, query: ThesaurusGraphQuery): Promise<ThesaurusGraphResult> {
-    return await this.db.withClient(async (client) => {
+    return await this.db.withOrgClient(orgId, async (client) => {
       const term = await this.requireTermById(client, orgId, termId);
       const termSummary: AuthorityTermSummaryRow = {
         id: term.id,
@@ -1923,6 +1933,7 @@ export class AuthorityService {
         LIMIT $7
         `,
         [orgId, kind, vocabularyCode, status, cursorSort, cursorId, queryLimit],
+        { orgId },
       );
 
       const rows = result.rows.map((r) => ({
@@ -1980,6 +1991,7 @@ export class AuthorityService {
         LIMIT $7
         `,
         [orgId, kind, vocabularyCode, status, cursorSort, cursorId, queryLimit],
+        { orgId },
       );
 
       const rows = result.rows.map((r) => ({
@@ -2072,6 +2084,7 @@ export class AuthorityService {
       LIMIT $7
       `,
       [orgId, kind, vocabularyCode, status, cursorSort, cursorId, queryLimit],
+      { orgId },
     );
 
     const rows = result.rows.map((r) => ({
@@ -2123,6 +2136,7 @@ export class AuthorityService {
       ORDER BY r.relation_type ASC, f.preferred_label ASC, t.preferred_label ASC, r.id ASC
       `,
       [orgId, kind, vocabularyCode],
+      { orgId },
     );
 
     const header = ['relation_id', 'relation_type', 'from_term_id', 'from_preferred_label', 'to_term_id', 'to_preferred_label'];
@@ -2261,6 +2275,7 @@ export class AuthorityService {
           AND id = ANY($2::uuid[])
         `,
         [orgId, ids],
+        { orgId },
       );
 
       const found = new Map<string, { kind: string; vocabulary_code: string }>();
@@ -2302,7 +2317,7 @@ export class AuthorityService {
     }
 
     // 3) preview/apply：用「真實 insert + rollback/commit」驗證 unique/cycle
-    return await this.db.withClient(async (client) => {
+    return await this.db.withOrgClient(orgId, async (client) => {
       await client.query('BEGIN');
 
       let createCount = 0;

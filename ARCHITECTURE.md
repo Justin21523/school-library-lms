@@ -10,7 +10,11 @@
   - 原因：可做管理後台與公開 OPAC（查詢頁），並能以 PWA 形式支援行動裝置掃碼作業
 - **資料庫：PostgreSQL**
   - 原因：關聯資料一致性、支援 JSONB/全文檢索（FTS），可由 MVP 平滑擴充
-- **ORM/遷移：Prisma（TypeScript）**（或改用 SQL migration；先以 Prisma 提升開發速度）
+- **DB 存取 / 遷移（現況）**
+  - DB driver：`pg` + 手寫 SQL（可讀、可控、避免 ORM 魔法；也更容易做交易與效能優化）
+  - Schema：`db/schema.sql`（本機 demo/開發用；可重複套用）
+  - Migrations：`db/migrations/*` + `schema_migrations`（正式環境用；版本可追溯）
+  - Migration runner：`scripts/db-migrate.mjs`（以 `DATABASE_URL` 或 PG* env 連線）
 - **快取/背景作業（預留）：Redis + BullMQ**
   - 用途：通知佇列、匯入任務、報表離線產生（MVP 可先不啟用）
 - **檢索（預留）：**
@@ -38,4 +42,3 @@
 - `packages/shared/`：共用型別、驗證 schema、共用工具
 - `db/`：資料庫 schema / migrations / seed
 - 文件：`README.md`、`MVP-SPEC.md`、`DATA-DICTIONARY.md`、`reference-docs/`
-

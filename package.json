@@ -14,16 +14,20 @@
   },
   "scripts": {
     "dev": "npm run build -w @library-system/shared && concurrently -n shared,web,api \"npm run dev:shared\" \"npm run dev:web\" \"npm run dev:api\"",
+    "dev:stop": "node scripts/dev-control.mjs stop",
+    "dev:restart": "npm run dev:stop && npm run dev",
     "dev:shared": "npm run dev -w @library-system/shared",
     "dev:web": "npm run dev -w @library-system/web",
     "dev:api": "npm run dev -w @library-system/api",
     "demo:db:seed": "node scripts/demo-db.mjs seed",
     "demo:db:reset": "node scripts/demo-db.mjs reset",
+    "db:migrate": "node scripts/db-migrate.mjs",
     "demo:smoke": "node scripts/demo-smoke.mjs",
     "qa:e2e": "node scripts/qa-e2e.mjs",
     "qa:marc": "npm run build -w @library-system/api && node scripts/qa-marc-roundtrip.cjs",
     "e2e": "playwright test",
     "e2e:report": "playwright show-report",
+    "deploy:ssh": "node scripts/deploy-ssh.mjs",
     "docker:up": "docker compose up -d --build postgres redis api web",
     "docker:seed": "docker compose --profile demo run --rm seed",
     "docker:seed:scale": "docker compose --profile scale run --rm seed-scale",
@@ -38,6 +42,7 @@
     "docker:down:volumes": "docker compose down -v",
     "build": "npm run build -w @library-system/shared && npm run build -w @library-system/api && npm run build -w @library-system/web",
     "test": "npm run test --workspaces --if-present",
+    "test:db": "node --test tests/db/*.test.mjs",
     "lint": "npm run lint --workspaces --if-present"
   }
 }

@@ -48,9 +48,13 @@ const composeServiceRedis = process.env.DEMO_REDIS_SERVICE?.trim() || 'redis';
 const pgUser = process.env.DEMO_PG_USER?.trim() || 'library';
 const pgDb = process.env.DEMO_PG_DB?.trim() || 'library_system';
 
-// schema/seed 檔案路徑：固定在 repo 內（避免誤用外部檔案）。
-const schemaFile = 'db/schema.sql';
-const seedFile = 'db/seed-demo.sql';
+// 重要：schema/seed 匯入不是用 `docker compose exec postgres psql -f ...`
+// 因為 postgres service 沒有把 repo 的 `./db` bind mount 進去（容器內看不到 host 的檔案）。
+//
+// 我們改用 docker-compose.yml 內的 `seed` 一次性 service：
+// - 會把 `./db` mount 成 `/db:ro`
+// - 直接在 seed container 內跑 `psql -f /db/schema.sql && psql -f /db/seed-demo.sql`
+const composeServiceSeed = process.env.DEMO_SEED_SERVICE?.trim() || 'seed';
 
 // ----------------------------
 // 主流程
@@ -80,33 +84,10 @@ async function main() {
     timeoutMs: 60_000,
   });
 
-  // 3) 匯入 schema：只要 schema.sql 是 idempotent（CREATE TABLE IF NOT EXISTS），就能重複跑
-  runCompose([
-    'exec',
-    '-T',
-    composeServicePostgres,
-    'psql',
-    '-U',
-    pgUser,
-    '-d',
-    pgDb,
-    '-f',
-    schemaFile,
-  ]);
-
-  // 4) 匯入 seed：我們的 seed 也刻意做成可重複執行（固定 UUID + ON CONFLICT DO NOTHING）
-  runCompose([
-    'exec',
-    '-T',
-    composeServicePostgres,
-    'psql',
-    '-U',
-    pgUser,
-    '-d',
-    pgDb,
-    '-f',
-    seedFile,
-  ]);
+  // 3) 匯入 schema + seed（一次性 container）
+  // - `--profile demo`：seed service 掛在 demo profile 底下，避免平常 up 時常駐
+  // - `run --rm`：跑完就刪 container（可重複執行、乾淨）
+  runCompose(['--profile', 'demo', 'run', '--rm', composeServiceSeed]);
 
   console.log('');
   console.log('[demo-db] ✅ 完成：schema + seed 已匯入。');

@@ -36,6 +36,18 @@ const intFromStringSchema = z.preprocess((value) => {
 }, z.number().int().min(1).max(500));
 
 export const listLoansQuerySchema = z.object({
+  /**
+   * query：模糊搜尋（使用者/條碼/書名）
+   *
+   * 需求動機：
+   * - 實務上館員常只記得「姓名/書名的一段」或「條碼的一部分」
+   * - 若只支援 user_external_id / item_barcode 的精確比對，會迫使館員先去別頁查 ID
+   *
+   * 行為：
+   * - 後端會用 ILIKE + %...% 在 user/item/bib 欄位做 OR 搜尋
+   * - 仍保留 user_external_id/item_barcode 精確 filter（掃碼/名冊編號最穩）
+   */
+  query: z.string().trim().min(1).max(200).optional(),
   // status：可選；未提供時我們會在 service 端預設為 open（符合館員常用情境）。
   status: loanListStatusSchema.optional(),
 

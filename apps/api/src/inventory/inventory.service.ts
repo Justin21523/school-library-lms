@@ -129,7 +129,7 @@ export class InventoryService {
    * POST /api/v1/orgs/:orgId/inventory/sessions
    */
   async createSession(orgId: string, input: CreateInventorySessionInput): Promise<InventorySessionWithDetails> {
-    return await this.db.transaction(async (client) => {
+    return await this.db.transactionWithOrg(orgId, async (client) => {
       // 1) 驗證 actor：必須是 active 的 admin/librarian
       const actor = await this.requireStaffActor(client, orgId, input.actor_user_id);
 
@@ -279,6 +279,8 @@ export class InventoryService {
       LIMIT ${limitParam}
       `,
       params,
+      // RLS：inventory_sessions/inventory_scans/users/locations 都是 org-scoped，必須設定 app.org_id 才能查。
+      { orgId },
     );
 
     return result.rows;
@@ -294,7 +296,7 @@ export class InventoryService {
     sessionId: string,
     input: ScanInventoryItemInput,
   ): Promise<InventoryScanResult> {
-    return await this.db.transaction(async (client) => {
+    return await this.db.transactionWithOrg(orgId, async (client) => {
       // 1) 驗證 actor
       await this.requireStaffActor(client, orgId, input.actor_user_id);
 
@@ -374,7 +376,7 @@ export class InventoryService {
    * POST /api/v1/orgs/:orgId/inventory/sessions/:sessionId/close
    */
   async closeSession(orgId: string, sessionId: string, input: CloseInventorySessionInput): Promise<CloseInventorySessionResult> {
-    return await this.db.transaction(async (client) => {
+    return await this.db.transactionWithOrg(orgId, async (client) => {
       // 1) 驗證 actor
       const actor = await this.requireStaffActor(client, orgId, input.actor_user_id);
 
@@ -719,4 +721,3 @@ export class InventoryService {
     return result.rows[0]!.now;
   }
 }
-

@@ -267,7 +267,7 @@ export class ReportsService {
    */
   async listOverdue(orgId: string, query: OverdueReportQuery): Promise<OverdueReportRow[]> {
     // 1) 驗證 actor（館員/管理者）
-    await this.db.transaction(async (client) => {
+    await this.db.transactionWithOrg(orgId, async (client) => {
       // 用 transaction 的理由：
       // - 這裡主要是「重用 requireStaffActor 的查詢邏輯」
       // - 讀取也可不開 transaction；但這樣寫能讓未來若要寫 audit 事件更容易擴充
@@ -346,6 +346,7 @@ export class ReportsService {
         LIMIT ${limitParam}
         `,
         params,
+        { orgId },
       );
 
       return result.rows;
@@ -373,7 +374,7 @@ export class ReportsService {
    */
   async listReadyHolds(orgId: string, query: ReadyHoldsReportQuery): Promise<ReadyHoldsReportRow[]> {
     // 1) 驗證 actor（館員/管理者）
-    await this.db.transaction(async (client) => {
+    await this.db.transactionWithOrg(orgId, async (client) => {
       await this.requireStaffActor(client, orgId, query.actor_user_id);
     });
 
@@ -478,6 +479,7 @@ export class ReportsService {
         LIMIT ${limitParam}
         `,
         params,
+        { orgId },
       );
 
       return result.rows;
@@ -511,7 +513,7 @@ export class ReportsService {
     query: ZeroCirculationReportQuery,
   ): Promise<ZeroCirculationReportRow[]> {
     // 1) 驗證 actor（館員/管理者）
-    await this.db.transaction(async (client) => {
+    await this.db.transactionWithOrg(orgId, async (client) => {
       await this.requireStaffActor(client, orgId, query.actor_user_id);
     });
 
@@ -584,6 +586,8 @@ export class ReportsService {
         LIMIT $4
         `,
         [orgId, from, to, limit],
+        // RLS：reports 仍是 org-scoped（會掃 loans/items/bibs），必須設定 app.org_id 才能查。
+        { orgId },
       );
 
       return result.rows;
@@ -609,7 +613,7 @@ export class ReportsService {
     query: TopCirculationReportQuery,
   ): Promise<TopCirculationRow[]> {
     // 1) 驗證 actor（館員/管理者）
-    await this.db.transaction(async (client) => {
+    await this.db.transactionWithOrg(orgId, async (client) => {
       await this.requireStaffActor(client, orgId, query.actor_user_id);
     });
 
@@ -646,6 +650,8 @@ export class ReportsService {
         LIMIT $4
         `,
         [orgId, from, to, limit],
+        // RLS：reports 仍是 org-scoped（會掃 loans/items/bibs），必須設定 app.org_id 才能查。
+        { orgId },
       );
 
       return result.rows;
@@ -673,7 +679,7 @@ export class ReportsService {
     query: CirculationSummaryReportQuery,
   ): Promise<CirculationSummaryRow[]> {
     // 1) 驗證 actor（館員/管理者）
-    await this.db.transaction(async (client) => {
+    await this.db.transactionWithOrg(orgId, async (client) => {
       await this.requireStaffActor(client, orgId, query.actor_user_id);
     });
 
@@ -719,6 +725,8 @@ export class ReportsService {
         ORDER BY b.bucket_start ASC
         `,
         [orgId, from, to, query.group_by],
+        // RLS：counts 會掃 loans（org-scoped），必須設定 app.org_id 才能查。
+        { orgId },
       );
 
       return result.rows;
@@ -743,7 +751,7 @@ export class ReportsService {
    * - 這樣能沿用既有的 `?format=csv`、BOM、header 設定等基礎架構
    */
   async getInventoryDiff(orgId: string, query: InventoryDiffReportQuery): Promise<InventoryDiffResult> {
-    return await this.db.transaction(async (client) => {
+    return await this.db.transactionWithOrg(orgId, async (client) => {
       // 1) 驗證 actor（館員/管理者）
       await this.requireStaffActor(client, orgId, query.actor_user_id);
 

@@ -214,6 +214,26 @@ export class HoldsService {
       whereClauses.push(`ai.barcode = $${params.length}`);
     }
 
+    if (query.query) {
+      // 模糊搜尋（對齊「不用背 ID」的需求）：
+      // - user：external_id / name
+      // - bib：title
+      // - pickup location：code / name
+      // - assigned item：barcode（若此 hold 已指派冊）
+      params.push(`%${query.query}%`);
+      const p = `$${params.length}`;
+      whereClauses.push(
+        `(
+          u.external_id ILIKE ${p}
+          OR u.name ILIKE ${p}
+          OR b.title ILIKE ${p}
+          OR pl.code ILIKE ${p}
+          OR pl.name ILIKE ${p}
+          OR COALESCE(ai.barcode, '') ILIKE ${p}
+        )`,
+      );
+    }
+
     // cursor pagination（keyset）
     //
     // holds 的「合理排序」會隨 status 而不同：
@@ -309,6 +329,7 @@ export class HoldsService {
       LIMIT ${limitParam}
       `,
       params,
+      { orgId },
     );
 
     const rows = result.rows;
@@ -334,7 +355,7 @@ export class HoldsService {
 
   async create(orgId: string, input: CreateHoldInput): Promise<HoldWithDetailsRow> {
     try {
-      return await this.db.transaction(async (client) => {
+      return await this.db.transactionWithOrg(orgId, async (client) => {
         // 1) borrower：以 external_id 找到讀者，並驗證 role/status。
         const borrower = await this.requireBorrowerByExternalId(
           client,
@@ -342,10 +363,14 @@ export class HoldsService {
           input.user_external_id,
         );
 
-        // 2) actor：若有傳 actor_user_id，視為「代辦/館員操作」；否則視為 borrower 本人操作（OPAC 自助）。
-        const actor = input.actor_user_id
-          ? await this.requireUserById(client, orgId, input.actor_user_id)
-          : borrower;
+        // 2) actor：必填（由 StaffAuthGuard / PatronAuthGuard 推導）。
+        // - 我們不再支援「不帶 actor_user_id 就視為本人」的過渡模式，避免被冒用。
+        if (!input.actor_user_id) {
+          throw new BadRequestException({
+            error: { code: 'VALIDATION_ERROR', message: 'actor_user_id is required' },
+          });
+        }
+        const actor = await this.requireUserById(client, orgId, input.actor_user_id);
 
         if (actor.status !== 'active') {
           throw new ConflictException({
@@ -493,7 +518,7 @@ export class HoldsService {
 
   async cancel(orgId: string, holdId: string, input: CancelHoldInput) {
     try {
-      return await this.db.transaction(async (client) => {
+      return await this.db.transactionWithOrg(orgId, async (client) => {
         // 1) 鎖住 hold（FOR UPDATE）：避免同一筆 hold 同時被 fulfill/cancel。
         const hold = await this.requireHoldForUpdate(client, orgId, holdId);
 
@@ -504,12 +529,14 @@ export class HoldsService {
           });
         }
 
-        // 2) 決定 actor：
-        // - 若傳 actor_user_id：使用該 user 作為 actor（可能是 staff）
-        // - 否則：視為 borrower 本人取消（OPAC 自助）
-        const actor = input.actor_user_id
-          ? await this.requireUserById(client, orgId, input.actor_user_id)
-          : await this.requireUserById(client, orgId, hold.user_id);
+        // 2) actor：必填（由 StaffAuthGuard / PatronAuthGuard 推導）。
+        // - 我們不再支援「不帶 actor_user_id 就視為本人」的過渡模式，避免被冒用。
+        if (!input.actor_user_id) {
+          throw new BadRequestException({
+            error: { code: 'VALIDATION_ERROR', message: 'actor_user_id is required' },
+          });
+        }
+        const actor = await this.requireUserById(client, orgId, input.actor_user_id);
 
         if (actor.status !== 'active') {
           throw new ConflictException({
@@ -627,8 +654,13 @@ export class HoldsService {
 
   async fulfill(orgId: string, holdId: string, input: FulfillHoldInput) {
     try {
-      return await this.db.transaction(async (client) => {
+      return await this.db.transactionWithOrg(orgId, async (client) => {
         // 1) actor 必須是 staff（館員/管理者）
+        if (!input.actor_user_id) {
+          throw new BadRequestException({
+            error: { code: 'VALIDATION_ERROR', message: 'actor_user_id is required' },
+          });
+        }
         const actor = await this.requireUserById(client, orgId, input.actor_user_id);
 
         if (actor.status !== 'active') {
@@ -819,8 +851,13 @@ export class HoldsService {
    */
   async expireReady(orgId: string, input: ExpireReadyHoldsInput): Promise<ExpireReadyHoldsResult> {
     try {
-      return await this.db.transaction(async (client) => {
+      return await this.db.transactionWithOrg(orgId, async (client) => {
         // 1) actor 必須是 staff（館員/管理者）
+        if (!input.actor_user_id) {
+          throw new BadRequestException({
+            error: { code: 'VALIDATION_ERROR', message: 'actor_user_id is required' },
+          });
+        }
         const actor = await this.requireUserById(client, orgId, input.actor_user_id);
 
         if (actor.status !== 'active') {

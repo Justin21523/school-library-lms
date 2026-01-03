@@ -1429,6 +1429,32 @@ export class BibsService {
     // query：關鍵字搜尋（title/creators/subjects/...）；空字串視為未提供。
     const search = query.query?.trim() ? `%${query.query.trim()}%` : null;
 
+    // search_fields：限制 keyword/boolean 檢索要看的欄位（進階搜尋）
+    // - 未提供：視為「全欄位」（符合 OPAC keyword 的直覺）
+    // - 有提供：只在指定欄位內比對（避免使用者覺得「怎麼什麼都搜得到」）
+    const searchFields = query.search_fields?.length ? query.search_fields : null;
+
+    // must/should/must_not：布林檢索（AND/OR/NOT）
+    //
+    // 設計：
+    // - schema 端已把「逗號/換行」拆成陣列；service 再把每個 term 轉成 `%...%`
+    // - 讓 SQL 端只要做 `ILIKE term`，避免在 SQL 裡重複拼接字串
+    const mustTerms = query.must?.length ? query.must.map((t) => `%${t}%`) : null;
+    const shouldTerms = query.should?.length ? query.should.map((t) => `%${t}%`) : null;
+    const mustNotTerms = query.must_not?.length ? query.must_not.map((t) => `%${t}%`) : null;
+
+    // published_year range（metadata filter）
+    const publishedYearFrom = query.published_year_from ?? null;
+    const publishedYearTo = query.published_year_to ?? null;
+
+    // language：用 prefix match（例如輸入 zh 也能命中 zh-TW）
+    const language = query.language?.trim() ? query.language.trim().toLowerCase() : null;
+
+    // available_only：只回傳「有可借冊」的書目（OPAC 常見需求）
+    // - v1 先用 item_copies.status='available' 判斷
+    // - query param 未提供時（undefined）視為不限制
+    const availableOnly = query.available_only === true ? true : null;
+
     // subjects_any：主題詞擴充查詢（thesaurus expand 後的 labels[]）
     // - 用 text[] overlap（&&）做「任一命中」：subjects 只要包含任何一個 label 就算 match
     // - 注意：這是「精確 match」的控制詞彙查詢；跟 query 的 ILIKE（部分匹配）不同
@@ -1566,23 +1592,225 @@ export class BibsService {
         )
         AND (
           $10::text IS NULL
-          OR b.title ILIKE $10
-          OR COALESCE(array_to_string(b.creators, ' '), '') ILIKE $10
-          OR COALESCE(array_to_string(b.contributors, ' '), '') ILIKE $10
-          OR COALESCE(array_to_string(b.subjects, ' '), '') ILIKE $10
-          OR COALESCE(array_to_string(b.geographics, ' '), '') ILIKE $10
-          OR COALESCE(array_to_string(b.genres, ' '), '') ILIKE $10
-          OR COALESCE(b.publisher, '') ILIKE $10
-          OR COALESCE(b.isbn, '') ILIKE $10
-          OR COALESCE(b.classification, '') ILIKE $10
+          OR (
+            -- keyword：在「指定欄位集合」內做 OR 搜尋
+            -- - search_fields 未提供：等同全欄位
+            -- - search_fields 有提供：只在勾選的欄位內比對
+            (
+              (($11::text[] IS NULL OR 'title' = ANY($11::text[])) AND b.title ILIKE $10)
+              OR (
+                ($11::text[] IS NULL OR 'author' = ANY($11::text[]))
+                AND (
+                  COALESCE(array_to_string(b.creators, ' '), '') ILIKE $10
+                  OR COALESCE(array_to_string(b.contributors, ' '), '') ILIKE $10
+                )
+              )
+              OR (
+                ($11::text[] IS NULL OR 'subject' = ANY($11::text[]))
+                AND COALESCE(array_to_string(b.subjects, ' '), '') ILIKE $10
+              )
+              OR (
+                ($11::text[] IS NULL OR 'geographic' = ANY($11::text[]))
+                AND COALESCE(array_to_string(b.geographics, ' '), '') ILIKE $10
+              )
+              OR (
+                ($11::text[] IS NULL OR 'genre' = ANY($11::text[]))
+                AND COALESCE(array_to_string(b.genres, ' '), '') ILIKE $10
+              )
+              OR (
+                ($11::text[] IS NULL OR 'publisher' = ANY($11::text[]))
+                AND COALESCE(b.publisher, '') ILIKE $10
+              )
+              OR (
+                ($11::text[] IS NULL OR 'isbn' = ANY($11::text[]))
+                AND COALESCE(b.isbn, '') ILIKE $10
+              )
+              OR (
+                ($11::text[] IS NULL OR 'classification' = ANY($11::text[]))
+                AND COALESCE(b.classification, '') ILIKE $10
+              )
+              OR (
+                ($11::text[] IS NULL OR 'language' = ANY($11::text[]))
+                AND COALESCE(b.language, '') ILIKE $10
+              )
+            )
+          )
         )
         AND (
-          $11::timestamptz IS NULL
-          OR (b.created_at, b.id) < ($11::timestamptz, $12::uuid)
+          -- must：每個 term 都要命中（AND）
+          $12::text[] IS NULL
+          OR COALESCE(
+            (
+              SELECT bool_and(
+                (
+                  (($11::text[] IS NULL OR 'title' = ANY($11::text[])) AND b.title ILIKE term)
+                  OR (
+                    ($11::text[] IS NULL OR 'author' = ANY($11::text[]))
+                    AND (
+                      COALESCE(array_to_string(b.creators, ' '), '') ILIKE term
+                      OR COALESCE(array_to_string(b.contributors, ' '), '') ILIKE term
+                    )
+                  )
+                  OR (
+                    ($11::text[] IS NULL OR 'subject' = ANY($11::text[]))
+                    AND COALESCE(array_to_string(b.subjects, ' '), '') ILIKE term
+                  )
+                  OR (
+                    ($11::text[] IS NULL OR 'geographic' = ANY($11::text[]))
+                    AND COALESCE(array_to_string(b.geographics, ' '), '') ILIKE term
+                  )
+                  OR (
+                    ($11::text[] IS NULL OR 'genre' = ANY($11::text[]))
+                    AND COALESCE(array_to_string(b.genres, ' '), '') ILIKE term
+                  )
+                  OR (
+                    ($11::text[] IS NULL OR 'publisher' = ANY($11::text[]))
+                    AND COALESCE(b.publisher, '') ILIKE term
+                  )
+                  OR (
+                    ($11::text[] IS NULL OR 'isbn' = ANY($11::text[]))
+                    AND COALESCE(b.isbn, '') ILIKE term
+                  )
+                  OR (
+                    ($11::text[] IS NULL OR 'classification' = ANY($11::text[]))
+                    AND COALESCE(b.classification, '') ILIKE term
+                  )
+                  OR (
+                    ($11::text[] IS NULL OR 'language' = ANY($11::text[]))
+                    AND COALESCE(b.language, '') ILIKE term
+                  )
+                )
+              )
+              FROM unnest($12::text[]) AS term
+            ),
+            true
+          )
+        )
+        AND (
+          -- should：至少一個 term 命中（OR）
+          $13::text[] IS NULL
+          OR COALESCE(
+            (
+              SELECT bool_or(
+                (
+                  (($11::text[] IS NULL OR 'title' = ANY($11::text[])) AND b.title ILIKE term)
+                  OR (
+                    ($11::text[] IS NULL OR 'author' = ANY($11::text[]))
+                    AND (
+                      COALESCE(array_to_string(b.creators, ' '), '') ILIKE term
+                      OR COALESCE(array_to_string(b.contributors, ' '), '') ILIKE term
+                    )
+                  )
+                  OR (
+                    ($11::text[] IS NULL OR 'subject' = ANY($11::text[]))
+                    AND COALESCE(array_to_string(b.subjects, ' '), '') ILIKE term
+                  )
+                  OR (
+                    ($11::text[] IS NULL OR 'geographic' = ANY($11::text[]))
+                    AND COALESCE(array_to_string(b.geographics, ' '), '') ILIKE term
+                  )
+                  OR (
+                    ($11::text[] IS NULL OR 'genre' = ANY($11::text[]))
+                    AND COALESCE(array_to_string(b.genres, ' '), '') ILIKE term
+                  )
+                  OR (
+                    ($11::text[] IS NULL OR 'publisher' = ANY($11::text[]))
+                    AND COALESCE(b.publisher, '') ILIKE term
+                  )
+                  OR (
+                    ($11::text[] IS NULL OR 'isbn' = ANY($11::text[]))
+                    AND COALESCE(b.isbn, '') ILIKE term
+                  )
+                  OR (
+                    ($11::text[] IS NULL OR 'classification' = ANY($11::text[]))
+                    AND COALESCE(b.classification, '') ILIKE term
+                  )
+                  OR (
+                    ($11::text[] IS NULL OR 'language' = ANY($11::text[]))
+                    AND COALESCE(b.language, '') ILIKE term
+                  )
+                )
+              )
+              FROM unnest($13::text[]) AS term
+            ),
+            true
+          )
+        )
+        AND (
+          -- must_not：任何 term 命中即排除（NOT）
+          $14::text[] IS NULL
+          OR NOT COALESCE(
+            (
+              SELECT bool_or(
+                (
+                  (($11::text[] IS NULL OR 'title' = ANY($11::text[])) AND b.title ILIKE term)
+                  OR (
+                    ($11::text[] IS NULL OR 'author' = ANY($11::text[]))
+                    AND (
+                      COALESCE(array_to_string(b.creators, ' '), '') ILIKE term
+                      OR COALESCE(array_to_string(b.contributors, ' '), '') ILIKE term
+                    )
+                  )
+                  OR (
+                    ($11::text[] IS NULL OR 'subject' = ANY($11::text[]))
+                    AND COALESCE(array_to_string(b.subjects, ' '), '') ILIKE term
+                  )
+                  OR (
+                    ($11::text[] IS NULL OR 'geographic' = ANY($11::text[]))
+                    AND COALESCE(array_to_string(b.geographics, ' '), '') ILIKE term
+                  )
+                  OR (
+                    ($11::text[] IS NULL OR 'genre' = ANY($11::text[]))
+                    AND COALESCE(array_to_string(b.genres, ' '), '') ILIKE term
+                  )
+                  OR (
+                    ($11::text[] IS NULL OR 'publisher' = ANY($11::text[]))
+                    AND COALESCE(b.publisher, '') ILIKE term
+                  )
+                  OR (
+                    ($11::text[] IS NULL OR 'isbn' = ANY($11::text[]))
+                    AND COALESCE(b.isbn, '') ILIKE term
+                  )
+                  OR (
+                    ($11::text[] IS NULL OR 'classification' = ANY($11::text[]))
+                    AND COALESCE(b.classification, '') ILIKE term
+                  )
+                  OR (
+                    ($11::text[] IS NULL OR 'language' = ANY($11::text[]))
+                    AND COALESCE(b.language, '') ILIKE term
+                  )
+                )
+              )
+              FROM unnest($14::text[]) AS term
+            ),
+            false
+          )
+        )
+        AND (
+          -- published_year range（metadata filter）
+          $15::int IS NULL OR b.published_year >= $15::int
+        )
+        AND (
+          $16::int IS NULL OR b.published_year <= $16::int
+        )
+        AND (
+          -- language：prefix match（zh 也能命中 zh-TW）
+          $17::text IS NULL OR lower(COALESCE(b.language, '')) LIKE (lower($17::text) || '%')
+        )
+        AND (
+          $18::timestamptz IS NULL
+          OR (b.created_at, b.id) < ($18::timestamptz, $19::uuid)
         )
       GROUP BY b.id
+      HAVING (
+        -- available_only：只顯示「目前至少有 1 冊可借」的書目
+        -- - 我們用聚合結果判斷（避免在 join 造成的多列上重複跑 EXISTS）
+        $21::boolean IS NULL
+        OR $21 = false
+        OR COUNT(i.id) FILTER (WHERE i.status = 'available') > 0
+      )
       ORDER BY b.created_at DESC, b.id DESC
-      LIMIT $13
+      LIMIT $20
       `,
       [
         orgId,
@@ -1595,10 +1823,19 @@ export class BibsService {
         geographicsAny,
         genresAny,
         search,
+        searchFields,
+        mustTerms,
+        shouldTerms,
+        mustNotTerms,
+        publishedYearFrom,
+        publishedYearTo,
+        language,
         cursorSort,
         cursorId,
         queryLimit,
+        availableOnly,
       ],
+      { orgId },
     );
 
     const rows = result.rows;
@@ -1615,7 +1852,7 @@ export class BibsService {
   async create(orgId: string, input: CreateBibliographicInput): Promise<BibliographicRow> {
     try {
       // 建立書目同時維護 bibliographic_subject_terms / bibliographic_name_terms，因此用 transaction（避免欄位與 links 不一致）。
-      return await this.db.transaction(async (client) => {
+      return await this.db.transactionWithOrg(orgId, async (client) => {
         // creators/contributors 正規化 + term_id resolve（允許 input 不提供）
         const resolvedCreators = await this.resolveNameTermsForWrite(
           client,
@@ -1767,7 +2004,7 @@ export class BibsService {
     // 注意：
     // - subjects(text[]) 仍保留回傳：它是「顯示/相容」用的欄位（也會被 query 搜尋用）
     // - 但編目更新主題詞時，建議前端改送 subject_term_ids（避免 ambiguous）
-    return await this.db.transaction(async (client) => {
+    return await this.db.transactionWithOrg(orgId, async (client) => {
       const result = await client.query<BibliographicWithCountsRow>(
         `
         SELECT
@@ -1942,7 +2179,7 @@ export class BibsService {
     input: UpdateBibliographicInput,
   ): Promise<BibliographicRow> {
     // update 可能同時更新表單欄位與 junction tables（subjects/651/655/names），因此用 transaction。
-    return await this.db.transaction(async (client) => {
+    return await this.db.transactionWithOrg(orgId, async (client) => {
       const setClauses: string[] = [];
       const params: unknown[] = [orgId, bibId];
 
@@ -2085,7 +2322,8 @@ export class BibsService {
    * - ambiguous 的人工處理，留到後續治理（merge/redirect）一次收斂
    */
   async backfillSubjectTerms(orgId: string, input: BackfillBibSubjectTermsInput): Promise<BackfillBibSubjectTermsResult> {
-    return await this.db.withClient(async (client) => {
+    // RLS：bibs/authority links 都是 org-scoped；而 preview/apply 需要同一條連線跑多個 statement（BEGIN/ROLLBACK/COMMIT），因此用 withOrgClient。
+    return await this.db.withOrgClient(orgId, async (client) => {
       // 1) 權限：必須是 staff（admin/librarian 且 active）
       await this.requireStaffActor(client, orgId, input.actor_user_id);
 
@@ -2538,7 +2776,8 @@ export class BibsService {
    * - creators/contributors 各自保序、各自去重（避免同一 role 重複連到同一 term）
    */
   async backfillNameTerms(orgId: string, input: BackfillBibNameTermsInput): Promise<BackfillBibNameTermsResult> {
-    return await this.db.withClient(async (client) => {
+    // RLS：bibs/authority links 都是 org-scoped；而 preview/apply 需要同一條連線跑多個 statement（BEGIN/ROLLBACK/COMMIT），因此用 withOrgClient。
+    return await this.db.withOrgClient(orgId, async (client) => {
       // 1) 權限：必須是 staff（admin/librarian 且 active）
       await this.requireStaffActor(client, orgId, input.actor_user_id);
 
@@ -3128,7 +3367,8 @@ export class BibsService {
     orgId: string,
     input: BackfillBibGeographicTermsInput,
   ): Promise<BackfillBibGeographicTermsResult> {
-    return await this.db.withClient(async (client) => {
+    // RLS：bibs/authority links 都是 org-scoped；而 preview/apply 需要同一條連線跑多個 statement（BEGIN/ROLLBACK/COMMIT），因此用 withOrgClient。
+    return await this.db.withOrgClient(orgId, async (client) => {
       await this.requireStaffActor(client, orgId, input.actor_user_id);
 
       const pageSizeRaw = input.limit ?? 200;
@@ -3590,7 +3830,8 @@ export class BibsService {
     orgId: string,
     input: BackfillBibGenreTermsInput,
   ): Promise<BackfillBibGenreTermsResult> {
-    return await this.db.withClient(async (client) => {
+    // RLS：bibs/authority links 都是 org-scoped；而 preview/apply 需要同一條連線跑多個 statement（BEGIN/ROLLBACK/COMMIT），因此用 withOrgClient。
+    return await this.db.withOrgClient(orgId, async (client) => {
       await this.requireStaffActor(client, orgId, input.actor_user_id);
 
       const pageSizeRaw = input.limit ?? 200;
@@ -4071,6 +4312,7 @@ export class BibsService {
         AND id = $2
       `,
       [orgId, bibId],
+      { orgId },
     );
 
     if (result.rowCount === 0) {
@@ -4116,6 +4358,7 @@ export class BibsService {
       ORDER BY bnt.position ASC
       `,
       [orgId, bibId],
+      { orgId },
     );
 
     const linkedContributors = await this.db.query<{ id: string; preferred_label: string; vocabulary_code: string }>(
@@ -4134,6 +4377,7 @@ export class BibsService {
       ORDER BY bnt.position ASC
       `,
       [orgId, bibId],
+      { orgId },
     );
 
     const hasLinkedNames = (linkedCreators.rowCount ?? 0) > 0 || (linkedContributors.rowCount ?? 0) > 0;
@@ -4171,6 +4415,7 @@ export class BibsService {
       ORDER BY bst.position ASC
       `,
       [orgId, bibId],
+      { orgId },
     );
 
     const hasLinkedSubjects = (linkedSubjects.rowCount ?? 0) > 0;
@@ -4207,6 +4452,7 @@ export class BibsService {
           AND preferred_label = ANY($2::text[])
         `,
         [orgId, subjects],
+        { orgId },
       );
 
       // group by label：避免同 label 多個 vocabulary_code 時誤判
@@ -4260,6 +4506,7 @@ export class BibsService {
       ORDER BY bgt.position ASC
       `,
       [orgId, bibId],
+      { orgId },
     );
 
     const hasLinkedGeographics = (linkedGeographics.rowCount ?? 0) > 0;
@@ -4292,6 +4539,7 @@ export class BibsService {
           AND preferred_label = ANY($2::text[])
         `,
         [orgId, geographics],
+        { orgId },
       );
 
       const byLabel = new Map<string, { codes: Set<string>; ids: Set<string> }>();
@@ -4336,6 +4584,7 @@ export class BibsService {
       ORDER BY bgt.position ASC
       `,
       [orgId, bibId],
+      { orgId },
     );
 
     const hasLinkedGenres = (linkedGenres.rowCount ?? 0) > 0;
@@ -4368,6 +4617,7 @@ export class BibsService {
           AND preferred_label = ANY($2::text[])
         `,
         [orgId, genres],
+        { orgId },
       );
 
       const byLabel = new Map<string, { codes: Set<string>; ids: Set<string> }>();
@@ -4420,6 +4670,7 @@ export class BibsService {
             AND preferred_label = ANY($2::text[])
           `,
           [orgId, allNames],
+          { orgId },
         );
 
         const byLabel = new Map<string, Set<string>>();
@@ -4688,6 +4939,7 @@ export class BibsService {
         AND id = $2
       `,
       [orgId, bibId],
+      { orgId },
     );
 
     if (result.rowCount === 0) {
@@ -4718,7 +4970,8 @@ export class BibsService {
    *   → 必須確保 term_id 存在且 tag-kind 對映正確（避免寫出壞連結）
    */
   async updateMarcExtras(orgId: string, bibId: string, marcExtras: MarcField[]): Promise<MarcField[]> {
-    return await this.db.withClient(async (client) => {
+    // RLS：這裡會查 authority_terms + 更新 bibliographic_records，需要先 set app.org_id 才能通過 policy。
+    return await this.db.withOrgClient(orgId, async (client) => {
       const violations = await this.validateMarcExtrasAuthorityLinksWithClient(client, orgId, marcExtras);
       if (violations.length > 0) {
         throw new BadRequestException({
@@ -5134,8 +5387,8 @@ export class BibsService {
     };
 
     // preview：只需要 read-only；apply：需要交易（BEGIN/COMMIT）
-    if (mode === 'preview') return await this.db.withClient(run);
-    return await this.db.transaction(run);
+    if (mode === 'preview') return await this.db.withOrgClient(orgId, run);
+    return await this.db.transactionWithOrg(orgId, run);
   }
 
   /**
@@ -5151,7 +5404,7 @@ export class BibsService {
     // 這個 method 會做大量 DB 讀寫，因此用 try/catch 把常見的 Postgres 格式錯誤轉成 400
     // - 例如 location_id/bibliographic_id 不是 UUID、acquired_at 不是有效日期
     try {
-      return await this.db.transaction(async (client) => {
+      return await this.db.transactionWithOrg(orgId, async (client) => {
       // 1) 權限（MVP）：匯入者必須是 staff（admin/librarian 且 active）
       await this.requireStaffActor(client, orgId, input.actor_user_id);
 

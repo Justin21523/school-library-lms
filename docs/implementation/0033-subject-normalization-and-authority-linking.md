@@ -151,9 +151,10 @@ if (subjectAuthorityId) subfields.push({ code: '0', value: `urn:uuid:${subjectAu
 
 ## 5) MARC 驗證：指標 7 與 `$2` 的硬規則 + `$0` urn:uuid 檢查
 
-前後端共用同一套「字典 + 驗證」邏輯（各自一份檔案）：
-- `apps/api/src/common/marc21.ts`
-- `apps/web/app/lib/marc21.ts`
+前後端共用同一套「字典 + 驗證」邏輯（SSOT）：
+- SSOT：`packages/shared/src/marc21-bib-field-dictionary.ts`
+- Web wrapper：`apps/web/app/lib/marc21.ts`
+- API wrapper：`apps/api/src/common/marc21.ts`
 
 新增通用規則：
 - 指標=7 → 必須有 `$2`
@@ -187,4 +188,3 @@ API client 型別同步：
    - `npm run qa:marc`
    - `npm run build -w @library-system/api`
    - `npm run build -w @library-system/web`
-

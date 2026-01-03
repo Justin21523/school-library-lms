@@ -1,3 +1,10 @@
+-- Migration: 0001_init
+--
+-- 注意（重要）：
+-- - 目前此檔是 `db/schema.sql` 的快照（內容幾乎相同），用於「正式環境」的 migration runner。
+-- - Demo/本機仍可直接用 `db/schema.sql`（保持教學/可讀性）；但上線/擴校時應以 `db/migrations/*` + `schema_migrations` 為準。
+-- - 後續新增欄位/索引/constraint 請新增新的 migration 檔案，不要直接改這份 init（避免難追溯）。
+
 -- PostgreSQL schema draft for the MVP.
 -- Notes:
 -- - Multi-tenant: most tables include organization_id.
@@ -61,10 +68,6 @@ BEGIN
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'hold_status') THEN
     CREATE TYPE hold_status AS ENUM ('queued', 'ready', 'cancelled', 'fulfilled', 'expired');
-  END IF;
-  -- background_job_status：背景工作狀態（P2：匯入/報表/maintenance 走 background job）
-  IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'background_job_status') THEN
-    CREATE TYPE background_job_status AS ENUM ('queued', 'running', 'succeeded', 'failed', 'canceled');
   END IF;
 END $$;
 
@@ -138,14 +141,6 @@ CREATE TABLE IF NOT EXISTS user_credentials (
 -- trigram index：支援 name 的模糊搜尋（例如打錯字、部分匹配）
 CREATE INDEX IF NOT EXISTS users_org_name_trgm
   ON users USING gin (name gin_trgm_ops);
-
--- trigram index：支援 external_id/org_unit 的模糊搜尋（對齊 Users list / Holds 建立時的 borrower lookup）
--- - external_id：學號/員編（館員常用「只記得一段」的查找方式）
--- - org_unit：班級/單位（例如 601/五年一班）
-CREATE INDEX IF NOT EXISTS users_external_id_trgm
-  ON users USING gin (external_id gin_trgm_ops);
-CREATE INDEX IF NOT EXISTS users_org_unit_trgm
-  ON users USING gin (org_unit gin_trgm_ops);
 
 -- bibliographic_records：書目（描述「一本書是什麼」）
 -- - 注意：這裡不放條碼/位置；那些屬於 item_copies（實體冊）
@@ -274,17 +269,6 @@ CREATE INDEX IF NOT EXISTS items_org_status
   ON item_copies (organization_id, status);
 CREATE INDEX IF NOT EXISTS items_org_location
   ON item_copies (organization_id, location_id);
--- 常用索引：依書目＋狀態快速判斷「是否有可借冊」（OPAC available_only）
-CREATE INDEX IF NOT EXISTS items_org_bib_status
-  ON item_copies (organization_id, bibliographic_id, status);
-
--- trigram index：支援冊的模糊搜尋（對齊 items list / loans / holds 的 query=...）
--- - barcode：常見前綴/部分掃碼（例如貼紙磨損）
--- - call_number：索書號（可能包含空格/分段）
-CREATE INDEX IF NOT EXISTS items_barcode_trgm
-  ON item_copies USING gin (barcode gin_trgm_ops);
-CREATE INDEX IF NOT EXISTS items_call_number_trgm
-  ON item_copies USING gin (call_number gin_trgm_ops);
 
 -- inventory_sessions：盤點作業（一次在某個 location 的盤點）
 --
@@ -465,51 +449,6 @@ CREATE TABLE IF NOT EXISTS audit_events (
 -- 常用索引：依時間倒序查稽核事件
 CREATE INDEX IF NOT EXISTS audit_org_created_at
   ON audit_events (organization_id, created_at DESC);
-
--- background_jobs：背景工作佇列（P2 起點：先落地最小可用的 job 追蹤）
---
--- 設計取捨（務必讀）：
--- - 我們刻意「不對 background_jobs 啟用 RLS」：
---   - RLS 的 app.org_id context 一次只能代表一個 org
---   - 但 worker 需要掃描全系統的 queued jobs（跨 org）
--- - 多租戶隔離改由「欄位 + WHERE organization_id = ...」在 service/controller 層保證
---   - 這張表屬於系統內部元資料（metadata），風險遠低於核心業務表
---   - 後續若採 BullMQ/Redis，也會改用外部 queue，不一定留在 Postgres
-CREATE TABLE IF NOT EXISTS background_jobs (
-  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  organization_id uuid NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
-  kind text NOT NULL,
-  status background_job_status NOT NULL DEFAULT 'queued',
-
-  -- payload/result：用 jsonb 承載不同 job 的輸入/輸出
-  payload jsonb NOT NULL DEFAULT '{}'::jsonb,
-  result jsonb NULL,
-
-  -- error：失敗訊息（方便 UI 顯示；詳細 stack trace 不建議存 DB）
-  error text NULL,
-
-  -- retry：MVP 先用簡單計數；未來可再加 backoff（run_at）與 dead letter
-  attempts int NOT NULL DEFAULT 0,
-  max_attempts int NOT NULL DEFAULT 3,
-
-  -- schedule/lock：run_at 用於延後執行；locked_* 用於 worker claim（避免重複跑）
-  run_at timestamptz NOT NULL DEFAULT now(),
-  locked_by text NULL,
-  locked_at timestamptz NULL,
-
-  created_at timestamptz NOT NULL DEFAULT now(),
-  updated_at timestamptz NOT NULL DEFAULT now(),
-  started_at timestamptz NULL,
-  finished_at timestamptz NULL
-);
-
--- worker claim：掃 status/run_at（queued 優先）
-CREATE INDEX IF NOT EXISTS background_jobs_status_run_at
-  ON background_jobs (status, run_at ASC, created_at ASC);
-
--- org 查詢：某校查看最近 jobs
-CREATE INDEX IF NOT EXISTS background_jobs_org_created_at
-  ON background_jobs (organization_id, created_at DESC);
 
 -- authority_terms：權威控制款目（Authority / Vocabulary v0）
 --

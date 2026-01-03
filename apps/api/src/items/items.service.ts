@@ -51,6 +51,27 @@ type ItemRow = {
 };
 
 /**
+ * ItemListRow（items list 專用：把「可讀的名稱」一起帶回）
+ *
+ * 為什麼 items list 需要 join？
+ * - 你指出的痛點很準：只看 UUID（bibliographic_id/location_id）會讓查詢/操作變慢
+ * - items 是「流通核心」，館員需要在列表就能看到：
+ *   - 這冊是什麼書（bibliographic_title）
+ *   - 在哪個館別/書架（location_code/name）
+ *
+ * 注意：
+ * - 這裡回傳 snake_case，與 DB 欄位一致（前端 api.ts 也是 snake_case）
+ * - ItemDetail 仍保留既有 shape；只有 list 額外帶 context 欄位
+ */
+type ItemListRow = ItemRow & {
+  bibliographic_title: string;
+  bibliographic_isbn: string | null;
+  bibliographic_classification: string | null;
+  location_code: string;
+  location_name: string;
+};
+
+/**
  * ItemDetailResult（Item detail 組合狀態）
  *
  * 需求背景：
@@ -96,33 +117,56 @@ export class ItemsService {
   async list(
     orgId: string,
     query: ListItemsQuery,
-  ): Promise<CursorPage<ItemRow>> {
+  ): Promise<CursorPage<ItemListRow>> {
     // items list 在 scale seed 下可能非常大，因此採用 cursor pagination（keyset）。
     // - 排序鍵：created_at DESC, id DESC
     // - next page 條件：(created_at, id) < (cursor.sort, cursor.id)
 
-    const whereClauses: string[] = ['organization_id = $1'];
+    // 所有條件都必須以 org 作為邊界（多租戶隔離）。
+    // - 因為 query 會 join bib/location，我們一律用 i.organization_id 當「真相來源」
+    const whereClauses: string[] = ['i.organization_id = $1'];
     const params: unknown[] = [orgId];
+
+    if (query.query) {
+      // 模糊搜尋（提升可用性）：把「館員常記得的可讀資訊」都納入
+      // - barcode：掃碼/前綴
+      // - call_number：索書號（上架/找書）
+      // - bib.title / bib.isbn / bib.classification：找「某本書的所有冊」
+      // - location.code/name：找「某館別」的冊
+      params.push(`%${query.query}%`);
+      const p = `$${params.length}`;
+      whereClauses.push(
+        `(
+          i.barcode ILIKE ${p}
+          OR i.call_number ILIKE ${p}
+          OR b.title ILIKE ${p}
+          OR COALESCE(b.isbn, '') ILIKE ${p}
+          OR COALESCE(b.classification, '') ILIKE ${p}
+          OR l.code ILIKE ${p}
+          OR l.name ILIKE ${p}
+        )`,
+      );
+    }
 
     if (query.barcode) {
       params.push(`%${query.barcode}%`);
-      whereClauses.push(`barcode ILIKE $${params.length}`);
+      whereClauses.push(`i.barcode ILIKE $${params.length}`);
     }
 
     if (query.status) {
       // schema 已保證 status 是合法 enum；這裡仍 cast 一次讓 SQL 更明確。
       params.push(query.status);
-      whereClauses.push(`status = $${params.length}::item_status`);
+      whereClauses.push(`i.status = $${params.length}::item_status`);
     }
 
     if (query.location_id) {
       params.push(query.location_id);
-      whereClauses.push(`location_id = $${params.length}::uuid`);
+      whereClauses.push(`i.location_id = $${params.length}::uuid`);
     }
 
     if (query.bibliographic_id) {
       params.push(query.bibliographic_id);
-      whereClauses.push(`bibliographic_id = $${params.length}::uuid`);
+      whereClauses.push(`i.bibliographic_id = $${params.length}::uuid`);
     }
 
     if (query.cursor) {
@@ -131,7 +175,7 @@ export class ItemsService {
         params.push(cursor.sort, cursor.id);
         const sortParam = `$${params.length - 1}`;
         const idParam = `$${params.length}`;
-        whereClauses.push(`(created_at, id) < (${sortParam}::timestamptz, ${idParam}::uuid)`);
+        whereClauses.push(`(i.created_at, i.id) < (${sortParam}::timestamptz, ${idParam}::uuid)`);
       } catch (error: any) {
         throw new BadRequestException({
           error: {
@@ -148,27 +192,42 @@ export class ItemsService {
     params.push(queryLimit);
     const limitParam = `$${params.length}`;
 
-    const result = await this.db.query<ItemRow>(
+    const result = await this.db.query<ItemListRow>(
       `
       SELECT
-        id,
-        organization_id,
-        bibliographic_id,
-        barcode,
-        call_number,
-        location_id,
-        status,
-        acquired_at,
-        last_inventory_at,
-        notes,
-        created_at,
-        updated_at
-      FROM item_copies
+        -- item
+        i.id,
+        i.organization_id,
+        i.bibliographic_id,
+        i.barcode,
+        i.call_number,
+        i.location_id,
+        i.status,
+        i.acquired_at,
+        i.last_inventory_at,
+        i.notes,
+        i.created_at,
+        i.updated_at,
+
+        -- context：讓 UI 列表能直接顯示「名稱」而不是 UUID
+        b.title AS bibliographic_title,
+        b.isbn AS bibliographic_isbn,
+        b.classification AS bibliographic_classification,
+        l.code AS location_code,
+        l.name AS location_name
+      FROM item_copies i
+      JOIN bibliographic_records b
+        ON b.id = i.bibliographic_id
+       AND b.organization_id = i.organization_id
+      JOIN locations l
+        ON l.id = i.location_id
+       AND l.organization_id = i.organization_id
       WHERE ${whereClauses.join(' AND ')}
-      ORDER BY created_at DESC, id DESC
+      ORDER BY i.created_at DESC, i.id DESC
       LIMIT ${limitParam}
       `,
       params,
+      { orgId },
     );
 
     const rows = result.rows;
@@ -227,6 +286,7 @@ export class ItemsService {
           input.last_inventory_at ?? null,
           input.notes ?? null,
         ],
+        { orgId },
       );
       return result.rows[0]!;
     } catch (error: any) {
@@ -347,6 +407,7 @@ export class ItemsService {
         AND i.id = $2
       `,
       [orgId, itemId],
+      { orgId },
     );
 
     if (result.rowCount === 0) {
@@ -455,6 +516,7 @@ export class ItemsService {
           updated_at
         `,
         params,
+        { orgId },
       );
 
       if (result.rowCount === 0) {
@@ -496,7 +558,7 @@ export class ItemsService {
    */
   async markLost(orgId: string, itemId: string, input: MarkItemLostInput): Promise<ItemRow> {
     try {
-      return await this.db.transaction(async (client) => {
+      return await this.db.transactionWithOrg(orgId, async (client) => {
         // 1) 驗證 actor（館員/管理者）
         const actor = await this.requireStaffActor(client, orgId, input.actor_user_id);
 
@@ -613,7 +675,7 @@ export class ItemsService {
    */
   async markRepair(orgId: string, itemId: string, input: MarkItemRepairInput): Promise<ItemRow> {
     try {
-      return await this.db.transaction(async (client) => {
+      return await this.db.transactionWithOrg(orgId, async (client) => {
         const actor = await this.requireStaffActor(client, orgId, input.actor_user_id);
         const item = await this.requireItemByIdForUpdate(client, orgId, itemId);
 
@@ -713,7 +775,7 @@ export class ItemsService {
    */
   async markWithdrawn(orgId: string, itemId: string, input: MarkItemWithdrawnInput): Promise<ItemRow> {
     try {
-      return await this.db.transaction(async (client) => {
+      return await this.db.transactionWithOrg(orgId, async (client) => {
         const actor = await this.requireStaffActor(client, orgId, input.actor_user_id);
         const item = await this.requireItemByIdForUpdate(client, orgId, itemId);
 
@@ -969,6 +1031,7 @@ export class ItemsService {
         AND organization_id = $2
       `,
       [bibId, orgId],
+      { orgId },
     );
 
     if (result.rowCount === 0) {
@@ -998,6 +1061,7 @@ export class ItemsService {
         AND organization_id = $2
       `,
       [locationId, orgId],
+      { orgId },
     );
 
     if (result.rowCount === 0) {

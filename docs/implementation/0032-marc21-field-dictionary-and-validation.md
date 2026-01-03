@@ -46,8 +46,10 @@
 ## 3) Web：下拉選單 + error/warning 驗證
 
 ### 3.1 字典檔
-- `apps/web/app/lib/marc21.ts`
+- **SSOT（單一真相來源）**：`packages/shared/src/marc21-bib-field-dictionary.ts`
   - 定義常用欄位字典 `MARC21_BIB_FIELDS` 與輔助函式（建立欄位模板、驗證、正規化指標…）。
+- Web wrapper：`apps/web/app/lib/marc21.ts`
+  - 只做 re-export（保留既有 import 路徑，避免大規模改動）。
 
 ### 3.2 編輯器元件（字典驅動 UI）
 - `apps/web/app/components/marc/marc-fields-editor.tsx`
@@ -67,8 +69,9 @@
 ## 4) API：儲存時的欄位級驗證（Zod）
 
 ### 4.1 字典檔（API 端一份）
-- `apps/api/src/common/marc21.ts`
-  - 與 Web 端對應的常用欄位字典與驗證函式（目前先採「兩份」避免 ESM/CJS runtime 共用踩坑）。
+- SSOT（shared）：`packages/shared/src/marc21-bib-field-dictionary.ts`
+- API wrapper：`apps/api/src/common/marc21.ts`
+  - 只做 re-export（保留既有 import 路徑）。
 
 ### 4.2 套用在 `marc_extras` schema
 - `apps/api/src/bibs/bibs.schemas.ts`
@@ -80,8 +83,7 @@
 ## 5) 擴充方式（新增/補齊欄位）
 
 新增或補齊一個常用 tag 的建議流程：
-1) 先在 Web 字典加入/補齊 spec：`apps/web/app/lib/marc21.ts`
-2) 同步在 API 字典加入/補齊 spec：`apps/api/src/common/marc21.ts`
+1) 直接在 SSOT 加入/補齊 spec：`packages/shared/src/marc21-bib-field-dictionary.ts`
 3) 若你已完整列出 subfields 且希望嚴格限制：將 `subfields_allow_other` 設為 `false`
 4) 若指標允許值已完整且希望嚴格限制：將 indicators 的 `allow_other` 設為 `false`
 
@@ -95,6 +97,4 @@
 
 - 字典目前是「常用欄位」集合，不是完整 MARC21 BIB 全表。
 - 本專案匯入端目前 **不支援 MARC-8**（僅接受 UTF-8；匯入時會拒絕 MARC-8 以避免亂碼）。
-- 字典目前在 Web/API 各一份（模組系統差異），後續若要真正單一來源，建議改成：
-  - 以 JSON/DSL 做單一資料來源，再在 build 時產生 Web/API 可用的 TS 檔；或
-  - 調整 monorepo 的 ESM/CJS 策略，讓 shared package 能同時被兩端 runtime 安全載入。
+- 字典已集中到 shared（SSOT），後續只要在 `packages/shared/src/marc21-bib-field-dictionary.ts` 擴充即可同步影響 Web/UI 與 API 驗證。

@@ -44,6 +44,19 @@ const intFromStringSchema = z.preprocess((value) => {
  * - cursor 由 API 回傳（next_cursor），前端在「載入更多」時帶回來即可續查
  */
 export const listItemsQuerySchema = z.object({
+  /**
+   * query：模糊搜尋（快速找冊）
+   *
+   * 需求動機（對齊你的回饋）：
+   * - 只靠 UUID（bibliographic_id/location_id）不利於日常查詢
+   * - 館員更常用「條碼/索書號/書名/館別代碼」找冊
+   *
+   * 行為（由 service 決定實際涵蓋欄位）：
+   * - item.barcode / item.call_number
+   * - bib.title / bib.isbn / bib.classification（必要時）
+   * - location.code / location.name
+   */
+  query: z.string().trim().min(1).max(200).optional(),
   barcode: z.string().trim().min(1).max(64).optional(),
   status: itemStatusSchema.optional(),
   location_id: z.string().uuid().optional(),

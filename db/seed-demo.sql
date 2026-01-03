@@ -119,6 +119,13 @@ BEGIN
     RETURNING id INTO v_org_id;
   END IF;
 
+  -- RLS（Row Level Security）：
+  -- - schema.sql 對 org-scoped tables 啟用/強制 RLS（FORCE ROW LEVEL SECURITY）
+  -- - 因此從這一行開始，只要碰 locations/users/... 等表，就必須先設定 app.org_id
+  --
+  -- 這裡用 set_config(..., true) 讓設定只在「這個交易」內有效（BEGIN..COMMIT 之間）。
+  PERFORM set_config('app.org_id', v_org_id::text, true);
+
   -- ----------------------------
   -- B) locations：用 (org, code) 找；不存在就建立
   -- ----------------------------

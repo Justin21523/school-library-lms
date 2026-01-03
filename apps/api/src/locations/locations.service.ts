@@ -43,6 +43,7 @@ export class LocationsService {
       ORDER BY created_at DESC
       `,
       [orgId],
+      { orgId },
     );
     return result.rows;
   }
@@ -57,6 +58,7 @@ export class LocationsService {
         RETURNING id, organization_id, code, name, area, shelf_code, status, created_at, updated_at
         `,
         [orgId, input.code, input.name, input.area ?? null, input.shelf_code ?? null],
+        { orgId },
       );
       return result.rows[0]!;
     } catch (error: any) {
@@ -124,6 +126,7 @@ export class LocationsService {
         RETURNING id, organization_id, code, name, area, shelf_code, status, created_at, updated_at
         `,
         params,
+        { orgId },
       );
 
       if (result.rowCount === 0) {

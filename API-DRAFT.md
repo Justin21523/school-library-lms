@@ -94,8 +94,22 @@
   - Response：`{ term; include; depth; labels; term_ids; broader_terms; narrower_terms; related_terms; variant_labels }`
 
 ## 4) Bibliographic Records（書目）
-- `GET /orgs/{orgId}/bibs?query=...&subjects_any=...&subject_term_ids=...&geographics_any=...&geographic_term_ids=...&genres_any=...&genre_term_ids=...&isbn=...&classification=...&limit=...&cursor=...`：查詢書目（含可借/總冊數）
-  - `query`：關鍵字（ILIKE；比對 title/creators/contributors/subjects/publisher/isbn/classification）
+- `GET /orgs/{orgId}/bibs?query=...&search_fields=...&must=...&should=...&must_not=...&published_year_from=...&published_year_to=...&language=...&available_only=...&subjects_any=...&subject_term_ids=...&geographics_any=...&geographic_term_ids=...&genres_any=...&genre_term_ids=...&isbn=...&classification=...&limit=...&cursor=...`：查詢書目（含可借/總冊數）
+  - `query`：關鍵字（ILIKE；可搭配 `search_fields` 限制欄位集合）
+  - `search_fields`：欄位集合（逗號分隔），例如：
+    - `title`：書名
+    - `author`：creators + contributors
+    - `subject`：subjects（650）
+    - `geographic`：geographics（651）
+    - `genre`：genres（655）
+    - `publisher` / `isbn` / `classification` / `language`
+  - `must` / `should` / `must_not`：布林檢索（AND/OR/NOT；逗號或換行分隔 term）
+    - `must`：每個 term 都必須命中任一 `search_fields` 欄位（AND）
+    - `should`：至少一個 term 命中任一欄位（OR）
+    - `must_not`：任何 term 命中即排除（NOT）
+  - `published_year_from` / `published_year_to`：出版年區間（int）
+  - `language`：語言代碼 prefix（例如 `zh` 命中 `zh-TW`）
+  - `available_only`：只回傳「目前至少有 1 冊可借」的書目（v1 以 `item_copies.status='available'` 判斷）
   - `subjects_any`：主題詞擴充查詢（thesaurus expand 後的 labels；用逗號串起來，例如 `subjects_any=汰舊,報廢,除籍`；DB 用 `subjects && $labels::text[]`）
   - `subject_term_ids`：term_id-driven 主題詞過濾（任一命中；用逗號串起來，例如 `subject_term_ids=uuid1,uuid2,...`；DB 用 junction table `bibliographic_subject_terms`）
     - 相容 alias：`subject_term_ids_any`（行為相同；可逐步淘汰）
@@ -173,8 +187,15 @@
     ```
 
 ## 5) Item Copies（冊）
-- `GET /orgs/{orgId}/items?barcode=...&status=...&location_id=...&bibliographic_id=...&limit=...&cursor=...`：查詢冊（Librarian）
+- `GET /orgs/{orgId}/items?query=...&barcode=...&status=...&location_id=...&bibliographic_id=...&limit=...&cursor=...`：查詢冊（Librarian）
+  - `query`：模糊搜尋（ILIKE；OR）
+    - item：`barcode` / `call_number`
+    - bib：`title` / `isbn` / `classification`
+    - location：`code` / `name`
   - Response：`{ items: ItemCopy[]; next_cursor: string|null }`
+    - list 會額外帶「可讀欄位」以降低 UI 只剩 UUID 的痛點：
+      - `bibliographic_title` / `bibliographic_isbn` / `bibliographic_classification`
+      - `location_code` / `location_name`
 - `POST /orgs/{orgId}/bibs/{bibId}/items`：在書目下新增冊（Librarian）
 - `GET /orgs/{orgId}/items/{itemId}`：取得冊（含當前借閱/預約狀態）
 - `PATCH /orgs/{orgId}/items/{itemId}`：更新冊（位置/索書號/備註等）（Librarian）
@@ -192,8 +213,9 @@
 > 借還建議用「動作端點」，避免前端直接改資料狀態造成不一致。
 
 ### Loans（借閱查詢）
-- `GET /orgs/{orgId}/loans?status=open|closed|all&user_external_id=...&item_barcode=...&limit=...&cursor=...`
+- `GET /orgs/{orgId}/loans?query=...&status=open|closed|all&user_external_id=...&item_barcode=...&limit=...&cursor=...`
   - 說明：
+    - `query`：模糊搜尋（ILIKE；OR；用於「只記得姓名/書名/條碼一段」的情境）
     - `status` 未提供時預設 `open`（未歸還）
     - `is_overdue` 由 `returned_at IS NULL AND due_at < now()` 推導（不存狀態）
   - Response（摘要）：回傳 loan + borrower + item + bib title（便於 UI 顯示）
@@ -304,8 +326,13 @@ Holds 同時服務兩條流程：
 - Response：回傳「hold + borrower + bib title + pickup location + assigned item」的組合資料（snake_case）
 
 ### 7.2 查詢預約（List holds）
-- `GET /orgs/{orgId}/holds?status=...&user_external_id=...&item_barcode=...&bibliographic_id=...&pickup_location_id=...&limit=...&cursor=...`
+- `GET /orgs/{orgId}/holds?query=...&status=...&user_external_id=...&item_barcode=...&bibliographic_id=...&pickup_location_id=...&limit=...&cursor=...`
 - 說明：
+  - `query`：模糊搜尋（ILIKE；OR）
+    - user：external_id / name
+    - bib：title
+    - pickup location：code / name
+    - assigned item：barcode（若此 hold 已指派冊）
   - `status` 可為 `queued|ready|cancelled|fulfilled|expired|all`；未提供時等同 `all`
   - `user_external_id`/`item_barcode`/`bibliographic_id`/`pickup_location_id` 為精確過濾
 - Response：`{ items: HoldWithDetails[]; next_cursor: string|null }`
@@ -346,12 +373,12 @@ Holds 同時服務兩條流程：
 > ready hold 超過取書期限（`ready_until`）後，必須由館員定期處理；否則冊會長期卡在 `on_hold`，降低可借率。
 
 - `POST /orgs/{orgId}/holds/expire-ready`
-- 權限（MVP 最小控管）：
-  - `actor_user_id` 必填，且必須是 `admin/librarian`（active）
+- 權限（staff-only）：
+  - 需要 `Authorization: Bearer <token>`（StaffAuthGuard）
+  - `actor_user_id` 由 token 推導（後端會覆寫/驗證一致性，避免前端冒用）
 - Request（JSON）：
   ```json
   {
-    "actor_user_id": "u_admin_or_librarian",
     "mode": "preview|apply",
     "as_of": "2025-12-24T00:00:00Z",
     "limit": 200,
@@ -392,6 +419,25 @@ Holds 同時服務兩條流程：
     "results": []
   }
   ```
+
+### 7.6 背景 Job：到書未取到期處理（Expire ready holds / async）
+> 目的：避免 maintenance 端點「跑很久導致 HTTP timeout」；改成 enqueue job 後由 worker 執行。
+
+- `POST /orgs/{orgId}/jobs/holds-expire-ready`
+- 權限：同 7.5（staff-only；actor 由 token 推導）
+- Request（JSON）：
+  ```json
+  {
+    "as_of": "2025-12-24T00:00:00Z",
+    "limit": 200,
+    "note": "每日到期處理（選填）"
+  }
+  ```
+- Response（202 Accepted；摘要）：
+  ```json
+  { "id": "job_uuid", "kind": "holds.expire_ready", "status": "queued" }
+  ```
+- `GET /orgs/{orgId}/jobs/{jobId}`：查 job 狀態（running/succeeded/failed；result/error 會回傳在 job row）
 
 ## 8) Policies
 - `GET /orgs/{orgId}/circulation-policies`：列出政策

@@ -49,6 +49,79 @@ const intFromStringSchema = z.preprocess((value) => {
 }, z.number().int().min(1).max(500));
 
 /**
+ * boolean（query string）：
+ * - Nest 的 query param 預設都是 string，因此我們用 preprocess 把常見的 true/false 表示法轉成 boolean
+ * - 允許：true/false, 1/0, yes/no（不分大小寫）
+ */
+const booleanFromStringSchema = z.preprocess((value) => {
+  if (value === undefined || value === null) return undefined;
+
+  if (typeof value === 'string') {
+    const trimmed = value.trim().toLowerCase();
+    if (!trimmed) return undefined;
+    if (trimmed === 'true' || trimmed === '1' || trimmed === 'yes' || trimmed === 'y') return true;
+    if (trimmed === 'false' || trimmed === '0' || trimmed === 'no' || trimmed === 'n') return false;
+  }
+
+  return value;
+}, z.boolean());
+
+/**
+ * published_year range filter：query string → int（0..9999）
+ *
+ * 為什麼 range 要獨立一個 schema？
+ * - limit 的範圍是 1..500；published_year 則是「年代」概念，合理範圍不同
+ * - 這裡先採寬鬆範圍（0..9999）避免擋到歷史資料；更嚴格的規則可等治理/匯入器再加
+ */
+const yearFromStringSchema = z.preprocess((value) => {
+  if (value === undefined || value === null) return undefined;
+
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (!trimmed) return undefined;
+    return Number.parseInt(trimmed, 10);
+  }
+
+  return value;
+}, z.number().int().min(0).max(9999));
+
+/**
+ * 逗號/換行分隔的清單 → string[]
+ *
+ * 用途（對齊你的需求：布林檢索 + 容易上手）：
+ * - 前端可以用 textarea 讓使用者「每行輸入一個 term」
+ * - API 端仍採 GET query string，但可讀性/可用性更好
+ *
+ * 注意：
+ * - 我們刻意不支援「用空白分詞」，避免把英文片語（例如 "Harry Potter"）拆壞
+ * - 逗號與換行是最直覺且最容易被 UI 產生的分隔符
+ */
+function splitCommaOrNewlineList(value: unknown): string[] | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== 'string') return value as any;
+  const trimmed = value.trim();
+  if (!trimmed) return undefined;
+  return trimmed
+    .split(/[,\n]/)
+    .map((x) => x.trim())
+    .filter(Boolean);
+}
+
+// search_fields：欄位型布林檢索的「可選欄位」集合（後端會把它投影到 SQL 的 OR 條件）。
+// - 注意：這裡是「讀者/館員對書目的心智模型」欄位，不是 DB 欄位名。
+export const bibSearchFieldSchema = z.enum([
+  'title',
+  'author', // creators + contributors
+  'subject', // subjects（MARC 650）
+  'geographic', // geographics（MARC 651）
+  'genre', // genres（MARC 655）
+  'publisher',
+  'isbn',
+  'classification',
+  'language',
+]);
+
+/**
  * list bibs query
  *
  * 注意：
@@ -57,6 +130,73 @@ const intFromStringSchema = z.preprocess((value) => {
  */
 export const listBibsQuerySchema = z.object({
   query: z.string().trim().min(1).max(200).optional(),
+  /**
+   * search_fields：指定「布林檢索」要查哪些欄位
+   *
+   * 設計：
+   * - 未提供：等同全欄位（符合 OPAC keyword 的直覺）
+   * - 有提供：只在指定欄位內做比對（支援進階搜尋 UI）
+   *
+   * 輸入格式：
+   * - query string：逗號分隔，例如 `search_fields=title,author,subject`
+   */
+  search_fields: z
+    .preprocess(splitCommaOrNewlineList, z.array(bibSearchFieldSchema).min(1).max(20))
+    .optional(),
+
+  /**
+   * must/should/must_not：布林檢索（AND/OR/NOT）
+   *
+   * 目標：
+   * - 讓 OPAC/後台都能做到「欄位型 + 布林」檢索，而不需要先做一套複雜的 query parser（Lucene 語法）
+   * - 前端可以用「多條件表單」或「三個 textarea」讓使用者快速上手
+   *
+   * 行為：
+   * - must：每個 term 都必須命中任一指定欄位（AND）
+   * - should：至少一個 term 命中任一指定欄位（OR）
+   * - must_not：任何 term 命中即排除（NOT）
+   *
+   * 輸入格式：
+   * - query string：逗號或換行分隔，例如 `must=哈利波特,羅琳`
+   */
+  must: z
+    .preprocess(
+      splitCommaOrNewlineList,
+      z.array(z.string().trim().min(1).max(200)).min(1).max(50),
+    )
+    .optional(),
+  should: z
+    .preprocess(
+      splitCommaOrNewlineList,
+      z.array(z.string().trim().min(1).max(200)).min(1).max(50),
+    )
+    .optional(),
+  must_not: z
+    .preprocess(
+      splitCommaOrNewlineList,
+      z.array(z.string().trim().min(1).max(200)).min(1).max(50),
+    )
+    .optional(),
+
+  // published_year range（metadata filter；對齊「進階搜尋」常見需求）
+  published_year_from: yearFromStringSchema.optional(),
+  published_year_to: yearFromStringSchema.optional(),
+
+  // language：BCP47 / 自訂代碼皆可（UI 可用 zh / en 這類 prefix；後端用 prefix match）
+  language: z.string().trim().min(1).max(32).optional(),
+
+  /**
+   * available_only：只回傳「有可借冊」的書目
+   *
+   * 用途（對齊 OPAC 常見 UX）：
+   * - 使用者想快速找到「現在就借得到」的書
+   *
+   * 注意（MVP）：
+   * - v1 先用 item_copies.status='available' 判斷
+   * - 未來若要納入 policy/hold queue 等更精細規則，可改用「可借算法」或 materialized view
+   */
+  available_only: booleanFromStringSchema.optional(),
+
   // subjects_any：用於 thesaurus expand 後的「主題詞擴充查詢」
   // - 前端會把 labels[] 用逗號串起來丟進 query string（例如：subjects_any=汰舊,報廢,除籍）
   // - 後端會用 `subjects && $labels::text[]` 做 overlap 查詢（建議搭配 GIN index）
@@ -208,6 +348,19 @@ export const listBibsQuerySchema = z.object({
   assertSame(value.subject_term_ids, value.subject_term_ids_any, 'subject_term_ids');
   assertSame(value.geographic_term_ids, value.geographic_term_ids_any, 'geographic_term_ids');
   assertSame(value.genre_term_ids, value.genre_term_ids_any, 'genre_term_ids');
+
+  // published_year range 防呆：from <= to
+  if (
+    value.published_year_from !== undefined &&
+    value.published_year_to !== undefined &&
+    value.published_year_from > value.published_year_to
+  ) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'published_year_from must be <= published_year_to',
+      path: ['published_year_from'],
+    });
+  }
 });
 
 export type ListBibsQuery = z.infer<typeof listBibsQuerySchema>;

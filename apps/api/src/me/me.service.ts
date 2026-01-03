@@ -47,6 +47,7 @@ export class MeService {
         AND id = $2
       `,
       [orgId, userId],
+      { orgId },
     );
 
     if (result.rowCount === 0) {
@@ -156,6 +157,7 @@ export class MeService {
       LIMIT ${limitParam}
       `,
       params,
+      { orgId },
     );
 
     const rows = result.rows;
@@ -282,6 +284,7 @@ export class MeService {
       LIMIT ${limitParam}
       `,
       params,
+      { orgId },
     );
 
     const rows = result.rows;

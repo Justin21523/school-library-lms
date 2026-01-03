@@ -144,6 +144,24 @@ export class LoansService {
       whereClauses.push(`i.barcode = $${params.length}`);
     }
 
+    if (query.query) {
+      // 模糊搜尋（對齊「查詢要能用名稱/書名」的需求）：
+      // - user：external_id / name
+      // - item：barcode / call_number
+      // - bib：title
+      params.push(`%${query.query}%`);
+      const p = `$${params.length}`;
+      whereClauses.push(
+        `(
+          u.external_id ILIKE ${p}
+          OR u.name ILIKE ${p}
+          OR i.barcode ILIKE ${p}
+          OR i.call_number ILIKE ${p}
+          OR b.title ILIKE ${p}
+        )`,
+      );
+    }
+
     // 以 returned_at 判斷 open/closed，避免依賴 status 欄位的正確性（更穩）。
     if (status === 'open') whereClauses.push('l.returned_at IS NULL');
     if (status === 'closed') whereClauses.push('l.returned_at IS NOT NULL');
@@ -220,6 +238,8 @@ export class LoansService {
       LIMIT ${limitParam}
       `,
       params,
+      // RLS：loans/users/items/bibs 都是 org-scoped，必須設定 app.org_id 才能查。
+      { orgId },
     );
 
     const rows = result.rows;
@@ -250,7 +270,7 @@ export class LoansService {
    */
   async purgeHistory(orgId: string, input: PurgeLoanHistoryInput): Promise<PurgeLoanHistoryResult> {
     try {
-      return await this.db.transaction(async (client) => {
+      return await this.db.transactionWithOrg(orgId, async (client) => {
         // 1) actor：必須是 active admin（US-061 屬於「系統管理」等級）
         const actor = await this.requireUserById(client, orgId, input.actor_user_id);
 

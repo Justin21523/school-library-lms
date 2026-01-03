@@ -95,7 +95,7 @@ export class CirculationService {
 
   async checkout(orgId: string, input: CheckoutInput) {
     try {
-      return await this.db.transaction(async (client) => {
+      return await this.db.transactionWithOrg(orgId, async (client) => {
         // 1) 驗證操作者：確定是同 org 的館員/管理者。
         const actor = await this.requireActor(client, orgId, input.actor_user_id);
 
@@ -221,7 +221,7 @@ export class CirculationService {
 
   async checkin(orgId: string, input: CheckinInput) {
     try {
-      return await this.db.transaction(async (client) => {
+      return await this.db.transactionWithOrg(orgId, async (client) => {
         // 1) 驗證操作者（館員/管理者）。
         const actor = await this.requireActor(client, orgId, input.actor_user_id);
 
@@ -339,7 +339,7 @@ export class CirculationService {
 
   async renew(orgId: string, input: RenewInput) {
     try {
-      return await this.db.transaction(async (client) => {
+      return await this.db.transactionWithOrg(orgId, async (client) => {
         // renew 是「修改 loan」的操作，因此同樣需要交易：
         // - 讀取 loan / item / policy（用來判斷可否續借）
         // - 更新 loans.due_at + loans.renewed_count

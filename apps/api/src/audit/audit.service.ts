@@ -60,7 +60,7 @@ export class AuditService {
 
   async list(orgId: string, query: ListAuditEventsQuery): Promise<AuditEventRow[]> {
     // 1) 權限控管（MVP）：查詢者必須是 staff
-    await this.db.transaction(async (client) => {
+    await this.db.transactionWithOrg(orgId, async (client) => {
       await this.requireAuditViewer(client, orgId, query.actor_user_id);
     });
 
@@ -129,6 +129,7 @@ export class AuditService {
         LIMIT ${limitParam}
         `,
         params,
+        { orgId },
       );
 
       return result.rows;
@@ -181,4 +182,3 @@ export class AuditService {
     return actor;
   }
 }
-

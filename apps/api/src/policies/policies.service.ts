@@ -55,13 +55,14 @@ export class PoliciesService {
       ORDER BY is_active DESC, created_at DESC
       `,
       [orgId],
+      { orgId },
     );
     return result.rows;
   }
 
   async create(orgId: string, input: CreatePolicyInput): Promise<PolicyRow> {
     try {
-      return await this.db.transaction(async (client) => {
+      return await this.db.transactionWithOrg(orgId, async (client) => {
         // 1) 同一 org + role 同時只允許一筆 active policy（schema.sql 的 partial unique index）
         // - create 時我們採「新建即生效」：先把同 role 的舊 active 全部設為 inactive，再插入新政策為 active
         // - 好處：館員建立新政策後立即生效，且舊政策仍保留作為歷史版本（可追溯）
@@ -128,7 +129,7 @@ export class PoliciesService {
    * - is_active 只允許設為 true（啟用）；「停用」由啟用另一筆政策來完成
    */
   async update(orgId: string, policyId: string, input: UpdatePolicyInput): Promise<PolicyRow> {
-    return await this.db.transaction(async (client) => {
+    return await this.db.transactionWithOrg(orgId, async (client) => {
       // 1) 先確認 policy 存在，並取得它的 audience_role（啟用時需要用來解除同 role 其他 active）
       const existing = await client.query<{ id: string; audience_role: PolicyRow['audience_role'] }>(
         `

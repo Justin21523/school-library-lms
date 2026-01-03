@@ -210,6 +210,7 @@ export class UsersService {
       LIMIT ${limitParam}
       `,
       params,
+      { orgId },
     );
 
     const rows = result.rows;
@@ -236,6 +237,7 @@ export class UsersService {
         RETURNING id, organization_id, external_id, name, role, org_unit, status, created_at, updated_at
         `,
         [orgId, input.external_id, input.name, input.role, input.org_unit ?? null],
+        { orgId },
       );
       return result.rows[0]!;
     } catch (error: any) {
@@ -276,7 +278,7 @@ export class UsersService {
    * - admin 才能管理 staff（admin/librarian）或調整 role 到 staff
    */
   async update(orgId: string, userId: string, input: UpdateUserInput): Promise<UserRow> {
-    return await this.db.transaction(async (client) => {
+    return await this.db.transactionWithOrg(orgId, async (client) => {
       // 1) 驗證操作者（admin/librarian 且 active）
       const actor = await this.requireStaffActor(client, orgId, input.actor_user_id);
 
@@ -409,7 +411,7 @@ export class UsersService {
     // 因此我們統一用 transaction 包起來：
     // - preview：雖然不寫入，但可確保「同一個一致快照」下判斷 create/update/deactivate
     // - apply：確保寫入與 audit event 同步成功/失敗（避免寫入成功但 audit 失敗）
-    return await this.db.transaction(async (client) => {
+    return await this.db.transactionWithOrg(orgId, async (client) => {
       // 1) 權限控管（MVP）：匯入者必須是 staff（admin/librarian 且 active）
       const actor = await this.requireStaffActor(client, orgId, input.actor_user_id);
 

@@ -5,16 +5,16 @@
  *
  * 重要背景：
  * - DB 的 holds.status 是 enum：queued/ready/cancelled/fulfilled/expired
- * - 本專案同時支援兩種使用情境：
- *   1) staff（館員後台 Web Console）：已導入 Staff Auth（Bearer token）
- *      - 重要 staff 動作端點（例如 fulfill / expire-ready）在 controller 層套用 StaffAuthGuard
- *      - actor_user_id 仍保留在 body（寫 audit / RBAC），但 guard 會要求它必須等於登入者（避免冒用）
- *   2) patron（讀者自助 OPAC）：目前仍是「無登入」模式
- *      - create/cancel 等端點允許不帶 actor_user_id，後端會視為「本人操作」
+ * - 本專案目前有兩種「端點族群」：
+ *   1) staff（館員後台 Web Console）：`/api/v1/orgs/:orgId/holds/*`
+ *      - controller 全面套用 StaffAuthGuard（Bearer token）
+ *      - actor_user_id 由後端推導（req.staff_user.id），避免前端可冒用/可省略導致 audit 失真
+ *   2) patron（讀者自助 OPAC Account）：`/api/v1/orgs/:orgId/me/*`
+ *      - 由 PatronAuthGuard 保護，user_id 由 token 推導
+ *      - OPAC 不再提供「以 user_external_id 冒充本人」的過渡寫入端點
  *
  * 注意：
- * - 目前 OPAC 仍未導入讀者登入，因此「本人操作」仍屬 MVP 的最小可用假設
- * - 後續若要真正安全，建議導入讀者身分驗證（或另開 OPAC 專用端點/權杖）
+ * - 若你需要「館員替讀者代辦」：走 staff `/holds` 端點（會寫入 audit 並受 RBAC 控制）
  */
 
 import { z } from 'zod';
@@ -52,9 +52,9 @@ const intFromStringSchema = z.preprocess((value) => {
  *
  * 設計：
  * - user_external_id：指定「這筆預約是替誰建立」（借閱者）
- * - actor_user_id（可選）：誰在操作（用於 audit）
- *   - staff 代辦：傳 actor_user_id（館員）
- *   - OPAC 自助：不傳 actor_user_id（後端視為 borrower 本人）
+ * - actor_user_id（可選）：操作者（用於 audit）
+ *   - staff `/holds`：可不傳（由 StaffAuthGuard 推導），或傳入（但必須等於 token user）
+ *   - OPAC `/me/holds`：由 token 推導（前端不傳）
  */
 export const createHoldSchema = z.object({
   bibliographic_id: uuidSchema,
@@ -69,8 +69,8 @@ export type CreateHoldInput = z.infer<typeof createHoldSchema>;
  * 取消 hold
  *
  * actor_user_id（可選）：
- * - staff 取消：傳 actor_user_id（館員）
- * - OPAC 自助取消：不傳（後端視為 hold.user_id 本人）
+ * - staff `/holds/:id/cancel`：可不傳（由 StaffAuthGuard 推導），或傳入（但必須等於 token user）
+ * - OPAC `/me/holds/:id/cancel`：由 token 推導（前端不傳）
  */
 export const cancelHoldSchema = z.object({
   actor_user_id: uuidSchema.optional(),
@@ -82,11 +82,11 @@ export type CancelHoldInput = z.infer<typeof cancelHoldSchema>;
  * fulfill（取書借出 / 完成保留）
  *
  * 這是一個「館員動作」：
- * - 需要 actor_user_id（admin/librarian）
+ * - actor_user_id 由 StaffAuthGuard 推導（可不由前端傳）
  * - 會建立 loan、更新 item 狀態、更新 hold 狀態，並寫 audit
  */
 export const fulfillHoldSchema = z.object({
-  actor_user_id: uuidSchema,
+  actor_user_id: uuidSchema.optional(),
 });
 
 export type FulfillHoldInput = z.infer<typeof fulfillHoldSchema>;
@@ -109,7 +109,7 @@ export type FulfillHoldInput = z.infer<typeof fulfillHoldSchema>;
 export const holdMaintenanceModeSchema = z.enum(['preview', 'apply']);
 
 export const expireReadyHoldsSchema = z.object({
-  actor_user_id: uuidSchema,
+  actor_user_id: uuidSchema.optional(),
   mode: holdMaintenanceModeSchema,
 
   // as_of：用哪個時間點判定過期（未提供時由後端用 DB now() 取得）
@@ -130,6 +130,18 @@ export type ExpireReadyHoldsInput = z.infer<typeof expireReadyHoldsSchema>;
  * list holds query
  */
 export const listHoldsQuerySchema = z.object({
+  /**
+   * query：模糊搜尋（使用者/書名/取書地點/冊條碼）
+   *
+   * 需求動機（對齊你的回饋）：
+   * - 只靠 user_external_id/item_barcode/bibliographic_id 的精確鍵，對日常查詢不友善
+   * - 館員通常只記得「姓名/書名」或想快速找「某地點的 ready holds」
+   *
+   * 行為：
+   * - 後端用 ILIKE + %...% 在 joins（user/bib/location/assigned item）欄位做 OR 搜尋
+   * - 仍保留精確 filter（掃碼/名冊編號）以支援高確定性操作
+   */
+  query: z.string().trim().min(1).max(200).optional(),
   status: holdListStatusSchema.optional(),
   user_external_id: externalIdSchema.optional(),
   item_barcode: barcodeSchema.optional(),
