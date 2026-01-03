@@ -15,6 +15,7 @@
 
 import { Body, Controller, Param, ParseUUIDPipe, Post, UseGuards } from '@nestjs/common';
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
+import { AuthRateLimitGuard } from './auth-rate-limit.guard';
 import { AuthService } from './auth.service';
 import {
   bootstrapSetStaffPasswordSchema,
@@ -33,6 +34,7 @@ export class AuthController {
    *
    * POST /api/v1/orgs/:orgId/auth/login
    */
+  @UseGuards(AuthRateLimitGuard)
   @Post('login')
   async login(
     @Param('orgId', new ParseUUIDPipe()) orgId: string,
@@ -46,6 +48,7 @@ export class AuthController {
    *
    * POST /api/v1/orgs/:orgId/auth/patron-login
    */
+  @UseGuards(AuthRateLimitGuard)
   @Post('patron-login')
   async patronLogin(
     @Param('orgId', new ParseUUIDPipe()) orgId: string,
@@ -79,6 +82,7 @@ export class AuthController {
    * - 用於第一次導入（尚未有任何人能登入）
    * - 若未設定 AUTH_BOOTSTRAP_SECRET，後端會拒絕
    */
+  @UseGuards(AuthRateLimitGuard)
   @Post('bootstrap-set-password')
   async bootstrapSetPassword(
     @Param('orgId', new ParseUUIDPipe()) orgId: string,

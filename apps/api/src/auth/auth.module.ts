@@ -11,6 +11,8 @@
 
 import { Global, Module } from '@nestjs/common';
 import { AuthController } from './auth.controller';
+import { AuthRateLimitGuard } from './auth-rate-limit.guard';
+import { AuthRateLimitService } from './auth-rate-limit.service';
 import { AuthService } from './auth.service';
 import { PatronAuthGuard } from './patron-auth.guard';
 import { StaffAuthGuard } from './staff-auth.guard';
@@ -18,7 +20,7 @@ import { StaffAuthGuard } from './staff-auth.guard';
 @Global()
 @Module({
   controllers: [AuthController],
-  providers: [AuthService, StaffAuthGuard, PatronAuthGuard],
-  exports: [AuthService, StaffAuthGuard, PatronAuthGuard],
+  providers: [AuthService, StaffAuthGuard, PatronAuthGuard, AuthRateLimitService, AuthRateLimitGuard],
+  exports: [AuthService, StaffAuthGuard, PatronAuthGuard, AuthRateLimitService, AuthRateLimitGuard],
 })
 export class AuthModule {}

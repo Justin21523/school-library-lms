@@ -103,7 +103,7 @@ export class AuthService {
     allowedRoles: UserRole[],
     purpose: 'staff' | 'patron',
   ): Promise<StaffLoginResult> {
-    return await this.db.transaction(async (client) => {
+    return await this.db.transactionWithOrg(orgId, async (client) => {
       const user = await this.requireUserByExternalId(client, orgId, input.external_id);
 
       // 依用途限制可登入的角色（避免 guest 等不該登入者取得 token）
@@ -174,7 +174,7 @@ export class AuthService {
    * - guard 會要求 actor_user_id 必須等於 token user_id，避免 UI 任意選 actor
    */
   async setStaffPassword(orgId: string, input: SetStaffPasswordInput) {
-    return await this.db.transaction(async (client) => {
+    return await this.db.transactionWithOrg(orgId, async (client) => {
       const actor = await this.requireUserById(client, orgId, input.actor_user_id);
       if (actor.status !== 'active') {
         throw new ConflictException({
@@ -271,7 +271,7 @@ export class AuthService {
       });
     }
 
-    return await this.db.transaction(async (client) => {
+    return await this.db.transactionWithOrg(orgId, async (client) => {
       const target = await this.requireUserByExternalId(client, orgId, input.target_external_id);
       if (!STAFF_ROLES.includes(target.role)) {
         throw new ForbiddenException({
@@ -401,9 +401,28 @@ export class AuthService {
   }
 
   private hmac(payloadB64: string) {
-    // secret：MVP 開發環境允許 fallback，避免忘了設就整個系統不能跑
-    // - 上 production 時務必設定 AUTH_TOKEN_SECRET
-    const secret = process.env.AUTH_TOKEN_SECRET?.trim() || 'dev-insecure-secret';
+    // secret：MVP 開發環境允許 fallback，避免忘了設就整個系統不能跑。
+    //
+    // ⚠️ 正式環境（APP_ENV=production）安全規則：
+    // - 禁止 fallback（不可留空）
+    // - 禁止使用範本值 dev-insecure-secret
+    //
+    // 為什麼不用 NODE_ENV 判斷？
+    // - 本 repo 的 Docker runtime 會固定 ENV NODE_ENV=production（效能/最佳化）
+    // - 但那不等於「你真的要上線到正式環境」
+    // - 我們用 APP_ENV 來表示部署語意（development / production）
+    const appEnv = (process.env.APP_ENV?.trim().toLowerCase() || 'development') as 'development' | 'production';
+    const configured = process.env.AUTH_TOKEN_SECRET?.trim() || '';
+    if (appEnv === 'production') {
+      if (!configured || configured === 'dev-insecure-secret') {
+        // 這屬於「部署設定錯誤」：用一般 Error 讓 server fail-fast（避免默默用弱 secret 繼續跑）。
+        throw new Error(
+          'APP_ENV=production 時必須設定強隨機的 AUTH_TOKEN_SECRET（不可留空或使用 dev-insecure-secret）。',
+        );
+      }
+    }
+
+    const secret = configured || 'dev-insecure-secret';
     return crypto.createHmac('sha256', secret).update(payloadB64).digest('base64url');
   }
 

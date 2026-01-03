@@ -97,6 +97,7 @@ export class PatronAuthGuard implements CanActivate {
         AND id = $2
       `,
       [orgId, userId],
+      { orgId },
     );
 
     if (result.rowCount === 0) {
@@ -139,4 +140,3 @@ function extractActorUserIdFromRequest(req: any): string | null {
 
   return null;
 }
-
