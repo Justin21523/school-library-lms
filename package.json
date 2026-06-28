@@ -43,9 +43,6 @@
     "build": "npm run build -w @library-system/shared && npm run build -w @library-system/api && npm run build -w @library-system/web",
     "test": "npm run test --workspaces --if-present",
     "test:db": "node --test tests/db/*.test.mjs",
-    "lint": "npm run lint --workspaces --if-present",
-    "demo:dev": "npm --prefix demo-app run dev",
-    "demo:build": "npm --prefix demo-app run build",
-    "demo:preview": "npm --prefix demo-app run preview"
+    "lint": "npm run lint --workspaces --if-present"
   }
 }
