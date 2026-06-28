@@ -13,6 +13,10 @@ import type { ReactNode } from 'react';
 
 import { OrgShell } from '../../components/layout/org-shell';
 
+export function generateStaticParams() {
+  return [{ orgId: 'demo-school' }];
+}
+
 export default function OrgLayout({
   children,
   params,

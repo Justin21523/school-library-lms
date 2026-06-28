@@ -106,8 +106,16 @@ function buildContentSecurityPolicy() {
 }
 
 /** @type {import('next').NextConfig} */
+const basePath = process.env.NEXT_PUBLIC_BASE_PATH || '';
+const isGitHubPages = process.env.GITHUB_PAGES === 'true';
+
 const nextConfig = {
   reactStrictMode: true,
+  experimental: {
+    missingSuspenseWithCSRBailout: false,
+  },
+  ...(basePath ? { basePath, assetPrefix: basePath } : {}),
+  ...(isGitHubPages ? { output: 'export', images: { unoptimized: true } } : {}),
   /**
    * 內建「API reverse proxy fallback」
    *
@@ -124,6 +132,7 @@ const nextConfig = {
    * - 若反向代理已正確把 /api/v1 轉到 API，這段 rewrites 不會被觸發（不會造成衝突）
    */
   async rewrites() {
+    if (isGitHubPages) return [];
     // docker compose network 內：api service 的 DNS name 就是 `api`
     // - 不能用 localhost:3001（那是 web container 自己，不是 API）
     const internalApiBase = 'http://api:3001';
@@ -137,6 +146,7 @@ const nextConfig = {
     ];
   },
   async headers() {
+    if (isGitHubPages) return [];
     const isProd = process.env.NODE_ENV === 'production';
 
     const headers = [

@@ -23,6 +23,10 @@ import Link from 'next/link';
 
 import OpacSessionNav from './opac-session-nav';
 
+export function generateStaticParams() {
+  return [{ orgId: 'demo-school' }];
+}
+
 export default function OpacOrgLayout({
   children,
   params,
