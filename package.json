@@ -43,6 +43,9 @@
     "build": "npm run build -w @library-system/shared && npm run build -w @library-system/api && npm run build -w @library-system/web",
     "test": "npm run test --workspaces --if-present",
     "test:db": "node --test tests/db/*.test.mjs",
-    "lint": "npm run lint --workspaces --if-present"
+    "lint": "npm run lint --workspaces --if-present",
+    "demo:dev": "python3 -m http.server 4173 --directory demo-app",
+    "demo:build": "node -e \"require('fs').accessSync('demo-app/index.html')\"",
+    "demo:preview": "python3 -m http.server 4173 --directory demo-app"
   }
 }
