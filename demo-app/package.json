@@ -1,0 +1,16 @@
+{
+  "name": "school-library-lms-demo-app",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0",
+    "build": "vite build --base /school-library-lms/",
+    "preview": "vite preview --host 0.0.0.0"
+  },
+  "dependencies": {
+    "vite": "latest",
+    "typescript": "latest"
+  },
+  "devDependencies": {}
+}
